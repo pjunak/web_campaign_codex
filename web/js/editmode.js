@@ -35,6 +35,15 @@ export const EditMode = (() => {
     t._tid = setTimeout(() => t.classList.remove("show"), 2500);
   }
 
+  // ── Navigate helper (forces re-render even if hash unchanged) ──
+  function _navigateOrRefresh(hash) {
+    if (window.location.hash === hash) {
+      window.dispatchEvent(new Event("hashchange"));
+    } else {
+      window.location.hash = hash;
+    }
+  }
+
   // ── State ──────────────────────────────────────────────────────
   function isActive() { return _active; }
 
@@ -103,11 +112,12 @@ export const EditMode = (() => {
       // data/portraits/{charId}/portrait.ext (overwrites old file automatically).
       // For new characters (uid === "new") no charId is known yet — use flat upload.
       const charId = (uid && uid !== "new") ? uid : null;
-      const url     = await Store.uploadPortrait(file, charId);
-      const preview = document.getElementById("ep-preview-" + uid);
-      const hidden  = document.getElementById("ep-data-" + uid);
-      if (preview) preview.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;object-position:top">`;
-      if (hidden)  hidden.value = url;
+      const url       = await Store.uploadPortrait(file, charId);
+      const bustedUrl = url + '?v=' + Date.now();
+      const preview   = document.getElementById("ep-preview-" + uid);
+      const hidden    = document.getElementById("ep-data-" + uid);
+      if (preview) preview.innerHTML = `<img src="${bustedUrl}" style="width:100%;height:100%;object-fit:cover;object-position:top">`;
+      if (hidden)  hidden.value = bustedUrl;
       _toast("Obrázek nahrán ✓");
     } catch(e) {
       _toast("Chyba při nahrávání obrázku", false);
@@ -170,7 +180,7 @@ export const EditMode = (() => {
       return;
     }
     _toast("✓ Postava uložena");
-    window.location.hash = `#/postava/${newId}`;
+    _navigateOrRefresh(`#/postava/${newId}`);
   }
 
   function deleteCharacter(id) {
@@ -236,7 +246,7 @@ export const EditMode = (() => {
       characters:  _checkVals(`lf-chars-${uid}`),
     });
     _toast("✓ Místo uloženo");
-    window.location.hash = `#/misto/${newId}`;
+    _navigateOrRefresh(`#/misto/${newId}`);
   }
 
   function deleteLocation(id) {
@@ -274,7 +284,7 @@ export const EditMode = (() => {
       consequence: document.getElementById(`evf-cons-${uid}`)?.value             || "",
     });
     _toast("✓ Událost uložena");
-    window.location.hash = `#/udalost/${newId}`;
+    _navigateOrRefresh(`#/udalost/${newId}`);
   }
 
   function deleteEvent(id) {
@@ -308,7 +318,7 @@ export const EditMode = (() => {
       characters:  _checkVals(`mf-chars-${uid}`),
     });
     _toast("✓ Záhada uložena");
-    window.location.hash = `#/zahada/${newId}`;
+    _navigateOrRefresh(`#/zahada/${newId}`);
   }
 
   function deleteMystery(id) {
@@ -367,7 +377,7 @@ export const EditMode = (() => {
     const existing = originalId ? (Store.getFaction(originalId) || {}) : {};
     Store.saveFaction(newId, { ...existing, name, color, textColor, badge, description: desc, rankChains });
     _toast("✓ Frakce uložena");
-    window.location.hash = `#/frakce/${newId}`;
+    _navigateOrRefresh(`#/frakce/${newId}`);
   }
 
   function deleteFaction(id) {

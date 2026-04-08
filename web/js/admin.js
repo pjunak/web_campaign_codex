@@ -456,15 +456,16 @@ export const Admin = (() => {
       _toast('Nahrávám obrázek…');
       // Use the character's ID for per-character storage when editing an existing character.
       // For new characters (_editId is null) fall back to a flat upload.
-      const url = await Store.uploadPortrait(file, _editId || null);
-      _el('portrait-data').value = url;
+      const url       = await Store.uploadPortrait(file, _editId || null);
+      const bustedUrl = url + '?v=' + Date.now();
+      _el('portrait-data').value = bustedUrl;
       const prev = _el('portrait-preview-img');
       if (prev && prev.tagName === 'IMG') {
-        prev.src = url;
+        prev.src = bustedUrl;
       } else if (prev) {
         const img = document.createElement('img');
         img.id = 'portrait-preview-img';
-        img.src = url;
+        img.src = bustedUrl;
         img.alt = 'Portrét';
         prev.replaceWith(img);
       }
@@ -1195,9 +1196,10 @@ export const Admin = (() => {
         const res  = await fetch(char.portrait);
         const blob = await res.blob();
         const file = new File([blob], `${char.id}.jpg`, { type: blob.type || 'image/jpeg' });
-        const url  = await Store.uploadPortrait(file, char.id);
+        const url       = await Store.uploadPortrait(file, char.id);
+        const bustedUrl = url + '?v=' + Date.now();
         const fresh = Store.getCharacter(char.id);
-        if (fresh) Store.saveCharacter({ ...fresh, portrait: url });
+        if (fresh) Store.saveCharacter({ ...fresh, portrait: bustedUrl });
         done++;
       } catch(e) {
         console.warn('Migration failed for', char.id, e);

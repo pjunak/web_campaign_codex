@@ -48,7 +48,7 @@ export const Wiki = (() => {
 
   // ── Edit overlay on cards (only visible in edit mode) ─────────
   function editOverlay(href) {
-    return `<a class="edit-card-overlay" href="${href}" title="Upravit">✏</a>`;
+    return `<span class="edit-card-overlay" title="Upravit">✏</span>`;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -287,7 +287,7 @@ export const Wiki = (() => {
       <div class="list-items">
         ${locations.map(l => {
           const editBtn = EditMode.isActive()
-            ? `<a class="list-edit-btn" href="#/misto/${l.id}" title="Upravit">✏</a>` : "";
+            ? `<span class="list-edit-btn" title="Upravit">✏</span>` : "";
           return `<a class="list-item" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
             <div style="display:flex;justify-content:space-between;align-items:flex-start">
               <div class="list-item-name">📍 ${l.name}</div>
@@ -352,7 +352,7 @@ export const Wiki = (() => {
       <div class="timeline">
         ${[...events].sort((a,b) => a.order - b.order).map(e => {
           const editBtn = EditMode.isActive()
-            ? `<a class="list-edit-btn" href="#/udalost/${e.id}" title="Upravit" style="flex-shrink:0">✏</a>` : "";
+            ? `<span class="list-edit-btn" title="Upravit" style="flex-shrink:0">✏</span>` : "";
           return `<div class="timeline-item">
             <div class="timeline-dot">${e.order}</div>
             <a class="timeline-content" href="#/udalost/${e.id}" style="text-decoration:none;display:flex;align-items:flex-start;gap:0.5rem">
