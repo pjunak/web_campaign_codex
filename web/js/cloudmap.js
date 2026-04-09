@@ -405,10 +405,11 @@ export const CloudMap = (() => {
       if (elObj) elObj.div.style.display = hidden ? 'none' : '';
     });
 
-    // Hide faction glows for hidden factions
+    // Hide faction glows for hidden factions (hubs and members)
     Object.entries(_glowMap).forEach(([nodeId, glow]) => {
-      const fId = nodeId.replace('hub_', '');
-      glow.style.display = _hiddenFactions.has(fId) ? 'none' : '';
+      const node = _cy.getElementById(nodeId);
+      if (!node || !node.length) return;
+      glow.style.display = node.hasClass('cm-filter-hidden') ? 'none' : '';
     });
   }
 
@@ -583,7 +584,7 @@ export const CloudMap = (() => {
       // Sync faction glow position
       const glow = _glowMap[id];
       if (glow) {
-        const gs = 400;
+        const gs = glow.classList.contains('cm-glow-sm') ? 220 : 400;
         glow.style.left = (pos.x - gs / 2) + 'px';
         glow.style.top  = (pos.y - gs / 2) + 'px';
       }
@@ -1021,6 +1022,7 @@ export const CloudMap = (() => {
     });
 
     // — Faction glow divs (inserted first so they render behind clouds) —
+    // Hub glows: large and brighter; member glows: smaller and subtler
     Object.entries(factions).forEach(([fId, f]) => {
       if (HIDDEN_HUB_FACTIONS.has(fId)) return;
       const glow = document.createElement('div');
@@ -1028,6 +1030,15 @@ export const CloudMap = (() => {
       glow.style.cssText = `--gc:${f.color};`;
       _cloudLayer.insertBefore(glow, _cloudLayer.firstChild);
       _glowMap['hub_' + fId] = glow;
+    });
+    chars.forEach(c => {
+      if (!c.faction || !factions[c.faction]) return;
+      const f = factions[c.faction];
+      const glow = document.createElement('div');
+      glow.className = 'cm-glow cm-glow-sm';
+      glow.style.cssText = `--gc:${f.color};`;
+      _cloudLayer.insertBefore(glow, _cloudLayer.firstChild);
+      _glowMap[c.id] = glow;
     });
 
     // — Add cloud cards —

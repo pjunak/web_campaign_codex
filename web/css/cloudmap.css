@@ -257,7 +257,7 @@
   background: linear-gradient(160deg, rgba(16,22,8,0.97) 0%, rgba(8,14,5,0.99) 100%);
 }
 
-/* Faction territory glow — large soft radial behind each hub */
+/* Faction territory glow — large soft radial behind hubs, smaller behind members */
 .cm-glow {
   position: absolute;
   width: 400px;
@@ -266,6 +266,11 @@
   background: radial-gradient(circle, var(--gc) 0%, transparent 70%);
   opacity: 0.10;
   pointer-events: none;
+}
+.cm-glow.cm-glow-sm {
+  width: 220px;
+  height: 220px;
+  opacity: 0.07;
 }
 
 /* Highlight states (synced with Cytoscape faded/highlighted classes) */
