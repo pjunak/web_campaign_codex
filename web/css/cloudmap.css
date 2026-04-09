@@ -306,6 +306,8 @@
 
 /* Edge labels — positioned by cloudmap.js using the true perpendicular vector.
    Width is set dynamically from edge length so text wraps within the line span. */
+/* Edge labels sit directly on the line. The background masks the Cytoscape
+   canvas edge underneath, creating a clean gap where the text is. */
 .cm-edge-label {
   position: absolute;
   font-family: 'Inter', sans-serif;
@@ -317,6 +319,9 @@
   pointer-events: none;
   transform-origin: center center;
   letter-spacing: 0.02em;
+  background: var(--bg-deep, #0E0A05);
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 
 /* ── Faction filter checkboxes in legend ──────────────────── */

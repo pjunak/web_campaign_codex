@@ -190,28 +190,90 @@ export const EditMode = (() => {
     window.location.hash = "#/postavy";
   }
 
-  // ── Relationship add / delete ──────────────────────────────────
+  // ── Relationship add / update / delete ──────────────────────────
+  /** Read type, dir, target, label from a relationship row by prefix */
+  function _readRelRow(prefix) {
+    const type   = document.getElementById(`${prefix}-type`)?.value;
+    const dir    = document.getElementById(`${prefix}-dir`)?.value;
+    const target = document.getElementById(`${prefix}-target`)?.value;
+    const label  = document.getElementById(`${prefix}-label`)?.value.trim() || '';
+    return { type, dir, target, label };
+  }
+
+  /** Build source/target based on direction relative to charId */
+  function _relFromDir(charId, dir, targetId, type, label) {
+    if (dir === 'both') {
+      // Create two symmetric relationships
+      return [
+        { source: charId,   target: targetId, type, label },
+        { source: targetId, target: charId,   type, label },
+      ];
+    }
+    return [{
+      source: dir === 'from' ? charId : targetId,
+      target: dir === 'from' ? targetId : charId,
+      type, label,
+    }];
+  }
+
   function addRelationship(charId) {
-    const dir    = document.getElementById(`rf-dir-${charId}`)?.value;
-    const type   = document.getElementById(`rf-type-${charId}`)?.value;
-    const target = document.getElementById(`rf-target-${charId}`)?.value;
-    const label  = document.getElementById(`rf-label-${charId}`)?.value.trim() || "";
+    const prefix = `rf-new-${charId}`;
+    const { type, dir, target, label } = _readRelRow(prefix);
+    if (!target) { _toast('Vyber cíl', false); return; }
 
-    if (!target) { _toast("Vyber cílovou postavu", false); return; }
-
-    Store.saveRelationship({
-      source: dir === "from" ? charId : target,
-      target: dir === "from" ? target : charId,
-      type,
-      label,
-    });
-    _toast("✓ Vazba přidána");
+    const rels = _relFromDir(charId, dir, target, type, label);
+    rels.forEach(r => Store.saveRelationship(r));
+    _toast('✓ Vazba přidána');
     _refreshRelSection(charId);
+  }
+
+  function updateRelationship(charId, idx) {
+    // Get the original relationship to delete it first
+    const allRels = Store.getRelationships().filter(r => r.source === charId || r.target === charId);
+    const original = allRels[idx];
+    if (!original) return;
+
+    const prefix = `rf-${idx}-${charId}`;
+    const { type, dir, target, label } = _readRelRow(prefix);
+    if (!target) { _toast('Vyber cíl', false); return; }
+
+    // Delete old
+    Store.deleteRelationship(original.source, original.target, original.type);
+    // Save new
+    const rels = _relFromDir(charId, dir, target, type, label);
+    rels.forEach(r => Store.saveRelationship(r));
+    _toast('✓ Vazba upravena');
+    _refreshRelSection(charId);
+  }
+
+  /** Called when the type dropdown changes — refreshes direction and target options */
+  function relTypeChanged(charId, prefix) {
+    const type = document.getElementById(`${prefix}-type`)?.value;
+    if (!type) return;
+
+    // Refresh direction options
+    const dirEl = document.getElementById(`${prefix}-dir`);
+    if (dirEl) {
+      const currentDir = dirEl.value;
+      dirEl.innerHTML = EditTemplates.getDirOptsHtml(type, currentDir);
+    }
+    // Refresh target options
+    const tgtEl = document.getElementById(`${prefix}-target`);
+    if (tgtEl) {
+      const currentTgt = tgtEl.value;
+      tgtEl.innerHTML = EditTemplates.getTargetOptsHtml(type, charId, currentTgt);
+    }
+    // Update placeholder on label field
+    const lblEl = document.getElementById(`${prefix}-label`);
+    if (lblEl) {
+      const cfg = EditTemplates.getRelConfig()[type];
+      if (cfg) lblEl.placeholder = cfg.label;
+    }
   }
 
   function deleteRelationship(source, target, type, charId) {
     Store.deleteRelationship(source, target, type);
-    _toast("Vazba odebrána");
+    _toast('Vazba odebrána');
     _refreshRelSection(charId);
   }
 
@@ -393,7 +455,7 @@ export const EditMode = (() => {
     addDynRow, handlePortraitUpload,
     addRankChain, addRankRow,
     saveCharacter, deleteCharacter,
-    addRelationship, deleteRelationship,
+    addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
     saveLocation, deleteLocation,
     saveEvent, deleteEvent,
     saveMystery, deleteMystery,

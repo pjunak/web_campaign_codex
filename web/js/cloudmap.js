@@ -307,6 +307,12 @@ export const CloudMap = (() => {
     located_at:  { 'line-style': 'dotted', width: 2 },
   };
 
+  const EDGE_TYPE_LABELS = {
+    commands:'velí', ally:'spojenec', enemy:'nepřítel', mission:'mise',
+    mystery:'záhada', captured_by:'zajat/a', history:'historie',
+    uncertain:'nejistota', negotiates:'jednání',
+  };
+
   function _relEdge(r) {
     const es = EDGE_STYLES[r.type] || {};
     return {
@@ -314,7 +320,7 @@ export const CloudMap = (() => {
         id:        `${r.source}-${r.target}-${r.type}`,
         source:    r.source,
         target:    r.target,
-        label:     r.label || '',
+        label:     r.label || EDGE_TYPE_LABELS[r.type] || r.type,
         color:     EDGE_COLORS[r.type] || '#666',
         width:     es.width || 2,
         lineStyle: es['line-style'] || 'solid',
@@ -593,15 +599,11 @@ export const CloudMap = (() => {
     _syncEdgeLabels();
   }
 
-  // ── HTML edge labels — vector-aware positioning ───────────────
+  // ── HTML edge labels — centred on line with background gap ────
   // Each label div lives in graph-coordinate space (same as clouds),
-  // offset perpendicularly from its edge's midpoint using the true
-  // direction vector. This means the label is always "above" the line
-  // regardless of whether the edge runs horizontally, vertically, or diagonally.
-
-  const LABEL_OFFSET      = 11;                             // graph-units from near text edge to line
-  const EDGE_LABEL_FONT   = '12px Inter, sans-serif';
-  const EDGE_LABEL_LINE_H = 12 * 1.35;                     // px per line (font-size × line-height)
+  // centred on the visible midpoint of the edge. A background color
+  // matching --bg-deep masks the Cytoscape canvas line underneath,
+  // creating a clean gap where the text sits.
 
   // Returns the point where a ray from (cx,cy) in unit direction (udx,udy)
   // exits the axis-aligned rectangle centred at (cx,cy) with half-sizes (hw,hh).
@@ -689,10 +691,6 @@ export const CloudMap = (() => {
       const mx = (srcExit.x + tgtEntry.x) / 2;
       const my = (srcExit.y + tgtEntry.y) / 2;
 
-      // Perpendicular unit vector (90° clockwise from edge direction)
-      const px = udy;
-      const py = -udx;
-
       // Width = visible edge length minus small end margins.
       // The div lives in graph-coordinate space so this scales with zoom.
       const labelW = Math.max(36, visLen - 20); // 10px margin each side
@@ -703,15 +701,11 @@ export const CloudMap = (() => {
       if (angle > 90 || angle < -90) angle += angle > 0 ? -180 : 180;
       div.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
 
-      // LABEL_OFFSET = distance from the *near text edge* to the line (not from centre).
-      // Measure how many lines the label wraps into, derive text height, then shift the
-      // centre outward by half that height so the near edge is always LABEL_OFFSET away.
-      const lines      = _wrap(label, EDGE_LABEL_FONT, labelW);
-      const textH      = lines.length * EDGE_LABEL_LINE_H;
-      const trueOffset = LABEL_OFFSET + textH / 2;
-
-      div.style.left = (mx + px * trueOffset) + 'px';
-      div.style.top  = (my + py * trueOffset) + 'px';
+      // Centre the label directly on the edge midpoint.
+      // The label's background masks the Cytoscape line underneath,
+      // creating a clean gap where the text sits.
+      div.style.left = mx + 'px';
+      div.style.top  = my + 'px';
     });
   }
 
@@ -921,7 +915,7 @@ export const CloudMap = (() => {
 
   // ── MODE: FRAKCE ────────────────────────────────────────────
   // Central faction hub nodes + member nodes + location nodes.
-  // Edges: hub→member, hub→location, commands, negotiates.
+  // Edges: hub→member, hub→location, commands, negotiates, ally.
   function _renderFrakce() {
     _buildUI('frakce');
 
@@ -1010,7 +1004,7 @@ export const CloudMap = (() => {
 
     // Commands + negotiates between characters
     const relEdges = allRels
-      .filter(r => r.type === 'commands' || r.type === 'negotiates')
+      .filter(r => r.type === 'commands' || r.type === 'negotiates' || r.type === 'ally')
       .map(_relEdge);
     edges.push(...relEdges);
 
@@ -1081,6 +1075,7 @@ export const CloudMap = (() => {
           <div class="legend-item"><div class="legend-line" style="border-top:1.5px dashed #888"></div> Člen frakce</div>
           <div class="legend-item"><div class="legend-line" style="border-top:3px solid #8B0000"></div> Velení</div>
           <div class="legend-item"><div class="legend-line" style="border-top:2px dashed #1565C0"></div> Jednání</div>
+          <div class="legend-item"><div class="legend-line" style="border-top:2px solid #2E7D32"></div> Spojenec</div>
           <div class="legend-item"><div class="legend-line" style="border-top:2px dotted #5D7A3A"></div> Lokace</div>
         </div>`;
 

@@ -34,52 +34,106 @@ export const EditTemplates = (() => {
     return f ? f.badge + ' ' : '';
   }
 
-  const REL_TYPES = ["commands","ally","enemy","mission","mystery","captured_by","history","uncertain","negotiates"];
-  const REL_LABELS = {
-    commands:"velí", ally:"spojenec", enemy:"nepřítel", mission:"mise",
-    mystery:"záhada", captured_by:"zajat/a", history:"historie",
-    uncertain:"nejasná vazba", negotiates:"vyjednává"
+  // ── Relationship type configuration ──────────────────────────
+  // Each type defines: label, allowed target type, allowed directions.
+  // Directions: 'from' = this char → target, 'to' = target → this char, 'both' = bidirectional.
+  const REL_CONFIG = {
+    commands:    { label: 'velí',          target: 'character', dirs: ['from'] },
+    ally:        { label: 'spojenec',      target: 'character', dirs: ['from','to','both'] },
+    enemy:       { label: 'nepřítel',      target: 'character', dirs: ['from','to','both'] },
+    mission:     { label: 'mise',          target: 'location',  dirs: ['from'] },
+    mystery:     { label: 'záhada',        target: 'character', dirs: ['from','to','both'] },
+    captured_by: { label: 'zajat/a',       target: 'character', dirs: ['from','to'] },
+    history:     { label: 'historie',      target: 'character', dirs: ['from','to','both'] },
+    uncertain:   { label: 'nejasná vazba', target: 'character', dirs: ['from','to','both'] },
+    negotiates:  { label: 'vyjednává',     target: 'character', dirs: ['from','to','both'] },
+  };
+  const REL_TYPES  = Object.keys(REL_CONFIG);
+  const REL_LABELS = Object.fromEntries(REL_TYPES.map(t => [t, REL_CONFIG[t].label]));
+
+  const DIR_LABELS = {
+    from: 'Tato postava →',
+    to:   '← Na tuto postavu',
+    both: '↔ Oboustranná',
   };
 
+  /** Build <option> list for targets based on type config */
+  function _targetOpts(type, charId, selectedId) {
+    const cfg = REL_CONFIG[type] || REL_CONFIG.commands;
+    if (cfg.target === 'location') {
+      const locs = Store.getLocations();
+      return locs.map(l =>
+        `<option value="${l.id}" ${l.id===selectedId?'selected':''}>${_esc(l.name)}</option>`
+      ).join('');
+    }
+    const chars = Store.getCharacters().filter(c => c.id !== charId);
+    return _sortedChars(chars).map(c =>
+      `<option value="${c.id}" ${c.id===selectedId?'selected':''}>${_charBadge(c)}${_esc(c.name)}</option>`
+    ).join('');
+  }
+
+  /** Build <option> list for directions based on type config */
+  function _dirOpts(type, selectedDir) {
+    const cfg = REL_CONFIG[type] || REL_CONFIG.commands;
+    return cfg.dirs.map(d =>
+      `<option value="${d}" ${d===selectedDir?'selected':''}>${DIR_LABELS[d]}</option>`
+    ).join('');
+  }
+
+  /** Render a single relationship row (existing or new) */
+  function _relRow(charId, r, idx) {
+    const isNew    = idx === 'new';
+    const prefix   = isNew ? `rf-new-${charId}` : `rf-${idx}-${charId}`;
+    const type     = r ? r.type : REL_TYPES[0];
+    const label    = r ? (r.label || '') : '';
+
+    // Determine current direction and other end from existing relationship
+    let dir = 'from', targetId = '';
+    if (r) {
+      if (r.source === charId)      { dir = 'from'; targetId = r.target; }
+      else if (r.target === charId) { dir = 'to';   targetId = r.source; }
+    }
+
+    const typeOpts   = REL_TYPES.map(t =>
+      `<option value="${t}" ${t===type?'selected':''}>${REL_CONFIG[t].label}</option>`
+    ).join('');
+    const dirOptions = _dirOpts(type, dir);
+    const tgtOptions = _targetOpts(type, charId, targetId);
+
+    const saveAction = isNew
+      ? `EditMode.addRelationship('${charId}')`
+      : `EditMode.updateRelationship('${charId}',${idx})`;
+    const deleteBtn  = isNew ? '' :
+      `<button class="rel-delete-btn" title="Smazat"
+         onclick="EditMode.deleteRelationship('${r.source}','${r.target}','${r.type}','${charId}')">×</button>`;
+    const saveLabel  = isNew ? '+ Přidat' : '💾';
+    const saveTitle  = isNew ? 'Přidat vazbu' : 'Uložit změny';
+
+    return `<div class="rel-edit-row" data-idx="${idx}">
+      <select class="edit-select edit-select-sm" id="${prefix}-type"
+        onchange="EditMode.relTypeChanged('${charId}','${prefix}')">${typeOpts}</select>
+      <select class="edit-select edit-select-sm" id="${prefix}-dir">${dirOptions}</select>
+      <select class="edit-select edit-select-sm rel-target-select" id="${prefix}-target">${tgtOptions}</select>
+      <input class="edit-input edit-input-sm" id="${prefix}-label" value="${_esc(label)}"
+        placeholder="${_esc(REL_CONFIG[type].label)}">
+      <button class="edit-add-btn" onclick="${saveAction}" title="${saveTitle}">${saveLabel}</button>
+      ${deleteBtn}
+    </div>`;
+  }
+
   function _relSection(charId) {
-    const rels  = Store.getRelationships().filter(r => r.source === charId || r.target === charId);
-    const chars = Store.getCharacters();
-    const others = chars.filter(c => c.id !== charId);
+    const rels = Store.getRelationships().filter(r => r.source === charId || r.target === charId);
 
-    const chips = rels.map(r => {
-      const otherId = r.source === charId ? r.target : r.source;
-      const other   = chars.find(c => c.id === otherId);
-      if (!other) return "";
-      const dir = r.source === charId ? "→" : "←";
-      return `<div class="rel-edit-chip">
-        <span class="rel-edit-dir">${dir}</span>
-        <span class="rel-edit-name">${_esc(other.name)}</span>
-        <span class="rel-edit-type">${REL_LABELS[r.type] || r.type}</span>
-        ${r.label ? `<span class="rel-edit-label">"${_esc(r.label)}"</span>` : ""}
-        <button class="rel-delete-btn"
-          onclick="EditMode.deleteRelationship('${r.source}','${r.target}','${r.type}','${charId}')">×</button>
-      </div>`;
-    }).join("");
-
-    const charOpts    = _sortedChars(others).map(c => `<option value="${c.id}">${_charBadge(c)}${_esc(c.name)}</option>`).join("");
-    const relTypeOpts = REL_TYPES.map(t => `<option value="${t}">${REL_LABELS[t]}</option>`).join("");
+    const existingRows = rels.map((r, i) => _relRow(charId, r, i)).join('');
+    const newRow = _relRow(charId, null, 'new');
 
     return `
       <div class="edit-section" id="rel-section-${charId}">
         <div class="edit-section-title">Vazby</div>
         <div class="rel-edit-list" id="rel-list-${charId}">
-          ${chips || `<span class="edit-hint">Žádné vazby</span>`}
+          ${existingRows || `<span class="edit-hint">Žádné vazby</span>`}
         </div>
-        <div class="rel-add-form">
-          <select class="edit-select edit-select-sm" id="rf-dir-${charId}">
-            <option value="from">Tato postava →</option>
-            <option value="to">← Na tuto postavu</option>
-          </select>
-          <select class="edit-select edit-select-sm" id="rf-type-${charId}">${relTypeOpts}</select>
-          <select class="edit-select edit-select-sm" id="rf-target-${charId}">${charOpts}</select>
-          <input class="edit-input edit-input-sm" id="rf-label-${charId}" placeholder="Popis (volitelný)">
-          <button class="edit-add-btn" onclick="EditMode.addRelationship('${charId}')">+ Přidat vazbu</button>
-        </div>
+        <div class="rel-add-form">${newRow}</div>
       </div>`;
   }
 
@@ -466,6 +520,9 @@ export const EditTemplates = (() => {
     renderFactionEditor,
     getDynRowHtml: _dynRow,
     getRelSectionHtml: _relSection,
+    getDirOptsHtml: _dirOpts,
+    getTargetOptsHtml: _targetOpts,
+    getRelConfig: () => REL_CONFIG,
     getChainEditHtml: _chainEditHtml,
   };
 
