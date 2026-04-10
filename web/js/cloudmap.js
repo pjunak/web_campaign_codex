@@ -330,28 +330,39 @@ export const CloudMap = (() => {
 
   // ── Layout persistence ───────────────────────────────────────
   // Saved node positions key per map mode, stored in localStorage.
-  const LS_POS_PREFIX = 'cm_pos_';
-  let   _currentMode  = null;
+  const LS_POS_PREFIX    = 'cm_pos_';
+  const LS_FILTER_PREFIX = 'cm_filter_';
+  let   _currentMode     = null;
 
-  function _savePosKey()    { return LS_POS_PREFIX + _currentMode; }
+  function _savePosKey()    { return LS_POS_PREFIX    + _currentMode; }
+  function _saveFilterKey() { return LS_FILTER_PREFIX + _currentMode; }
 
   function _savePositions() {
     if (!_cy || !_currentMode) return;
     const pos = {};
     _cy.nodes().forEach(n => { pos[n.id()] = n.position(); });
-    try { localStorage.setItem(_savePosKey(), JSON.stringify(pos)); } catch(e) {}
+    try {
+      localStorage.setItem(_savePosKey(), JSON.stringify(pos));
+      localStorage.setItem(_saveFilterKey(), JSON.stringify([..._hiddenFactions]));
+    } catch(e) {}
   }
 
   function _loadPositions() {
     if (!_currentMode) return null;
     try {
       const raw = localStorage.getItem(_savePosKey());
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return null;
+      const savedFilter = localStorage.getItem(_saveFilterKey());
+      if (savedFilter) _hiddenFactions = new Set(JSON.parse(savedFilter));
+      return JSON.parse(raw);
     } catch(e) { return null; }
   }
 
   function _clearPositions() {
-    if (_currentMode) localStorage.removeItem(_savePosKey());
+    if (!_currentMode) return;
+    localStorage.removeItem(_savePosKey());
+    localStorage.removeItem(_saveFilterKey());
+    _hiddenFactions = new Set();
   }
 
   // ── Faction filter state ─────────────────────────────────────
@@ -365,18 +376,36 @@ export const CloudMap = (() => {
 
   function _applyFactionFilter() {
     if (!_cy) return;
-    // Determine which location nodes should be hidden:
-    // hide a location only if ALL factions connecting to it are hidden
-    const locVisibleFactions = {}; // locId → Set<factionId> of visible factions
+    // For non-character nodes (location, mystery, event):
+    // hide only if ALL connected character/faction nodes are hidden.
+    // smartVisible[id] === false  → has connections, all are hidden → hide it
+    // smartVisible[id] === true   → at least one visible connection → keep visible
+    // smartVisible[id] === undefined → no tracked connections → keep visible
+    const smartVisible = {};
     _cy.edges().forEach(edge => {
-      const src = edge.source();
-      const tgt = edge.target();
-      if (src.data('type') === 'faction' && tgt.data('type') === 'location') {
+      const src = edge.source(), tgt = edge.target();
+      const srcType = src.data('type'), tgtType = tgt.data('type');
+
+      // Faction hub → location (original logic)
+      if (srcType === 'faction' && tgtType === 'location') {
         const fId = src.data('faction');
         const lId = tgt.id();
-        if (!locVisibleFactions[lId]) locVisibleFactions[lId] = new Set();
-        if (!_hiddenFactions.has(fId)) locVisibleFactions[lId].add(fId);
+        if (smartVisible[lId] === undefined) smartVisible[lId] = false;
+        if (!_hiddenFactions.has(fId)) smartVisible[lId] = true;
       }
+
+      // Character ↔ mystery or character ↔ event
+      const trySmartHide = (charNode, otherNode) => {
+        const oType = otherNode.data('type');
+        if (charNode.data('type') === 'character' && (oType === 'mystery' || oType === 'event')) {
+          const oId = otherNode.id();
+          if (smartVisible[oId] === undefined) smartVisible[oId] = false;
+          const fId = charNode.data('faction');
+          if (!fId || !_hiddenFactions.has(fId)) smartVisible[oId] = true;
+        }
+      };
+      trySmartHide(src, tgt);
+      trySmartHide(tgt, src);
     });
 
     _cy.nodes().forEach(node => {
@@ -386,11 +415,10 @@ export const CloudMap = (() => {
       let hidden = false;
 
       if (type === 'faction' || type === 'character') {
-        hidden = faction && _hiddenFactions.has(faction);
-      } else if (type === 'location') {
-        // Hidden if no visible faction connects to it
-        const vis = locVisibleFactions[id];
-        hidden = !vis || vis.size === 0;
+        hidden = !!faction && _hiddenFactions.has(faction);
+      } else if (type === 'location' || type === 'mystery' || type === 'event') {
+        // Hidden if explicitly tracked and no visible connection remains
+        hidden = smartVisible[id] === false;
       }
 
       const wrapper = _cloudMap[id];
@@ -457,8 +485,21 @@ export const CloudMap = (() => {
   }
 
   // ── UI scaffold ─────────────────────────────────────────────
+  function _buildFactionFilterLegend(factions, exclude = new Set()) {
+    return Object.entries(factions)
+      .filter(([fId]) => !exclude.has(fId))
+      .map(([fId, f]) => `
+        <label class="legend-item legend-filter" data-faction="${fId}">
+          <input type="checkbox" ${_hiddenFactions.has(fId) ? '' : 'checked'}
+                 onchange="CloudMap.toggleFaction('${fId}')">
+          <div class="legend-dot" style="background:${f.color}"></div>
+          ${f.badge} ${_esc(f.name)}
+        </label>`).join('');
+  }
+
   function _buildUI(mode) {
     _currentMode = mode;
+    _hiddenFactions = new Set(); // reset; _loadPositions() may repopulate from localStorage
     document.getElementById('main-content').style.display = '';
     document.getElementById('main-content').innerHTML = `
       <div class="map-container">
@@ -1230,15 +1271,7 @@ export const CloudMap = (() => {
     if (leg) {
       leg.innerHTML = `
         <div class="legend-title">Frakce</div>
-        ${Object.entries(factions)
-          .filter(([fId]) => !HIDDEN_HUB_FACTIONS.has(fId))
-          .map(([fId, f]) => `
-          <label class="legend-item legend-filter" data-faction="${fId}">
-            <input type="checkbox" ${_hiddenFactions.has(fId) ? '' : 'checked'}
-                   onchange="CloudMap.toggleFaction('${fId}')">
-            <div class="legend-dot" style="background:${f.color}"></div>
-            ${f.badge} ${_esc(f.name)}
-          </label>`).join('')}
+        ${_buildFactionFilterLegend(factions, HIDDEN_HUB_FACTIONS)}
         <div class="legend-item">
           <div class="legend-dot" style="background:#5D7A3A"></div>
           📍 Místo
@@ -1256,7 +1289,6 @@ export const CloudMap = (() => {
           <div class="legend-item"><div class="legend-line" style="border-top:2px dotted #5D7A3A"></div> Lokace</div>
         </div>`;
 
-      // Restore filter state
       if (_hiddenFactions.size) _applyFactionFilter();
     }
   }
@@ -1266,8 +1298,9 @@ export const CloudMap = (() => {
   // Edges: all relationships with labels.
   function _renderVztahy() {
     _buildUI('vztahy');
-    const chars = Store.getCharacters();
-    const rels  = Store.getRelationships();
+    const chars    = Store.getCharacters();
+    const rels     = Store.getRelationships();
+    const factions = Store.getFactions();
 
     const nodes = chars.map(c =>
       _proxy(c.id, 'character', CW, _charCloudH(c, 'vztahy'))
@@ -1296,7 +1329,14 @@ export const CloudMap = (() => {
     }).join('');
 
     const leg = document.getElementById('map-legend');
-    if (leg) leg.innerHTML = `<div class="legend-title">Typy vazeb</div>${typeRows}`;
+    if (leg) {
+      leg.innerHTML = `
+        <div class="legend-title">Typy vazeb</div>
+        ${typeRows}
+        <div class="legend-title" style="margin-top:0.5rem">Frakce</div>
+        ${_buildFactionFilterLegend(factions)}`;
+      if (_hiddenFactions.size) _applyFactionFilter();
+    }
   }
 
   // ── MODE: ZÁHADY ────────────────────────────────────────────
@@ -1305,6 +1345,7 @@ export const CloudMap = (() => {
     _buildUI('tajemstvi');
     const mysteries = Store.getMysteries();
     const chars     = Store.getCharacters();
+    const factions  = Store.getFactions();
 
     const involvedIds = new Set(mysteries.flatMap(m => m.characters || []));
     const involved    = chars.filter(c => involvedIds.has(c.id));
@@ -1336,10 +1377,15 @@ export const CloudMap = (() => {
     _addEdgeLabels();
 
     const leg = document.getElementById('map-legend');
-    if (leg) leg.innerHTML = `
-      <div class="legend-title">Záhady</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#6A1B9A"></div> Záhada</div>
-      <div class="legend-item"><div class="legend-dot"></div> Zapojená postava</div>`;
+    if (leg) {
+      leg.innerHTML = `
+        <div class="legend-title">Záhady</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#6A1B9A"></div> Záhada</div>
+        <div class="legend-item"><div class="legend-dot"></div> Zapojená postava</div>
+        <div class="legend-title" style="margin-top:0.5rem">Frakce</div>
+        ${_buildFactionFilterLegend(factions)}`;
+      if (_hiddenFactions.size) _applyFactionFilter();
+    }
   }
 
   // ── MODE: ČASOVÁ OSA ────────────────────────────────────────
@@ -1348,6 +1394,7 @@ export const CloudMap = (() => {
     _buildUI('casova-osa');
     const events    = [...Store.getEvents()].sort((a, b) => a.order - b.order);
     const chars     = Store.getCharacters();
+    const factions  = Store.getFactions();
 
     const involvedIds = new Set(events.flatMap(e => e.characters || []));
     const involved    = chars.filter(c => involvedIds.has(c.id));
@@ -1388,13 +1435,18 @@ export const CloudMap = (() => {
     _addEdgeLabels();
 
     const leg = document.getElementById('map-legend');
-    if (leg) leg.innerHTML = `
-      <div class="legend-title">Časová Osa</div>
-      <div class="legend-item">
-        <div class="legend-line" style="border-top:2px solid #C8A040"></div> Sled událostí
-      </div>
-      <div class="legend-item"><div class="legend-dot" style="background:#8B6914"></div> Událost</div>
-      <div class="legend-item"><div class="legend-dot"></div> Postava</div>`;
+    if (leg) {
+      leg.innerHTML = `
+        <div class="legend-title">Časová Osa</div>
+        <div class="legend-item">
+          <div class="legend-line" style="border-top:2px solid #C8A040"></div> Sled událostí
+        </div>
+        <div class="legend-item"><div class="legend-dot" style="background:#8B6914"></div> Událost</div>
+        <div class="legend-item"><div class="legend-dot"></div> Postava</div>
+        <div class="legend-title" style="margin-top:0.5rem">Frakce</div>
+        ${_buildFactionFilterLegend(factions)}`;
+      if (_hiddenFactions.size) _applyFactionFilter();
+    }
   }
 
   // ── Public ────────────────────────────────────────────────
