@@ -9,6 +9,7 @@ import { CloudMap } from './cloudmap.js';
 import { Timeline } from './timeline.js';
 import { WorldMap } from './map.js';
 import { Admin } from './admin.js';
+import { Widgets } from './widgets/widgets.js';
 
 // Expose modules to global scope for inline event handlers (onclick="...")
 window.Store = Store;
@@ -32,6 +33,10 @@ window.Admin = Admin;
   }
 
   function navigate(route) {
+    // Schedule widget mount after the page renders. Runs for every route so
+    // any cb-mount/ms-mount placeholders in newly-rendered HTML get wired up.
+    requestAnimationFrame(() => Widgets.mountAll(document.body));
+
     // Mind-map sub-routes that all belong to Myšlenkový Palác
     const PALAC_ROUTES = new Set(["/mapa/palac", "/mapa/frakce", "/mapa/vztahy", "/mapa/tajemstvi"]);
 

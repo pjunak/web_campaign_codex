@@ -7,6 +7,7 @@
 
 import { Store } from './store.js';
 import { EditTemplates } from './edit_templates.js';
+import { Widgets } from './widgets/widgets.js';
 
 export const EditMode = (() => {
 
@@ -269,18 +270,20 @@ export const EditMode = (() => {
       const currentDir = dirEl.value;
       dirEl.innerHTML = EditTemplates.getDirOptsHtml(type, currentDir);
     }
-    // Refresh target options
-    const tgtEl = document.getElementById(`${prefix}-target`);
-    if (tgtEl) {
-      const currentTgt = tgtEl.value;
-      tgtEl.innerHTML = EditTemplates.getTargetOptsHtml(type, charId, currentTgt);
+    // Re-mount the target combobox with the source matching the new type
+    // (character ↔ location). The combobox's hidden input id is `${prefix}-target`,
+    // which is what _readRelRow reads.
+    const cfg = EditTemplates.getRelConfig()[type];
+    const tgtHidden = document.getElementById(`${prefix}-target`);
+    const wrap = tgtHidden?.closest('.rel-target-wrap');
+    if (wrap && cfg) {
+      const currentTgt = tgtHidden.value || '';
+      wrap.innerHTML = EditTemplates.getTargetMountHtml(type, charId, currentTgt, prefix);
+      Widgets.mountAll(wrap);
     }
     // Update placeholder on label field
     const lblEl = document.getElementById(`${prefix}-label`);
-    if (lblEl) {
-      const cfg = EditTemplates.getRelConfig()[type];
-      if (cfg) lblEl.placeholder = cfg.label;
-    }
+    if (lblEl && cfg) lblEl.placeholder = cfg.label;
   }
 
   function deleteRelationship(source, target, type, charId) {
@@ -295,7 +298,10 @@ export const EditMode = (() => {
       const tmp = document.createElement("div");
       tmp.innerHTML = EditTemplates.getRelSectionHtml(charId);
       const newSection = tmp.firstElementChild;
-      if (newSection) section.replaceWith(newSection);
+      if (newSection) {
+        section.replaceWith(newSection);
+        Widgets.mountAll(newSection);
+      }
     }
   }
 

@@ -1,0 +1,143 @@
+/* ═══════════════════════════════════════════════════════════════
+   WIDGETS — Combobox + MultiSelect
+   Used by relationship/event/mystery editors and the world map pin form.
+   Styled to blend with the existing edit.css / admin.css aesthetic.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Shared toast (replaces per-module toasts) ──────────────── */
+.app-toast {
+  position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: #1c1c1e; color: #f0e6d2; border: 1px solid rgba(212, 184, 122, 0.35);
+  padding: 0.7rem 1.2rem; border-radius: 6px; font-size: 0.92rem;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  opacity: 0; pointer-events: none; transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 10001; max-width: 80vw; text-align: center;
+}
+.app-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.app-toast.err  { border-color: #c44; color: #ffd7d7; }
+
+/* ── Combobox ────────────────────────────────────────────────── */
+.w-cb {
+  position: relative;
+  display: inline-block;
+  min-width: 0;
+  width: 100%;
+}
+.w-cb-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.4rem;
+  width: 100%;
+  background: rgba(20, 18, 16, 0.6);
+  border: 1px solid rgba(212, 184, 122, 0.25);
+  color: #e8dec4;
+  padding: 0.42rem 0.6rem;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  min-height: 32px;
+}
+.w-cb-trigger:hover { border-color: rgba(212, 184, 122, 0.5); }
+.w-cb.is-open .w-cb-trigger { border-color: rgba(212, 184, 122, 0.75); }
+.w-cb-trigger-label {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.w-cb-empty { color: rgba(232, 222, 196, 0.45); font-style: italic; }
+.w-cb-caret { font-size: 0.7em; opacity: 0.6; }
+.w-cb-badge { margin-right: 0.35rem; }
+
+.w-cb-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: #1a1714;
+  border: 1px solid rgba(212, 184, 122, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+  max-height: 280px; display: flex; flex-direction: column;
+  min-width: 220px;
+}
+.w-cb-search {
+  flex: 0 0 auto;
+  background: rgba(0, 0, 0, 0.3);
+  border: none; border-bottom: 1px solid rgba(212, 184, 122, 0.2);
+  color: #f0e6d2; padding: 0.5rem 0.7rem; font: inherit; outline: none;
+}
+.w-cb-list { flex: 1 1 auto; overflow-y: auto; padding: 0.2rem 0; }
+.w-cb-item {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.42rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.92rem;
+}
+.w-cb-item:hover, .w-cb-item.is-active { background: rgba(212, 184, 122, 0.15); }
+.w-cb-item.is-selected { background: rgba(212, 184, 122, 0.22); }
+.w-cb-item .w-cb-lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w-cb-sub { color: rgba(232, 222, 196, 0.55); font-size: 0.82rem; margin-left: auto; }
+.w-cb-empty-row { padding: 0.7rem; color: rgba(232, 222, 196, 0.5); font-style: italic; text-align: center; }
+
+/* ── MultiSelect ─────────────────────────────────────────────── */
+.w-ms {
+  display: flex; flex-direction: column; gap: 0.35rem;
+  background: rgba(20, 18, 16, 0.5);
+  border: 1px solid rgba(212, 184, 122, 0.22);
+  border-radius: 4px;
+  padding: 0.4rem;
+  position: relative;
+}
+.w-ms.is-open { border-color: rgba(212, 184, 122, 0.55); }
+.w-ms-chips {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; min-height: 1px;
+}
+.w-ms-chips-empty { color: rgba(232, 222, 196, 0.4); font-style: italic; font-size: 0.85rem; padding: 0.15rem 0.2rem; }
+.w-ms-chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  background: rgba(212, 184, 122, 0.18);
+  border: 1px solid rgba(212, 184, 122, 0.35);
+  color: #f0e6d2;
+  padding: 0.15rem 0.45rem;
+  border-radius: 12px;
+  font-size: 0.84rem;
+  line-height: 1.2;
+}
+.w-ms-chip-badge { font-size: 0.95em; }
+.w-ms-chip-x {
+  background: none; border: none; color: inherit; cursor: pointer;
+  padding: 0 0.05rem; font-size: 1em; line-height: 1; opacity: 0.7;
+}
+.w-ms-chip-x:hover { opacity: 1; color: #ffb0b0; }
+
+.w-ms-input-row { display: flex; }
+.w-ms-search {
+  flex: 1; min-width: 0;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(212, 184, 122, 0.18);
+  color: #f0e6d2;
+  padding: 0.35rem 0.5rem;
+  border-radius: 3px;
+  font: inherit;
+  outline: none;
+}
+.w-ms-search:focus { border-color: rgba(212, 184, 122, 0.55); }
+.w-ms-pop {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #1a1714;
+  border: 1px solid rgba(212, 184, 122, 0.45);
+  border-radius: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+  max-height: 260px;
+  margin-top: 4px;
+  overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.w-ms-list { flex: 1 1 auto; overflow-y: auto; padding: 0.2rem 0; }
+.w-ms-item {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.35rem 0.6rem; cursor: pointer; font-size: 0.9rem;
+}
+.w-ms-item:hover, .w-ms-item.is-active { background: rgba(212, 184, 122, 0.15); }
+.w-ms-item.is-selected { color: #f7eecf; }
+.w-ms-check { width: 1.1em; color: #d4b87a; font-weight: bold; }
+.w-ms-lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w-ms-sub { color: rgba(232, 222, 196, 0.55); font-size: 0.8rem; margin-left: auto; }
+.w-ms-empty-row { padding: 0.6rem; color: rgba(232, 222, 196, 0.5); font-style: italic; text-align: center; }

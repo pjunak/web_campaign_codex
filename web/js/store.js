@@ -1,8 +1,58 @@
 import { FACTIONS, STATUS, CHARACTERS, LOCATIONS, EVENTS, RELATIONSHIPS, MYSTERIES, MAP_PINS } from './data.js';
+import { norm } from './utils.js';
 
 export const Store = (() => {
   let _data            = null;
   let _serverAvailable = false;
+
+  // ── Secondary indices (rebuilt by _reindex on every mutation) ──
+  let _idxCharsByFaction   = new Map();
+  let _idxCharsByLocation  = new Map();
+  let _idxRelsByChar       = new Map();
+  let _idxEventsByChar     = new Map();
+  let _idxEventsByLocation = new Map();
+  let _idxMysteriesByChar  = new Map();
+  let _idxPinsByLocation   = new Map();
+
+  function _push(map, key, val) {
+    if (!key) return;
+    let arr = map.get(key);
+    if (!arr) { arr = []; map.set(key, arr); }
+    arr.push(val);
+  }
+
+  function _reindex() {
+    _idxCharsByFaction   = new Map();
+    _idxCharsByLocation  = new Map();
+    _idxRelsByChar       = new Map();
+    _idxEventsByChar     = new Map();
+    _idxEventsByLocation = new Map();
+    _idxMysteriesByChar  = new Map();
+    _idxPinsByLocation   = new Map();
+    if (!_data) return;
+
+    for (const c of _data.characters || []) {
+      _push(_idxCharsByFaction, c.faction, c);
+      if (c.location) _push(_idxCharsByLocation, c.location, c);
+      for (const r of c.locationRoles || []) {
+        if (r?.locationId) _push(_idxCharsByLocation, r.locationId, c);
+      }
+    }
+    for (const r of _data.relationships || []) {
+      _push(_idxRelsByChar, r.source, r);
+      if (r.target !== r.source) _push(_idxRelsByChar, r.target, r);
+    }
+    for (const e of _data.events || []) {
+      for (const cid of e.characters || []) _push(_idxEventsByChar, cid, e);
+      for (const lid of e.locations  || []) _push(_idxEventsByLocation, lid, e);
+    }
+    for (const m of _data.mysteries || []) {
+      for (const cid of m.characters || []) _push(_idxMysteriesByChar, cid, m);
+    }
+    for (const p of _data.mapPins || []) {
+      if (p.locationId) _push(_idxPinsByLocation, p.locationId, p);
+    }
+  }
 
   function _defaults() {
     return {
@@ -42,9 +92,11 @@ export const Store = (() => {
         if (serverData && serverData.characters) {
           _data = serverData;
           _mergeDefaults();
+          _reindex();
           return;
         }
         _data = _defaults();
+        _reindex();
         _persist();
         return;
       }
@@ -53,11 +105,12 @@ export const Store = (() => {
     }
     _serverAvailable = false;
     _data = _defaults();
+    _reindex();
     window.dispatchEvent(new CustomEvent('store:server-unavailable'));
   }
 
   function init() {
-    if (!_data) _data = _defaults();
+    if (!_data) { _data = _defaults(); _reindex(); }
   }
 
   function _persist() {
@@ -131,6 +184,7 @@ export const Store = (() => {
     init();
     const idx = _data.characters.findIndex(c => c.id === char.id);
     if (idx >= 0) _data.characters[idx] = char; else _data.characters.push(char);
+    _reindex();
     return _sync('characters', 'save', char);
   }
 
@@ -146,6 +200,7 @@ export const Store = (() => {
     _data.relationships = _data.relationships.filter(r => r.source !== id && r.target !== id);
     _data.events        = (_data.events    || []).map(e => ({ ...e, characters: (e.characters    || []).filter(cid => cid !== id) }));
     _data.mysteries     = (_data.mysteries || []).map(m => ({ ...m, characters: (m.characters    || []).filter(cid => cid !== id) }));
+    _reindex();
     return _sync('characters', 'delete', { id });
   }
 
@@ -155,6 +210,7 @@ export const Store = (() => {
     const k   = key(rel);
     const idx = _data.relationships.findIndex(r => key(r) === k);
     if (idx >= 0) _data.relationships[idx] = rel; else _data.relationships.push(rel);
+    _reindex();
     return _sync('relationships', 'save', rel);
   }
 
@@ -163,6 +219,7 @@ export const Store = (() => {
     _data.relationships = _data.relationships.filter(
       r => !(r.source === source && r.target === target && r.type === type)
     );
+    _reindex();
     return _sync('relationships', 'delete', { source, target, type });
   }
 
@@ -170,12 +227,14 @@ export const Store = (() => {
     init();
     const idx = _data.locations.findIndex(l => l.id === loc.id);
     if (idx >= 0) _data.locations[idx] = loc; else _data.locations.push(loc);
+    _reindex();
     return _sync('locations', 'save', loc);
   }
 
   function deleteLocation(id) {
     init();
     _data.locations = _data.locations.filter(l => l.id !== id);
+    _reindex();
     return _sync('locations', 'delete', { id });
   }
 
@@ -183,12 +242,14 @@ export const Store = (() => {
     init();
     const idx = _data.events.findIndex(e => e.id === evt.id);
     if (idx >= 0) _data.events[idx] = evt; else _data.events.push(evt);
+    _reindex();
     return _sync('events', 'save', evt);
   }
 
   function deleteEvent(id) {
     init();
     _data.events = _data.events.filter(e => e.id !== id);
+    _reindex();
     return _sync('events', 'delete', { id });
   }
 
@@ -196,12 +257,14 @@ export const Store = (() => {
     init();
     const idx = _data.mysteries.findIndex(m => m.id === mys.id);
     if (idx >= 0) _data.mysteries[idx] = mys; else _data.mysteries.push(mys);
+    _reindex();
     return _sync('mysteries', 'save', mys);
   }
 
   function deleteMystery(id) {
     init();
     _data.mysteries = _data.mysteries.filter(m => m.id !== id);
+    _reindex();
     return _sync('mysteries', 'delete', { id });
   }
 
@@ -222,13 +285,85 @@ export const Store = (() => {
     const pins = getMapPins();
     const idx  = pins.findIndex(p => p.id === pin.id);
     if (idx >= 0) pins[idx] = pin; else pins.push(pin);
+    _reindex();
     return _sync('mapPins', 'save', pin);
   }
 
   function deleteMapPin(id) {
     init();
     _data.mapPins = getMapPins().filter(p => p.id !== id);
+    _reindex();
     return _sync('mapPins', 'delete', { id });
+  }
+
+  // ── Indexed lookups ─────────────────────────────────────────
+  function getCharactersByFaction(factionId) {
+    init(); return _idxCharsByFaction.get(factionId) || [];
+  }
+  function getCharactersInLocation(locId) {
+    init(); return _idxCharsByLocation.get(locId) || [];
+  }
+  function getRelationshipsFor(charId) {
+    init(); return _idxRelsByChar.get(charId) || [];
+  }
+  function getEventsWithCharacter(charId) {
+    init(); return _idxEventsByChar.get(charId) || [];
+  }
+  function getEventsAtLocation(locId) {
+    init(); return _idxEventsByLocation.get(locId) || [];
+  }
+  function getMysteriesWithCharacter(charId) {
+    init(); return _idxMysteriesByChar.get(charId) || [];
+  }
+  function getPinForLocation(locId) {
+    init(); const arr = _idxPinsByLocation.get(locId); return arr ? arr[0] : null;
+  }
+
+  // ── Search ─────────────────────────────────────────────────
+  // Diacritic-insensitive substring match over user-visible text fields.
+  function _match(haystack, q) {
+    if (!q) return true;
+    return norm(haystack).includes(q);
+  }
+  function searchCharacters(query) {
+    init();
+    const q = norm(query);
+    if (!q) return _data.characters.slice();
+    return _data.characters.filter(c =>
+      _match(c.name, q) || _match(c.title, q) || _match((c.tags || []).join(' '), q)
+    );
+  }
+  function searchLocations(query) {
+    init();
+    const q = norm(query);
+    if (!q) return _data.locations.slice();
+    return _data.locations.filter(l =>
+      _match(l.name, q) || _match(l.type, q) || _match((l.tags || []).join(' '), q)
+    );
+  }
+  function searchEvents(query) {
+    init();
+    const q = norm(query);
+    if (!q) return _data.events.slice();
+    return _data.events.filter(e =>
+      _match(e.name, q) || _match(e.short, q) || _match((e.tags || []).join(' '), q)
+    );
+  }
+  function searchMysteries(query) {
+    init();
+    const q = norm(query);
+    if (!q) return _data.mysteries.slice();
+    return _data.mysteries.filter(m =>
+      _match(m.name, q) || _match((m.questions || []).join(' '), q) || _match((m.tags || []).join(' '), q)
+    );
+  }
+  function searchAll(query) {
+    return {
+      characters: searchCharacters(query),
+      locations:  searchLocations(query),
+      events:     searchEvents(query),
+      mysteries:  searchMysteries(query),
+    };
   }
 
   function generateId(name) {
@@ -241,6 +376,7 @@ export const Store = (() => {
 
   function reset() {
     _data = _defaults();
+    _reindex();
     _persist();
   }
 
@@ -270,6 +406,7 @@ export const Store = (() => {
       const parsed = JSON.parse(json);
       if (parsed.characters) _data = { ..._defaults(), ...parsed };
       else throw new Error('Neplatný formát');
+      _reindex();
       _persist();
       return true;
     } catch(e) {
@@ -299,6 +436,10 @@ export const Store = (() => {
     getCharacters, getRelationships, getLocations, getEvents, getMysteries,
     getMapPins, getFactions, getFaction, getStatusMap,
     getCharacter, getLocation, getEvent, getMystery,
+    getCharactersByFaction, getCharactersInLocation, getRelationshipsFor,
+    getEventsWithCharacter, getEventsAtLocation, getMysteriesWithCharacter,
+    getPinForLocation,
+    searchCharacters, searchLocations, searchEvents, searchMysteries, searchAll,
     saveCharacter, deleteCharacter,
     saveRelationship, deleteRelationship,
     saveLocation, deleteLocation,

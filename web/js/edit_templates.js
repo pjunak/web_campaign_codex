@@ -57,19 +57,21 @@ export const EditTemplates = (() => {
     both: '↔ Oboustranná',
   };
 
-  /** Build <option> list for targets based on type config */
-  function _targetOpts(type, charId, selectedId) {
-    const cfg = REL_CONFIG[type] || REL_CONFIG.commands;
-    if (cfg.target === 'location') {
-      const locs = Store.getLocations();
-      return locs.map(l =>
-        `<option value="${l.id}" ${l.id===selectedId?'selected':''}>${_esc(l.name)}</option>`
-      ).join('');
-    }
-    const chars = Store.getCharacters().filter(c => c.id !== charId);
-    return _sortedChars(chars).map(c =>
-      `<option value="${c.id}" ${c.id===selectedId?'selected':''}>${_charBadge(c)}${_esc(c.name)}</option>`
-    ).join('');
+  /** Build a Combobox placeholder for the relationship target picker.
+   *  Replaces the legacy <select> + <option> list — values are still readable
+   *  via document.getElementById(`${prefix}-target`).value because the
+   *  Combobox renders a hidden <input type="hidden"> with that id. */
+  function _targetMount(type, charId, selectedId, prefix) {
+    const cfg     = REL_CONFIG[type] || REL_CONFIG.commands;
+    const source  = cfg.target === 'location' ? 'location' : 'character';
+    const exclude = cfg.target === 'character' ? charId : '';
+    const placeholder = cfg.target === 'location' ? 'Vyber místo…' : 'Vyber postavu…';
+    return `<div class="cb-mount rel-target-cb"
+              data-cb-id="${prefix}-target"
+              data-cb-source="${source}"
+              data-cb-exclude="${_esc(exclude)}"
+              data-cb-value="${_esc(selectedId || '')}"
+              data-cb-placeholder="${placeholder}"></div>`;
   }
 
   /** Build <option> list for directions based on type config */
@@ -98,7 +100,7 @@ export const EditTemplates = (() => {
       `<option value="${t}" ${t===type?'selected':''}>${REL_CONFIG[t].label}</option>`
     ).join('');
     const dirOptions = _dirOpts(type, dir);
-    const tgtOptions = _targetOpts(type, charId, targetId);
+    const tgtMount   = _targetMount(type, charId, targetId, prefix);
 
     const saveAction = isNew
       ? `EditMode.addRelationship('${charId}')`
@@ -113,7 +115,7 @@ export const EditTemplates = (() => {
       <select class="edit-select edit-select-sm" id="${prefix}-type"
         onchange="EditMode.relTypeChanged('${charId}','${prefix}')">${typeOpts}</select>
       <select class="edit-select edit-select-sm" id="${prefix}-dir">${dirOptions}</select>
-      <select class="edit-select edit-select-sm rel-target-select" id="${prefix}-target">${tgtOptions}</select>
+      <div class="rel-target-wrap">${tgtMount}</div>
       <input class="edit-input edit-input-sm" id="${prefix}-label" value="${_esc(label)}"
         placeholder="${_esc(REL_CONFIG[type].label)}">
       <button class="edit-add-btn" onclick="${saveAction}" title="${saveTitle}">${saveLabel}</button>
@@ -299,20 +301,19 @@ export const EditTemplates = (() => {
     const isNew = !e || !e.id;
     if (isNew) e = { id:"", name:"", order:99, sitting:null, short:"", description:"", characters:[], locations:[], consequence:"" };
     const uid = e.id || "new_ev";
-    const allChars = Store.getCharacters();
     const allLocs  = Store.getLocations();
     const allEvs   = Store.getEvents();
 
-    const charChecks = _sortedChars(allChars).map(c => `
-      <label class="edit-check">
-        <input type="checkbox" value="${c.id}" ${(e.characters||[]).includes(c.id)?"checked":""}>
-        ${_charBadge(c)}${_esc(c.name)}
-      </label>`).join("");
-    const locChecks = allLocs.map(l => `
-      <label class="edit-check">
-        <input type="checkbox" value="${l.id}" ${(e.locations||[]).includes(l.id)?"checked":""}>
-        ${_esc(l.name)}
-      </label>`).join("");
+    const charsValue = (e.characters || []).join(',');
+    const locsValue  = (e.locations  || []).join(',');
+    const charPicker = `<div id="evf-chars-${uid}" class="ms-mount"
+      data-ms-source="character"
+      data-ms-value="${_esc(charsValue)}"
+      data-ms-placeholder="Hledat postavu…"></div>`;
+    const locPicker  = `<div id="evf-locs-${uid}" class="ms-mount"
+      data-ms-source="location"
+      data-ms-value="${_esc(locsValue)}"
+      data-ms-placeholder="Hledat místo…"></div>`;
     const consOpts = `<option value="">— žádná —</option>` +
       allEvs.filter(ev => ev.id !== e.id).map(ev =>
         `<option value="${ev.id}" ${e.consequence===ev.id?"selected":""}>${ev.order}. ${_esc(ev.name)}</option>`
@@ -353,11 +354,11 @@ export const EditTemplates = (() => {
         <div class="edit-row-2">
           <div class="edit-section" style="margin-top:0">
             <div class="edit-section-title">Zúčastněné postavy</div>
-            <div class="edit-checks" id="evf-chars-${uid}">${charChecks}</div>
+            ${charPicker}
           </div>
           <div class="edit-section" style="margin-top:0">
             <div class="edit-section-title">Místa</div>
-            <div class="edit-checks" id="evf-locs-${uid}">${locChecks}</div>
+            ${locPicker}
           </div>
         </div>
         <div class="edit-field">
@@ -376,14 +377,13 @@ export const EditTemplates = (() => {
     const isNew = !m || !m.id;
     if (isNew) m = { id:"", name:"", priority:"střední", description:"", characters:[] };
     const uid = m.id || "new_mys";
-    const allChars = Store.getCharacters();
     const priOpts = ["kritická","vysoká","střední"].map(p =>
       `<option value="${p}" ${m.priority===p?"selected":""}>${p}</option>`).join("");
-    const charChecks = _sortedChars(allChars).map(c => `
-      <label class="edit-check">
-        <input type="checkbox" value="${c.id}" ${(m.characters||[]).includes(c.id)?"checked":""}>
-        ${_charBadge(c)}${_esc(c.name)}
-      </label>`).join("");
+    const charsValue = (m.characters || []).join(',');
+    const charPicker = `<div id="mf-chars-${uid}" class="ms-mount"
+      data-ms-source="character"
+      data-ms-value="${_esc(charsValue)}"
+      data-ms-placeholder="Hledat postavu…"></div>`;
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
@@ -411,7 +411,7 @@ export const EditTemplates = (() => {
         </div>
         <div class="edit-section">
           <div class="edit-section-title">Spojené postavy</div>
-          <div class="edit-checks" id="mf-chars-${uid}">${charChecks}</div>
+          ${charPicker}
         </div>
         <div class="edit-bottom-actions">
           <button class="edit-save-btn" onclick="EditMode.saveMystery('${m.id}')">💾 Uložit záhadu</button>
@@ -521,7 +521,7 @@ export const EditTemplates = (() => {
     getDynRowHtml: _dynRow,
     getRelSectionHtml: _relSection,
     getDirOptsHtml: _dirOpts,
-    getTargetOptsHtml: _targetOpts,
+    getTargetMountHtml: _targetMount,
     getRelConfig: () => REL_CONFIG,
     getChainEditHtml: _chainEditHtml,
   };
