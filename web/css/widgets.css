@@ -56,6 +56,7 @@
   max-height: 280px; display: flex; flex-direction: column;
   min-width: 220px;
 }
+.w-cb-pop[hidden] { display: none; }
 .w-cb-search {
   flex: 0 0 auto;
   background: rgba(0, 0, 0, 0.3);
@@ -130,6 +131,7 @@
   overflow: hidden;
   display: flex; flex-direction: column;
 }
+.w-ms-pop[hidden] { display: none; }
 .w-ms-list { flex: 1 1 auto; overflow-y: auto; padding: 0.2rem 0; }
 .w-ms-item {
   display: flex; align-items: center; gap: 0.4rem;
