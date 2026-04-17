@@ -245,6 +245,15 @@ export const Wiki = (() => {
         </div>
       </div>` : "";
 
+    // Profile chips: species/gender/age — only render if present and the
+    // viewer knows enough about the character to see physical details.
+    const profileBits = [];
+    if (c.knowledge >= 2 && c.species) profileBits.push(`<span class="profile-chip">🧬 ${c.species}</span>`);
+    if (c.knowledge >= 2 && c.gender)  profileBits.push(`<span class="profile-chip">⚥ ${c.gender}</span>`);
+    if (c.knowledge >= 2 && c.age)     profileBits.push(`<span class="profile-chip">⌛ ${c.age}</span>`);
+    const profileRow = profileBits.length
+      ? `<div class="char-article-profile">${profileBits.join("")}</div>` : "";
+
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
       <div class="char-article">
@@ -260,6 +269,7 @@ export const Wiki = (() => {
               ${statusBadge(c.status)}
               ${knowledgeBadge(c.knowledge)}
             </div>
+            ${profileRow}
             <div class="char-article-desc">${c.knowledge >= 2 ? c.description : "<em>O této postavě toho víme jen velmi málo.</em>"}</div>
           </div>
         </div>

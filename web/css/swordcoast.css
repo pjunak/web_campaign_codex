@@ -189,6 +189,38 @@
   z-index: 50;
   pointer-events: none;
 }
+.legend-hint {
+  font-size: 0.72rem;
+  color: rgba(232, 222, 196, 0.65);
+  font-style: italic;
+  margin-top: 0.15rem;
+}
+
+/* ── Zoom preset button group ────────────────────────────────── */
+.sc-zoom-presets {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: 0.4rem;
+  padding-left: 0.6rem;
+  border-left: 1px solid rgba(212,184,122,0.18);
+}
+
+/* ── Pin priority radio row in edit form ─────────────────────── */
+.sc-pri-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.6rem;
+}
+.sc-pri-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-muted, #c8bea4);
+  cursor: pointer;
+}
+.sc-pri-opt input[type="radio"] { accent-color: #d4b87a; }
 
 /* Settings overlay */
 .sc-overlay {

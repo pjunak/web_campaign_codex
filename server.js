@@ -69,6 +69,35 @@ function getFile(type) {
   return path.join(DATA_DIR, safeType + '.json');
 }
 
+// ── SSE broadcast (Phase 5.1) ────────────────────────────────────
+// Clients subscribe to GET /api/events; on every successful write we
+// push { type:'data-changed', hash } so they can refetch in <1s
+// instead of waiting up to 30s for the next poll.
+const _sseClients = new Set();
+function _broadcast(eventName, payload) {
+  const data = `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const res of _sseClients) {
+    try { res.write(data); } catch (_) { /* client gone — cleanup on close */ }
+  }
+}
+function _broadcastDataChanged() {
+  _broadcast('data-changed', { hash: _dataHash(), at: Date.now() });
+}
+
+// ── Validation enums (Phase 5.2) ─────────────────────────────────
+// Defense in depth: reject unknown collection names, relationship types,
+// and character statuses at the API boundary. Clients should never
+// produce these, but a buggy build or a hand-crafted PATCH could.
+const ALLOWED_TYPES = new Set([
+  'characters', 'relationships', 'locations', 'events',
+  'mysteries', 'mapPins', 'factions', 'deletedDefaults',
+]);
+const ALLOWED_REL_TYPES = new Set([
+  'commands', 'ally', 'enemy', 'mission', 'mystery',
+  'captured_by', 'history', 'uncertain', 'negotiates',
+]);
+const ALLOWED_CHAR_STATUS = new Set(['alive', 'dead', 'captured', 'unknown']);
+
 app.get('/api/data', (_req, res) => {
   try {
     const types    = ['characters', 'relationships', 'locations', 'events', 'mysteries', 'mapPins', 'factions', 'deletedDefaults'];
@@ -109,9 +138,13 @@ app.post('/api/data', requireAuth, (req, res) => {
   try {
     const body = req.body;
     if (!body || typeof body !== 'object') return res.status(400).json({ error: 'Invalid data' });
+    for (const key of Object.keys(body)) {
+      if (!ALLOWED_TYPES.has(key)) return res.status(400).json({ error: `Unknown collection: ${key}` });
+    }
     for (const [key, value] of Object.entries(body)) {
       if (typeof value === 'object') fs.writeFileSync(getFile(key), JSON.stringify(value, null, 2), 'utf8');
     }
+    _broadcastDataChanged();
     res.json({ ok: true });
   } catch (e) {
     console.error('POST /api/data:', e);
@@ -122,6 +155,23 @@ app.post('/api/data', requireAuth, (req, res) => {
 app.patch('/api/data', requireAuth, (req, res) => {
   try {
     const { type, action, payload } = req.body;
+
+    // Validation (Phase 5.2)
+    if (!ALLOWED_TYPES.has(type)) {
+      return res.status(400).json({ error: `Unknown collection: ${type}` });
+    }
+    if (action !== 'save' && action !== 'delete') {
+      return res.status(400).json({ error: `Unknown action: ${action}` });
+    }
+    if (action === 'save' && type === 'relationships' && payload && payload.type
+        && !ALLOWED_REL_TYPES.has(payload.type)) {
+      return res.status(400).json({ error: `Unknown relationship type: ${payload.type}` });
+    }
+    if (action === 'save' && type === 'characters' && payload && payload.status
+        && !ALLOWED_CHAR_STATUS.has(payload.status)) {
+      return res.status(400).json({ error: `Unknown character status: ${payload.status}` });
+    }
+
     const p = getFile(type);
     let container = type === 'factions' ? {} : [];
     if (fs.existsSync(p)) container = JSON.parse(fs.readFileSync(p, 'utf8'));
@@ -209,6 +259,7 @@ app.patch('/api/data', requireAuth, (req, res) => {
     }
 
     fs.writeFileSync(p, JSON.stringify(container, null, 2), 'utf8');
+    _broadcastDataChanged();
     res.json({ ok: true });
   } catch (e) {
     console.error('PATCH /api/data:', e);
@@ -218,6 +269,32 @@ app.patch('/api/data', requireAuth, (req, res) => {
 
 app.get('/api/version', (_req, res) => {
   res.json({ hash: _dataHash() });
+});
+
+// ── SSE event stream (Phase 5.1) ──────────────────────────────────
+// Replaces 30s /api/version polling. Server pushes a 'data-changed'
+// event after every successful write; clients refetch immediately.
+app.get('/api/events', (req, res) => {
+  res.set({
+    'Content-Type':      'text/event-stream',
+    'Cache-Control':     'no-cache, no-transform',
+    'Connection':        'keep-alive',
+    'X-Accel-Buffering': 'no', // disable nginx/proxy buffering
+  });
+  res.flushHeaders?.();
+  // Initial hello so the client confirms the channel is open
+  res.write(`event: hello\ndata: ${JSON.stringify({ hash: _dataHash(), at: Date.now() })}\n\n`);
+  _sseClients.add(res);
+
+  // Periodic ping (every 25 s) keeps proxies from closing the idle socket
+  const ping = setInterval(() => {
+    try { res.write(`: ping ${Date.now()}\n\n`); } catch (_) {}
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    _sseClients.delete(res);
+  });
 });
 
 app.post('/api/portrait/:charId', requireAuth, uploadChar.single('portrait'), (req, res) => {

@@ -146,6 +146,7 @@ export const EditTemplates = (() => {
       const defaults = { id:"", name:"", title:"", faction:"neutral", status:"alive",
                          knowledge:3, description:"", portrait:"", location:"",
                          rankChain:"", rank:"", locationRoles:[],
+                         species:"", gender:"", age:"",
                          known:[], unknown:[], tags:[] };
       c = { ...defaults, ...(c || {}) };
     }
@@ -209,6 +210,20 @@ export const EditTemplates = (() => {
               <div class="edit-field">
                 <label class="edit-label">Status</label>
                 <select class="edit-select" id="ef-status-${uid}">${sOpts}</select>
+              </div>
+            </div>
+            <div class="edit-row-3">
+              <div class="edit-field">
+                <label class="edit-label">Druh</label>
+                <input class="edit-input" id="ef-species-${uid}" value="${_esc(c.species)}" placeholder="Člověk, Elf, Drak…">
+              </div>
+              <div class="edit-field">
+                <label class="edit-label">Pohlaví</label>
+                <input class="edit-input" id="ef-gender-${uid}" value="${_esc(c.gender)}" placeholder="muž / žena / …">
+              </div>
+              <div class="edit-field">
+                <label class="edit-label">Věk</label>
+                <input class="edit-input" id="ef-age-${uid}" value="${_esc(c.age)}" placeholder="32 / starý / neznámý">
               </div>
             </div>
             <div class="edit-field">

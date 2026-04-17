@@ -278,6 +278,25 @@
   margin-bottom: 1rem;
 }
 .char-article-badges { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+.char-article-profile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: -0.5rem 0 1.1rem;
+}
+.profile-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.18rem 0.55rem;
+  background: rgba(212,184,122,0.08);
+  border: 1px solid rgba(212,184,122,0.25);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  color: var(--text-parchment);
+  font-family: 'Inter', sans-serif;
+  white-space: nowrap;
+}
 .char-article-desc {
   font-size: 0.95rem;
   color: var(--text-parchment);

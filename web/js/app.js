@@ -110,33 +110,72 @@ window.Admin = Admin;
     }
   }
 
-  // ── Collaborative polling ───────────────────────────────────
-  // Every 30 s, ask the server if the data changed.
-  // If it did, reload the current view so all group members
-  // see up-to-date information without a full page refresh.
+  // ── Collaborative sync via SSE (Phase 5.1) ──────────────────
+  // Subscribe to /api/events; server pushes 'data-changed' after every
+  // successful write. We refetch + re-render in <1s. No polling.
+  // If the user is actively editing a form, we defer the re-render
+  // until focus leaves the form to avoid clobbering in-progress input.
   let _lastHash    = null;
-  let _pollPaused  = false;   // pause while the user is actively editing
+  let _syncPaused   = false;  // true while an input/textarea/select is focused
+  let _pendingHash  = null;   // latest hash seen while paused; null = nothing pending
+  let _es           = null;
+  let _esRetryMs    = 1000;
 
-  function _startPolling() {
-    setInterval(async () => {
-      if (_pollPaused) return;
-      try {
-        const res = await fetch('/api/version');
-        if (!res.ok) return;
-        const { hash } = await res.json();
-        if (_lastHash === null) { _lastHash = hash; return; }
-        if (hash !== _lastHash) {
-          _lastHash = hash;
-          await Store.load();          // refresh in-memory data
-          navigate(getRoute());        // re-render current view
-        }
-      } catch (_) { /* server temporarily unreachable — will retry next interval */ }
-    }, 30_000);
+  async function _applyRemoteChange(hash) {
+    // Skip only if we already have this exact hash; null means "unknown, refetch anyway"
+    if (hash !== null && _lastHash !== null && hash === _lastHash) return;
+    if (hash !== null) _lastHash = hash;
+    await Store.load();
+    navigate(getRoute());
   }
 
-  // Pause polling while the user has a form focused
-  document.addEventListener("focusin",  e => { if (e.target.matches("input,textarea,select")) _pollPaused = true;  });
-  document.addEventListener("focusout", e => { if (e.target.matches("input,textarea,select")) _pollPaused = false; });
+  function _startSync() {
+    try { _es?.close(); } catch (_) {}
+    const es = new EventSource('/api/events');
+    _es = es;
+
+    es.addEventListener('hello', ev => {
+      try {
+        const { hash } = JSON.parse(ev.data);
+        if (_lastHash === null) _lastHash = hash;
+        _esRetryMs = 1000;  // reset backoff on successful connect
+      } catch (_) {}
+    });
+
+    es.addEventListener('data-changed', ev => {
+      let hash = null;
+      try { hash = JSON.parse(ev.data).hash; } catch (_) {}
+      if (_syncPaused) { _pendingHash = hash; return; }
+      _applyRemoteChange(hash);
+    });
+
+    es.onerror = () => {
+      // EventSource auto-reconnects, but if the server went away
+      // cleanly (connection closed) it sometimes needs a manual kick.
+      // Close + reopen with backoff up to 30 s.
+      try { es.close(); } catch (_) {}
+      _es = null;
+      const delay = _esRetryMs;
+      _esRetryMs = Math.min(_esRetryMs * 2, 30_000);
+      setTimeout(_startSync, delay);
+    };
+  }
+
+  // Pause sync while the user has a form focused — flush any pending
+  // change the moment they tab out.
+  document.addEventListener("focusin",  e => {
+    if (e.target.matches("input,textarea,select")) _syncPaused = true;
+  });
+  document.addEventListener("focusout", e => {
+    if (e.target.matches("input,textarea,select")) {
+      _syncPaused = false;
+      if (_pendingHash !== null) {
+        const h = _pendingHash;
+        _pendingHash = null;
+        _applyRemoteChange(h);
+      }
+    }
+  });
 
   // ── Init ────────────────────────────────────────────────────
   window.addEventListener("hashchange", () => navigate(getRoute()));
@@ -196,7 +235,7 @@ window.Admin = Admin;
     }
 
     navigate(getRoute());
-    _startPolling();
+    _startSync();
   });
 
   function showMapSheet() {

@@ -30,6 +30,26 @@ export const WorldMap = (() => {
     fog:       { label: 'Neprozkoumaný', ring: '#555'   },
   };
 
+  // ── Pin priority (1 = always visible, 3 = needs high zoom) ────
+  // Derive from pin.priority if set, else infer from pin.type so existing
+  // data needs no migration.
+  const PRIORITY_BY_TYPE = {
+    major_city: 1, fortress: 1,
+    city: 2, town: 2, region: 2,
+    village: 3, dungeon: 3, landmark: 3, enemy: 3, custom: 3,
+  };
+  function _priorityOf(pin) {
+    if (pin.priority === 1 || pin.priority === 2 || pin.priority === 3) return pin.priority;
+    return PRIORITY_BY_TYPE[pin.type] || 3;
+  }
+  // Returns the highest priority value visible at this zoom level.
+  // Higher zoom = more pins. Calibrated for the typical fit zoom near -3.
+  function _thresholdForZoom(z) {
+    if (z <= -4) return 1;
+    if (z <= -2) return 2;
+    return 3;
+  }
+
   let _map       = null;
   let _imgW      = 1;
   let _imgH      = 1;
@@ -37,6 +57,7 @@ export const WorldMap = (() => {
   let _markers   = {};
   let _addMode   = false;
   let _editPinId = null;
+  let _hiddenCount = 0;  // tracked by _applyPinVisibility for the legend
   let _modeObserver    = null;
   let _resizeObserver  = null;
   let _eventPathsVisible = false;
@@ -57,6 +78,11 @@ export const WorldMap = (() => {
           <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn" onclick="WorldMap.toggleEventPaths()" title="Zobraz polohy a trasy událostí z Časové Osy">
             📜 Trasy událostí
           </button>
+          <span class="sc-zoom-presets">
+            <button class="sc-btn" onclick="WorldMap.zoomFitAll()" title="Oddálit na celou mapu">🌐 Celá</button>
+            <button class="sc-btn" onclick="WorldMap.zoomMajorCities()" title="Přiblížit k hlavním městům">🏙 Hlavní</button>
+            <button class="sc-btn" onclick="WorldMap.zoomCurrentSitting()" title="Přiblížit k místům posledního sezení">📍 Dění</button>
+          </span>
           <button class="sc-btn" onclick="WorldMap.showSettings()">⚙ Mapa</button>
           <span class="sc-hint">${_addMode
             ? 'Klikni na mapu pro přidání nového místa'
@@ -152,6 +178,12 @@ export const WorldMap = (() => {
 
     _markers = {};
     Store.getMapPins().forEach(_placePin);
+    _applyPinVisibility();
+
+    _map.on('zoomend', () => {
+      _applyPinVisibility();
+      _renderLegend();
+    });
 
     _map.on('click', evt => {
       if (!_addMode) return;
@@ -165,6 +197,10 @@ export const WorldMap = (() => {
       Object.values(_markers).forEach(m => {
         if (m.dragging) editable ? m.dragging.enable() : m.dragging.disable();
       });
+      // In edit mode, hidden pins fade in (so DM can still drag/edit);
+      // out of edit mode, they hide outright. Re-apply on mode change.
+      _applyPinVisibility();
+      _renderLegend();
     });
     _modeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
@@ -233,6 +269,70 @@ export const WorldMap = (() => {
     if (!pin) return;
     if (_markers[pinId]) { _markers[pinId].remove(); delete _markers[pinId]; }
     _placePin(pin);
+    _applyPinVisibility();
+  }
+
+  // ── Importance-based visibility ────────────────────────────────
+  // Hide markers above the current zoom's priority threshold. In edit
+  // mode, fade them instead so the DM can still see, drag and edit them.
+  function _applyPinVisibility() {
+    if (!_map) return;
+    const z         = _map.getZoom();
+    const threshold = _thresholdForZoom(z);
+    const editable  = document.body.classList.contains('edit-mode');
+    const pinsById  = Object.fromEntries(Store.getMapPins().map(p => [p.id, p]));
+    let hidden = 0;
+    for (const [id, marker] of Object.entries(_markers)) {
+      const pin = pinsById[id];
+      if (!pin) continue;
+      const tooLowPriority = _priorityOf(pin) > threshold;
+      const el = marker.getElement?.();
+      if (tooLowPriority) hidden++;
+      if (editable) {
+        // Always on map, fade if hidden by zoom
+        if (el) el.style.opacity = tooLowPriority ? '0.35' : '1';
+        if (el) el.style.pointerEvents = tooLowPriority ? 'none' : '';
+      } else {
+        // Truly hide off-priority markers
+        if (el) {
+          el.style.opacity = '1';
+          el.style.pointerEvents = '';
+          el.style.display = tooLowPriority ? 'none' : '';
+        }
+      }
+    }
+    _hiddenCount = hidden;
+  }
+
+  // ── Preset zoom buttons ────────────────────────────────────────
+  function zoomFitAll() {
+    if (_map && _bounds) _map.fitBounds(_bounds, { animate: true });
+  }
+  function zoomMajorCities() {
+    if (!_map) return;
+    const pts = Store.getMapPins()
+      .filter(p => _priorityOf(p) === 1)
+      .map(p => _toLL(p.x, p.y));
+    if (!pts.length) { zoomFitAll(); return; }
+    _map.fitBounds(L.latLngBounds(pts).pad(0.25), { animate: true });
+  }
+  function zoomCurrentSitting() {
+    if (!_map) return;
+    const events = Store.getEvents();
+    const sittings = events.map(e => e.sitting).filter(s => typeof s === 'number');
+    if (!sittings.length) { zoomFitAll(); return; }
+    const lastSitting = Math.max(...sittings);
+    const locs = new Set();
+    for (const e of events) {
+      if (e.sitting === lastSitting) {
+        for (const lid of e.locations || []) locs.add(lid);
+      }
+    }
+    const pts = Store.getMapPins()
+      .filter(p => p.locationId && locs.has(p.locationId))
+      .map(p => _toLL(p.x, p.y));
+    if (!pts.length) { zoomFitAll(); return; }
+    _map.fitBounds(L.latLngBounds(pts).pad(0.4), { animate: true });
   }
 
   function _openPinPanel(pinId) {
@@ -281,6 +381,12 @@ export const WorldMap = (() => {
       .map(([k, v]) => `<option value="${k}" ${pin.type===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
     const statusOpts = Object.entries(PIN_STATUSES)
       .map(([k, v]) => `<option value="${k}" ${pin.status===k?'selected':''}>${v.label}</option>`).join('');
+    const currentPri = _priorityOf(pin);
+    const priLabels  = { 1: '1 — Vždy viditelné', 2: '2 — Střední zoom', 3: '3 — Detailní zoom' };
+    const priOpts = [1, 2, 3].map(p =>
+      `<label class="sc-pri-opt">
+        <input type="radio" name="spf-priority" value="${p}" ${currentPri===p?'checked':''}> ${priLabels[p]}
+      </label>`).join('');
 
     document.getElementById('sc-panel-content').innerHTML = `
       <div class="sc-pin-form">
@@ -291,6 +397,8 @@ export const WorldMap = (() => {
         <select class="sc-input" id="spf-type">${typeOpts}</select>
         <label class="sc-label">Status</label>
         <select class="sc-input" id="spf-status">${statusOpts}</select>
+        <label class="sc-label">Důležitost (priorita zobrazení)</label>
+        <div class="sc-pri-row" id="spf-priority">${priOpts}</div>
         <label class="sc-label">Popis / Poznámky</label>
         <textarea class="sc-input" id="spf-notes" rows="3" placeholder="Krátký popis...">${_esc(pin.notes||'')}</textarea>
         <label class="sc-label">Propojit s kampaňovým místem</label>
@@ -317,6 +425,8 @@ export const WorldMap = (() => {
     if (!name) { alert('Název je povinný.'); return; }
     const id = _editPinId || ('pin_' + Store.generateId(name) + '_' + Date.now());
     const existing = isNew ? null : Store.getMapPins().find(p => p.id === _editPinId);
+    const priRaw = document.querySelector('#spf-priority input[name="spf-priority"]:checked')?.value;
+    const priority = priRaw ? parseInt(priRaw, 10) : undefined;
     Store.saveMapPin({
       id,
       name,
@@ -324,6 +434,7 @@ export const WorldMap = (() => {
       status:     document.getElementById('spf-status')?.value  || 'known',
       notes:      document.getElementById('spf-notes')?.value   || '',
       locationId: document.getElementById('spf-location')?.value || null,
+      priority:   (priority === 1 || priority === 2 || priority === 3) ? priority : undefined,
       x: existing ? existing.x : x,
       y: existing ? existing.y : y,
     });
@@ -467,8 +578,16 @@ export const WorldMap = (() => {
   function _renderLegend() {
     const leg = document.getElementById('sc-legend');
     if (!leg) return;
+    const z         = _map ? _map.getZoom() : null;
+    const threshold = z !== null ? _thresholdForZoom(z) : 3;
+    const priText   = threshold === 1 ? 'priorita 1' : threshold === 2 ? 'priorita 1–2' : 'všechny priority';
+    const hint = _hiddenCount > 0
+      ? `<div class="legend-hint">${_hiddenCount} skryto · přibliž pro více míst</div>`
+      : '';
     leg.innerHTML = `
-      <div class="legend-title">Status</div>
+      <div class="legend-title">Zoom: ${priText}</div>
+      ${hint}
+      <div class="legend-title" style="margin-top:0.6rem">Status</div>
       ${Object.entries(PIN_STATUSES).map(([, v]) =>
         `<div class="legend-item">
           <div class="legend-dot" style="background:${v.ring}"></div>
@@ -499,5 +618,6 @@ export const WorldMap = (() => {
     toggleEventPaths,
     openEditPin, openPinPanel, savePin, deletePin,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
+    zoomFitAll, zoomMajorCities, zoomCurrentSitting,
   };
 })();

@@ -326,8 +326,14 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
 }
+.edit-row-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.75rem;
+}
 @media (max-width: 500px) {
   .edit-row-2 { grid-template-columns: 1fr; }
+  .edit-row-3 { grid-template-columns: 1fr; }
 }
 
 /* ── Edit section (facts, relationships) ─────────────────────── */
