@@ -6,10 +6,59 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
+import { norm, esc } from './utils.js';
 
 export const Wiki = (() => {
 
   const KNOWLEDGE_LABELS = ["Neznámý","Tušený","Základní","Dobře znám","Plně zmapován"];
+
+  // ── List-view UI state (search + sort) ─────────────────────────
+  // Persisted so SSE re-renders and navigation keep the user's filter.
+  const LS_LIST_KEY = 'wiki_list_state_v1';
+  const _defaultListState = {
+    postavy: { q: '', sort: 'faction' },
+    mista:   { q: '', sort: 'name' },
+    frakce:  { q: '', sort: 'default' },
+  };
+  let _listState = (() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(LS_LIST_KEY) || '{}');
+      return {
+        postavy: { ..._defaultListState.postavy, ...(s.postavy || {}) },
+        mista:   { ..._defaultListState.mista,   ...(s.mista   || {}) },
+        frakce:  { ..._defaultListState.frakce,  ...(s.frakce  || {}) },
+      };
+    } catch { return JSON.parse(JSON.stringify(_defaultListState)); }
+  })();
+  function _persistListState() {
+    try { localStorage.setItem(LS_LIST_KEY, JSON.stringify(_listState)); } catch {}
+  }
+
+  // Shared toolbar: search input + sort <select>. Re-renders only the
+  // matching grid-host div via Wiki.set<Kind>Search / set<Kind>Sort,
+  // so typing never loses focus.
+  function _listToolbar(kind, sortOpts) {
+    const s = _listState[kind];
+    const opts = sortOpts.map(([v, label]) =>
+      `<option value="${v}" ${s.sort===v?'selected':''}>${label}</option>`
+    ).join('');
+    const Name = kind[0].toUpperCase() + kind.slice(1);
+    return `
+      <div class="list-toolbar">
+        <input class="list-search-input" type="search" id="wl-${kind}-q"
+               value="${esc(s.q)}" placeholder="🔍 Hledat…" autocomplete="off"
+               oninput="Wiki.set${Name}Search(this.value)">
+        <label class="list-sort">
+          <span class="list-sort-label">Řadit</span>
+          <select class="list-sort-select" onchange="Wiki.set${Name}Sort(this.value)">
+            ${opts}
+          </select>
+        </label>
+      </div>`;
+  }
+
+  // Czech-aware name compare. Falls back to default locale if `cs` not supported.
+  const _czCompare = (a, b) => String(a||'').localeCompare(String(b||''), 'cs');
 
   function factionBadge(factionId) {
     const f = Store.getFactions()[factionId] || Store.getFactions().neutral;
@@ -132,17 +181,60 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   //  CHARACTER LIST
   // ══════════════════════════════════════════════════════════════
-  function renderCharacterList(filterFaction) {
-    const factions = Store.getFactions();
-    let chars = Store.getCharacters();
+  const FACTION_ORDER = ["party","cult_high","cult_red","dragon","greenest","neutral","mystery"];
+  const STATUS_ORDER  = { alive: 0, captured: 1, unknown: 2, dead: 3 };
+
+  // Apply current search + sort to the character list. `filterFaction` is
+  // the faction filter-bar selection (orthogonal to text search).
+  function _postavyApply(filterFaction) {
+    const s = _listState.postavy;
+    let chars = s.q ? Store.searchCharacters(s.q) : Store.getCharacters();
     if (filterFaction) chars = chars.filter(c => c.faction === filterFaction);
+    chars = [...chars];
+    switch (s.sort) {
+      case 'name':
+        chars.sort((a, b) => _czCompare(a.name, b.name));
+        break;
+      case 'status':
+        chars.sort((a, b) =>
+          (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9)
+          || _czCompare(a.name, b.name));
+        break;
+      case 'knowledge':
+        chars.sort((a, b) =>
+          (b.knowledge ?? 0) - (a.knowledge ?? 0) || _czCompare(a.name, b.name));
+        break;
+      case 'faction':
+      default:
+        chars.sort((a, b) => {
+          const ai = FACTION_ORDER.indexOf(a.faction);
+          const bi = FACTION_ORDER.indexOf(b.faction);
+          return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+            || _czCompare(a.name, b.name);
+        });
+    }
+    return chars;
+  }
 
-    const factionOrder = ["party","cult_high","cult_red","dragon","greenest","neutral","mystery"];
-    chars = [...chars].sort((a,b) =>
-      factionOrder.indexOf(a.faction) - factionOrder.indexOf(b.faction)
-    );
+  function _postavyGridHtml(filterFaction) {
+    const chars = _postavyApply(filterFaction);
+    const newCard = EditMode.isActive() ? `
+      <a class="char-card char-card-new" href="#/postava/new" style="text-decoration:none">
+        <div class="char-card-new-icon">＋</div>
+        <div class="char-card-new-label">Nová postava</div>
+      </a>` : "";
+    const emptyMsg = chars.length === 0
+      ? `<div class="list-empty">Žádná postava neodpovídá hledání.</div>` : "";
+    return `${chars.map(renderCharacterCard).join("")}${emptyMsg}${newCard}`;
+  }
 
+  function renderCharacterList(filterFaction) {
+    _listState.postavy.faction = filterFaction || null;
+    _persistListState();
+
+    const factions = Store.getFactions();
     const allChars = Store.getCharacters();
+
     const filters = Object.entries(factions).map(([id, f]) => {
       const count = allChars.filter(c => c.faction === id).length;
       if (count === 0) return "";
@@ -150,26 +242,50 @@ export const Wiki = (() => {
         onclick="Wiki.renderPage('postavy','${id}')">${f.badge} ${f.name} (${count})</button>`;
     }).join("");
 
-    const newCard = EditMode.isActive() ? `
-      <a class="char-card char-card-new" href="#/postava/new" style="text-decoration:none">
-        <div class="char-card-new-icon">＋</div>
-        <div class="char-card-new-label">Nová postava</div>
-      </a>` : "";
+    const shown = _postavyApply(filterFaction);
 
     return `
       <div class="page-header">
         <h1>Postavy</h1>
-        <div class="subtitle">${chars.length} záznamů${filterFaction ? " · " + factions[filterFaction]?.name : ""}</div>
+        <div class="subtitle">${shown.length} / ${allChars.length} záznamů${filterFaction ? " · " + factions[filterFaction]?.name : ""}</div>
       </div>
       <div class="filter-bar">
         <button class="filter-btn ${!filterFaction ? "active" : ""}" onclick="Wiki.renderPage('postavy')">Všechny</button>
         ${filters}
       </div>
-      <div class="char-grid">
-        ${chars.map(renderCharacterCard).join("")}
-        ${newCard}
-      </div>
+      ${_listToolbar('postavy', [
+        ['faction',   'Frakce'],
+        ['name',      'Jméno (A→Z)'],
+        ['status',    'Status'],
+        ['knowledge', 'Znalost (nejvíc)'],
+      ])}
+      <div class="char-grid" id="wl-postavy-grid">${_postavyGridHtml(filterFaction)}</div>
     `;
+  }
+
+  function setPostavySearch(v) {
+    _listState.postavy.q = v || '';
+    _persistListState();
+    _refreshPostavyGrid();
+    _refreshPostavyCount();
+  }
+  function setPostavySort(v) {
+    _listState.postavy.sort = v || 'faction';
+    _persistListState();
+    _refreshPostavyGrid();
+  }
+  function _refreshPostavyGrid() {
+    const host = document.getElementById('wl-postavy-grid');
+    if (host) host.innerHTML = _postavyGridHtml(_listState.postavy.faction);
+  }
+  function _refreshPostavyCount() {
+    const total = Store.getCharacters().length;
+    const shown = _postavyApply(_listState.postavy.faction).length;
+    const sub = document.querySelector('.page-header .subtitle');
+    if (!sub) return;
+    const f = _listState.postavy.faction;
+    const fLabel = f ? " · " + (Store.getFactions()[f]?.name || '') : "";
+    sub.textContent = `${shown} / ${total} záznamů${fLabel}`;
   }
 
   function renderCharacterCard(c) {
@@ -281,8 +397,54 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   //  LOCATION LIST & ARTICLE
   // ══════════════════════════════════════════════════════════════
+  function _mistaApply() {
+    const s = _listState.mista;
+    let locs = s.q ? Store.searchLocations(s.q) : Store.getLocations();
+    locs = [...locs];
+    switch (s.sort) {
+      case 'type':
+        locs.sort((a, b) => _czCompare(a.type, b.type) || _czCompare(a.name, b.name));
+        break;
+      case 'status':
+        locs.sort((a, b) => _czCompare(a.status, b.status) || _czCompare(a.name, b.name));
+        break;
+      case 'knowledge':
+        locs.sort((a, b) =>
+          (b.knowledge ?? 0) - (a.knowledge ?? 0) || _czCompare(a.name, b.name));
+        break;
+      case 'name':
+      default:
+        locs.sort((a, b) => _czCompare(a.name, b.name));
+    }
+    return locs;
+  }
+
+  function _mistaGridHtml() {
+    const locs = _mistaApply();
+    if (locs.length === 0) {
+      return `<div class="list-empty">Žádné místo neodpovídá hledání.</div>`;
+    }
+    return locs.map(l => {
+      const editBtn = EditMode.isActive()
+        ? `<span class="list-edit-btn" title="Upravit">✏</span>` : "";
+      const desc = l.description ? `${l.description.substring(0, 120)}…` : "";
+      return `<a class="list-item" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div class="list-item-name">📍 ${l.name}</div>
+          <div style="display:flex;align-items:center;gap:0.5rem">
+            <span class="badge" style="background:rgba(255,255,255,0.07);color:var(--text-muted)">${l.type || ''}</span>
+            ${editBtn}
+          </div>
+        </div>
+        <div class="list-item-sub">${l.status || ''}</div>
+        <div class="list-item-desc">${desc}</div>
+      </a>`;
+    }).join("");
+  }
+
   function renderLocationList() {
-    const locations = Store.getLocations();
+    const total = Store.getLocations().length;
+    const shown = _mistaApply().length;
     const newBtn = EditMode.isActive() ? `
       <a href="#/misto/new" class="list-item-new" style="text-decoration:none">＋ Nové místo</a>` : "";
 
@@ -290,28 +452,41 @@ export const Wiki = (() => {
       <div class="page-header" style="display:flex;align-items:center;gap:1rem">
         <div style="flex:1">
           <h1>Místa</h1>
-          <div class="subtitle">${locations.length} lokací</div>
+          <div class="subtitle">${shown} / ${total} lokací</div>
         </div>
         ${newBtn}
       </div>
-      <div class="list-items">
-        ${locations.map(l => {
-          const editBtn = EditMode.isActive()
-            ? `<span class="list-edit-btn" title="Upravit">✏</span>` : "";
-          return `<a class="list-item" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start">
-              <div class="list-item-name">📍 ${l.name}</div>
-              <div style="display:flex;align-items:center;gap:0.5rem">
-                <span class="badge" style="background:rgba(255,255,255,0.07);color:var(--text-muted)">${l.type}</span>
-                ${editBtn}
-              </div>
-            </div>
-            <div class="list-item-sub">${l.status}</div>
-            <div class="list-item-desc">${l.description.substring(0, 120)}…</div>
-          </a>`;
-        }).join("")}
-      </div>
+      ${_listToolbar('mista', [
+        ['name',      'Jméno (A→Z)'],
+        ['type',      'Typ'],
+        ['status',    'Stav'],
+        ['knowledge', 'Znalost (nejvíc)'],
+      ])}
+      <div class="list-items" id="wl-mista-grid">${_mistaGridHtml()}</div>
     `;
+  }
+
+  function setMistaSearch(v) {
+    _listState.mista.q = v || '';
+    _persistListState();
+    _refreshMistaGrid();
+    _refreshMistaCount();
+  }
+  function setMistaSort(v) {
+    _listState.mista.sort = v || 'name';
+    _persistListState();
+    _refreshMistaGrid();
+  }
+  function _refreshMistaGrid() {
+    const host = document.getElementById('wl-mista-grid');
+    if (host) host.innerHTML = _mistaGridHtml();
+  }
+  function _refreshMistaCount() {
+    const sub = document.querySelector('.page-header .subtitle');
+    if (!sub) return;
+    const total = Store.getLocations().length;
+    const shown = _mistaApply().length;
+    sub.textContent = `${shown} / ${total} lokací`;
   }
 
   function renderLocationArticle(id) {
@@ -506,13 +681,48 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   //  FACTION LIST
   // ══════════════════════════════════════════════════════════════
-  function renderFactionList() {
+  function _frakceApply() {
+    const s = _listState.frakce;
     const factions = Store.getFactions();
     const chars    = Store.getCharacters();
+    const q        = norm(s.q);
 
-    const cards = Object.entries(factions).map(([id, f]) => {
-      const memberCount = chars.filter(c => c.faction === id).length;
-      const rankCount   = (f.rankChains || []).reduce((s, ch) => s + ch.ranks.length, 0);
+    // Entries with pre-computed member count for sort "members" option.
+    let entries = Object.entries(factions).map(([id, f]) => ({
+      id, f,
+      memberCount: chars.filter(c => c.faction === id).length,
+    }));
+
+    if (q) {
+      entries = entries.filter(({ id, f }) =>
+        norm(f.name).includes(q)
+        || norm(id).includes(q)
+        || norm(f.description || '').includes(q)
+      );
+    }
+
+    switch (s.sort) {
+      case 'name':
+        entries.sort((a, b) => _czCompare(a.f.name, b.f.name));
+        break;
+      case 'members':
+        entries.sort((a, b) =>
+          b.memberCount - a.memberCount || _czCompare(a.f.name, b.f.name));
+        break;
+      case 'default':
+      default:
+        // Preserve insertion order from data.js / storage.
+    }
+    return entries;
+  }
+
+  function _frakceGridHtml() {
+    const entries = _frakceApply();
+    if (entries.length === 0) {
+      return `<div class="list-empty">Žádná frakce neodpovídá hledání.</div>`;
+    }
+    return entries.map(({ id, f, memberCount }) => {
+      const rankCount = (f.rankChains || []).reduce((s, ch) => s + ch.ranks.length, 0);
       const ovl = EditMode.isActive() ? editOverlay(`#/frakce/${id}`) : "";
       return `
         <a class="faction-card" href="#/frakce/${id}" style="text-decoration:none;position:relative;border-color:${f.color}55">
@@ -527,17 +737,49 @@ export const Wiki = (() => {
           </div>
         </a>`;
     }).join("");
+  }
 
+  function renderFactionList() {
+    const total = Object.keys(Store.getFactions()).length;
+    const shown = _frakceApply().length;
     return `
       <div class="page-header" style="display:flex;align-items:center;gap:1rem">
         <div style="flex:1">
           <h1>⬡ Frakce</h1>
-          <div class="subtitle">${Object.keys(factions).length} frakcí</div>
+          <div class="subtitle">${shown} / ${total} frakcí</div>
         </div>
         ${EditMode.isActive() ? `<a href="#/frakce/new" class="list-item-new" style="text-decoration:none">＋ Nová frakce</a>` : ""}
       </div>
-      <div class="faction-grid">${cards}</div>
+      ${_listToolbar('frakce', [
+        ['default', 'Výchozí'],
+        ['name',    'Jméno (A→Z)'],
+        ['members', 'Počet postav'],
+      ])}
+      <div class="faction-grid" id="wl-frakce-grid">${_frakceGridHtml()}</div>
     `;
+  }
+
+  function setFrakceSearch(v) {
+    _listState.frakce.q = v || '';
+    _persistListState();
+    _refreshFrakceGrid();
+    _refreshFrakceCount();
+  }
+  function setFrakceSort(v) {
+    _listState.frakce.sort = v || 'default';
+    _persistListState();
+    _refreshFrakceGrid();
+  }
+  function _refreshFrakceGrid() {
+    const host = document.getElementById('wl-frakce-grid');
+    if (host) host.innerHTML = _frakceGridHtml();
+  }
+  function _refreshFrakceCount() {
+    const sub = document.querySelector('.page-header .subtitle');
+    if (!sub) return;
+    const total = Object.keys(Store.getFactions()).length;
+    const shown = _frakceApply().length;
+    sub.textContent = `${shown} / ${total} frakcí`;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -644,5 +886,10 @@ export const Wiki = (() => {
     window.scrollTo(0, 0);
   }
 
-  return { renderPage };
+  return {
+    renderPage,
+    setPostavySearch, setPostavySort,
+    setMistaSearch,   setMistaSort,
+    setFrakceSearch,  setFrakceSort,
+  };
 })();

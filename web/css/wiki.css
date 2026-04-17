@@ -451,6 +451,62 @@
 }
 .timeline-event-short { font-size: 0.85rem; color: var(--text-light); }
 
+/* ── List toolbar: search + sort ─────────────────────────────── */
+.list-toolbar {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+.list-search-input {
+  flex: 1;
+  min-width: 220px;
+  background: var(--bg-raised);
+  border: 1px solid rgba(212,184,122,0.22);
+  border-radius: 6px;
+  padding: 0.45rem 0.75rem;
+  color: var(--text-parchment);
+  font-family: var(--font-ui, 'Inter', sans-serif);
+  font-size: 0.88rem;
+}
+.list-search-input:focus {
+  outline: none;
+  border-color: rgba(212,184,122,0.55);
+  background: var(--bg-card);
+}
+.list-search-input::placeholder { color: var(--text-muted); }
+.list-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.list-sort-label { letter-spacing: 0.05em; text-transform: uppercase; }
+.list-sort-select {
+  background: var(--bg-raised);
+  border: 1px solid rgba(212,184,122,0.22);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  color: var(--text-parchment);
+  font-family: var(--font-ui, 'Inter', sans-serif);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.list-sort-select:focus {
+  outline: none;
+  border-color: rgba(212,184,122,0.55);
+}
+.list-empty {
+  grid-column: 1 / -1;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
 /* ── Faction Filter Tabs ─────────────────────────────────────── */
 .filter-bar {
   display: flex;
