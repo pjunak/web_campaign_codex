@@ -92,6 +92,20 @@
 }
 .w-cb-empty-row { padding: 0.7rem; color: rgba(232, 222, 196, 0.5); font-style: italic; text-align: center; }
 
+/* "+ Create new entity" row shown when typed text doesn't match any option */
+.w-cb-create, .w-ms-create {
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #d4b87a;
+  border-top: 1px dashed rgba(212, 184, 122, 0.3);
+  background: rgba(212, 184, 122, 0.06);
+}
+.w-cb-create:hover, .w-ms-create:hover {
+  background: rgba(212, 184, 122, 0.18);
+  color: #f7eecf;
+}
+
 /* ── MultiSelect ─────────────────────────────────────────────── */
 .w-ms {
   display: flex; flex-direction: column; gap: 0.35rem;

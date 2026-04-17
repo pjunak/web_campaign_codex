@@ -38,7 +38,7 @@ window.Admin = Admin;
     requestAnimationFrame(() => Widgets.mountAll(document.body));
 
     // Mind-map sub-routes that all belong to Myšlenkový Palác
-    const PALAC_ROUTES = new Set(["/mapa/palac", "/mapa/frakce", "/mapa/vztahy", "/mapa/tajemstvi"]);
+    const PALAC_ROUTES = new Set(["/mapa/palac", "/mapa/frakce", "/mapa/vztahy", "/mapa/mista", "/mapa/tajemstvi"]);
 
     // Sync sidebar active state
     document.querySelectorAll("[data-route]").forEach(el => {
@@ -67,7 +67,7 @@ window.Admin = Admin;
         WorldMap.render();
       } else if (sub === "casova-osa") {
         Timeline.render();
-      } else if (sub === "palac" || sub === "frakce" || sub === "vztahy" || sub === "tajemstvi") {
+      } else if (sub === "palac" || sub === "frakce" || sub === "vztahy" || sub === "mista" || sub === "tajemstvi") {
         CloudMap.render(sub === "palac" ? "frakce" : sub);
       } else {
         CloudMap.render("frakce");

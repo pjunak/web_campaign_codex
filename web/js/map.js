@@ -300,7 +300,8 @@ export const WorldMap = (() => {
           data-cb-value="${_esc(pin.locationId || '')}"
           data-cb-allow-empty="1"
           data-cb-empty-label="— žádné —"
-          data-cb-placeholder="Hledat místo…"></div>
+          data-cb-placeholder="Hledat místo…"
+          data-cb-on-create="location"></div>
         <div class="sc-pin-actions">
           <button class="sc-btn ok" onclick="WorldMap.savePin(${isNew}, ${pin.x||0}, ${pin.y||0})">💾 Uložit</button>
           ${!isNew ? `<button class="sc-btn" onclick="WorldMap.openPinPanel('${pin.id}')">Zpět</button>` : ''}

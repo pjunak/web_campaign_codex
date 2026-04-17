@@ -71,7 +71,8 @@ export const EditTemplates = (() => {
               data-cb-source="${source}"
               data-cb-exclude="${_esc(exclude)}"
               data-cb-value="${_esc(selectedId || '')}"
-              data-cb-placeholder="${placeholder}"></div>`;
+              data-cb-placeholder="${placeholder}"
+              data-cb-on-create="${source}"></div>`;
   }
 
   /** Build <option> list for directions based on type config */
@@ -141,10 +142,13 @@ export const EditTemplates = (() => {
 
   function renderCharacterEditor(c) {
     const isNew = !c || !c.id;
-    if (isNew) c = { id:"", name:"", title:"", faction:"neutral", status:"alive",
-                     knowledge:3, description:"", portrait:"", location:"",
-                     rankChain:"", rank:"", locationRoles:[],
-                     known:[], unknown:[], tags:[] };
+    if (isNew) {
+      const defaults = { id:"", name:"", title:"", faction:"neutral", status:"alive",
+                         knowledge:3, description:"", portrait:"", location:"",
+                         rankChain:"", rank:"", locationRoles:[],
+                         known:[], unknown:[], tags:[] };
+      c = { ...defaults, ...(c || {}) };
+    }
     const uid = c.id || "new";
     const factions  = Store.getFactions();
     const statusMap = Store.getStatusMap();
@@ -244,7 +248,10 @@ export const EditTemplates = (() => {
 
   function renderLocationEditor(l) {
     const isNew = !l || !l.id;
-    if (isNew) l = { id:"", name:"", type:"", status:"", description:"", notes:"", characters:[] };
+    if (isNew) {
+      const defaults = { id:"", name:"", type:"", status:"", description:"", notes:"", characters:[] };
+      l = { ...defaults, ...(l || {}) };
+    }
     const uid = l.id || "new_loc";
     const allChars = Store.getCharacters();
     const charChecks = _sortedChars(allChars).map(c => `
@@ -299,7 +306,10 @@ export const EditTemplates = (() => {
 
   function renderEventEditor(e) {
     const isNew = !e || !e.id;
-    if (isNew) e = { id:"", name:"", order:99, sitting:null, short:"", description:"", characters:[], locations:[], consequence:"" };
+    if (isNew) {
+      const defaults = { id:"", name:"", order:99, sitting:null, short:"", description:"", characters:[], locations:[], consequence:"" };
+      e = { ...defaults, ...(e || {}) };
+    }
     const uid = e.id || "new_ev";
     const allLocs  = Store.getLocations();
     const allEvs   = Store.getEvents();
@@ -309,11 +319,13 @@ export const EditTemplates = (() => {
     const charPicker = `<div id="evf-chars-${uid}" class="ms-mount"
       data-ms-source="character"
       data-ms-value="${_esc(charsValue)}"
-      data-ms-placeholder="Hledat postavu…"></div>`;
+      data-ms-placeholder="Hledat postavu…"
+      data-ms-on-create="character"></div>`;
     const locPicker  = `<div id="evf-locs-${uid}" class="ms-mount"
       data-ms-source="location"
       data-ms-value="${_esc(locsValue)}"
-      data-ms-placeholder="Hledat místo…"></div>`;
+      data-ms-placeholder="Hledat místo…"
+      data-ms-on-create="location"></div>`;
     const consOpts = `<option value="">— žádná —</option>` +
       allEvs.filter(ev => ev.id !== e.id).map(ev =>
         `<option value="${ev.id}" ${e.consequence===ev.id?"selected":""}>${ev.order}. ${_esc(ev.name)}</option>`
@@ -383,7 +395,8 @@ export const EditTemplates = (() => {
     const charPicker = `<div id="mf-chars-${uid}" class="ms-mount"
       data-ms-source="character"
       data-ms-value="${_esc(charsValue)}"
-      data-ms-placeholder="Hledat postavu…"></div>`;
+      data-ms-placeholder="Hledat postavu…"
+      data-ms-on-create="character"></div>`;
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>

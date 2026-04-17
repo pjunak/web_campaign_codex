@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
+import { norm, debounce } from './utils.js';
 
 export const CloudMap = (() => {
 
@@ -128,21 +129,51 @@ export const CloudMap = (() => {
     </div>`;
   }
 
-  function _locationCloudH(loc) {
+  function _locationCloudH(loc, mode) {
     // strip + name + divider + optional status row + overhead
-    const rows = loc.status ? 1 : 0;
+    let rows = loc.status ? 1 : 0;
+    if (mode === 'mista') {
+      // region row + chip rows (~2 chars per row, max 3 rows)
+      if (loc.region) rows++;
+      const charCount = (loc.characters || []).length;
+      if (charCount) rows += Math.min(3, Math.ceil(charCount / 2));
+      const conCount = (loc.connections || []).length;
+      if (conCount) rows++;
+    }
     return _base() + rows * H_FACT + H_OVERHEAD;
   }
 
-  function _locationCloudHTML(loc) {
+  function _locationCloudHTML(loc, mode) {
     const status = loc.status || '';
-    const fact = status ? _esc(status) : '';
+    let body = '';
+
+    if (mode === 'mista') {
+      if (loc.region) body += `<div class="cm-fact cm-hint">${_esc(loc.region)}</div>`;
+      if (status)     body += `<div class="cm-fact cm-dim">${_esc(status)}</div>`;
+      const chars = (loc.characters || [])
+        .map(cid => Store.getCharacter(cid)).filter(Boolean);
+      if (chars.length) {
+        const chips = chars.slice(0, 6).map(c => {
+          const f = Store.getFactions()[c.faction] || {};
+          return `<span class="cm-loc-chip" style="--cc:${f.color || '#888'}">${_esc(c.name)}</span>`;
+        }).join('');
+        const more = chars.length > 6 ? `<span class="cm-loc-chip cm-loc-chip-more">+${chars.length - 6}</span>` : '';
+        body += `<div class="cm-loc-chips">${chips}${more}</div>`;
+      }
+      const conCount = (loc.connections || []).length;
+      if (conCount) {
+        body += `<div class="cm-fact cm-dim">${conCount} ${conCount === 1 ? 'spojení' : conCount < 5 ? 'spojení' : 'spojení'}</div>`;
+      }
+    } else {
+      if (status) body += `<div class="cm-fact cm-dim">${_esc(status)}</div>`;
+    }
+
     return `<div class="cm-cloud cm-location" data-id="${loc.id}" data-type="location"
               style="--cc:#5D7A3A; width:${CW}px">
       <div class="cm-strip">📍 Místo</div>
       <div class="cm-name">${_esc(loc.name)}</div>
       <div class="cm-divider"></div>
-      ${fact ? `<div class="cm-fact cm-dim">${fact}</div>` : ''}
+      ${body}
     </div>`;
   }
 
@@ -374,6 +405,245 @@ export const CloudMap = (() => {
     _applyFactionFilter();
   }
 
+  // ── Visual filter state (search / status / knowledge / edge-type / focus) ──
+  // These DIM rather than fully hide; faction filter still owns hard-hide.
+  // Persisted per mode in localStorage under LS_VFILTER_PREFIX.
+  const LS_VFILTER_PREFIX = 'cm_vf_';
+  function _vfilterKey() { return LS_VFILTER_PREFIX + _currentMode; }
+
+  let _filters = {
+    search: '',
+    statuses: new Set(),       // empty = no status filter
+    minKnowledge: 0,
+    hiddenEdgeTypes: new Set(),
+    focusId: null,
+    focusHops: 2,
+  };
+  let _focusMode = false;
+
+  function _loadVFilter() {
+    if (!_currentMode) return;
+    try {
+      const raw = localStorage.getItem(_vfilterKey());
+      if (!raw) return;
+      const o = JSON.parse(raw);
+      _filters.search          = o.search || '';
+      _filters.statuses        = new Set(o.statuses || []);
+      _filters.minKnowledge    = +o.minKnowledge || 0;
+      _filters.hiddenEdgeTypes = new Set(o.hiddenEdgeTypes || []);
+      _filters.focusHops       = +o.focusHops || 2;
+      _focusMode               = !!o.focusMode;
+    } catch (e) {}
+  }
+  function _saveVFilter() {
+    if (!_currentMode) return;
+    try {
+      localStorage.setItem(_vfilterKey(), JSON.stringify({
+        search:          _filters.search,
+        statuses:        [..._filters.statuses],
+        minKnowledge:    _filters.minKnowledge,
+        hiddenEdgeTypes: [..._filters.hiddenEdgeTypes],
+        focusHops:       _filters.focusHops,
+        focusMode:       _focusMode,
+      }));
+    } catch (e) {}
+  }
+
+  // Returns concatenated searchable text for a node (diacritic-insensitive match).
+  function _nodeSearchText(node) {
+    const id = node.id(), type = node.data('type');
+    if (type === 'character') {
+      const c = Store.getCharacter(id);
+      if (!c) return '';
+      return [c.name, c.title, ...(c.tags || [])].filter(Boolean).join(' ');
+    }
+    if (type === 'location') {
+      const l = Store.getLocation(id);
+      if (!l) return '';
+      return [l.name, l.region, ...(l.tags || [])].filter(Boolean).join(' ');
+    }
+    if (type === 'mystery') {
+      const m = Store.getMystery(id);
+      if (!m) return '';
+      return [m.name, ...(m.questions || [])].filter(Boolean).join(' ');
+    }
+    if (type === 'event') {
+      const e = Store.getEvent(id);
+      if (!e) return '';
+      return [e.name, e.short, e.description].filter(Boolean).join(' ');
+    }
+    if (type === 'faction') {
+      const fId = id.replace(/^hub_/, '');
+      const f = Store.getFactions()[fId];
+      return f ? [f.name, f.badge].filter(Boolean).join(' ') : '';
+    }
+    return '';
+  }
+
+  // Best-effort: resolve a Cytoscape edge to a relationship-type string for
+  // the edge-type filter. Returns null when no meaningful type applies.
+  function _edgeRelType(edge) {
+    const id = edge.id();
+    if (id.startsWith('mbr_'))   return 'member';
+    if (id.startsWith('loc_'))   return 'located_at';
+    if (id.startsWith('chain-')) return 'chain';
+    if (id.includes('__'))       return 'participation';
+    // Pattern: src-tgt-reltype  (relationship edges from _relEdge)
+    const dash = id.lastIndexOf('-');
+    if (dash > 0) {
+      const tail = id.slice(dash + 1);
+      if (EDGE_TYPE_LABELS[tail] || EDGE_STYLES[tail]) return tail;
+    }
+    return null;
+  }
+
+  // BFS: collect node IDs within `hops` steps of `startId` along undirected edges.
+  function _bfsNeighborhood(startId, hops) {
+    const visited = new Set([startId]);
+    let frontier = [startId];
+    for (let h = 0; h < hops; h++) {
+      const next = [];
+      for (const nid of frontier) {
+        const node = _cy.getElementById(nid);
+        if (!node || !node.length) continue;
+        node.connectedEdges().forEach(e => {
+          const other = e.source().id() === nid ? e.target() : e.source();
+          const oid = other.id();
+          if (!visited.has(oid)) { visited.add(oid); next.push(oid); }
+        });
+      }
+      frontier = next;
+      if (!frontier.length) break;
+    }
+    return visited;
+  }
+
+  // Recompute which nodes and edges should be dimmed by the active filters.
+  // Uses the existing `faded` class so _syncEdgeLabels() picks up edge dimming
+  // for free; wrappers get .cm-vfilter-dim for fast CSS opacity.
+  function _applyVisualFilter() {
+    if (!_cy) return;
+    const q = norm(_filters.search);
+    const focusSet = (_focusMode && _filters.focusId)
+      ? _bfsNeighborhood(_filters.focusId, _filters.focusHops)
+      : null;
+
+    const dim = new Set();
+    _cy.nodes().forEach(node => {
+      const id   = node.id();
+      const type = node.data('type');
+      let match = true;
+
+      if (q && !norm(_nodeSearchText(node)).includes(q)) match = false;
+
+      if (match && type === 'character') {
+        const c = Store.getCharacter(id);
+        if (c) {
+          if (_filters.statuses.size && !_filters.statuses.has(c.status || 'unknown')) match = false;
+          if (match && _filters.minKnowledge > 0 && (c.knowledge || 0) < _filters.minKnowledge) match = false;
+        }
+      }
+
+      if (match && focusSet && !focusSet.has(id)) match = false;
+
+      if (!match) dim.add(id);
+    });
+
+    _cy.nodes().forEach(node => {
+      const id = node.id();
+      const isDim = dim.has(id);
+      if (isDim) node.addClass('faded');
+      else       node.removeClass('faded');
+      const wrapper = _cloudMap[id];
+      const cloud = wrapper && wrapper.firstElementChild;
+      if (cloud) cloud.classList.toggle('cm-vfilter-dim', isDim);
+    });
+
+    _cy.edges().forEach(edge => {
+      const eType   = _edgeRelType(edge);
+      const typeHidden = !!eType && _filters.hiddenEdgeTypes.has(eType);
+      const srcDim = edge.source().hasClass('faded');
+      const tgtDim = edge.target().hasClass('faded');
+      const isDim = typeHidden || srcDim || tgtDim;
+      if (isDim) edge.addClass('faded');
+      else       edge.removeClass('faded');
+    });
+
+    _syncEdgeLabels();
+  }
+
+  // Public setters used by inline event handlers in the filter bar.
+  const _applyVisualFilterDebounced = debounce(_applyVisualFilter, 80);
+
+  function _setSearch(q) {
+    _filters.search = String(q || '');
+    _saveVFilter();
+    _applyVisualFilterDebounced();
+  }
+  function _toggleStatus(s) {
+    if (_filters.statuses.has(s)) _filters.statuses.delete(s);
+    else _filters.statuses.add(s);
+    _saveVFilter();
+    _syncFilterChipUI();
+    _applyVisualFilter();
+  }
+  function _setMinKnowledge(n) {
+    _filters.minKnowledge = Math.max(0, Math.min(4, +n || 0));
+    document.querySelectorAll('.cm-knowledge-val').forEach(el => el.textContent = _filters.minKnowledge);
+    _saveVFilter();
+    _applyVisualFilter();
+  }
+  function _toggleEdgeType(t) {
+    if (_filters.hiddenEdgeTypes.has(t)) _filters.hiddenEdgeTypes.delete(t);
+    else _filters.hiddenEdgeTypes.add(t);
+    _saveVFilter();
+    _syncFilterChipUI();
+    _applyVisualFilter();
+  }
+  function _toggleFocusMode() {
+    _focusMode = !_focusMode;
+    if (!_focusMode) _filters.focusId = null;
+    _saveVFilter();
+    _syncFilterChipUI();
+    _applyVisualFilter();
+  }
+  function _setFocusHops(n) {
+    _filters.focusHops = Math.max(1, Math.min(4, +n || 2));
+    document.querySelectorAll('.cm-focus-hops-val').forEach(el => el.textContent = _filters.focusHops);
+    _saveVFilter();
+    if (_focusMode && _filters.focusId) _applyVisualFilter();
+  }
+  function _clearFilters() {
+    _filters.search = '';
+    _filters.statuses.clear();
+    _filters.minKnowledge = 0;
+    _filters.hiddenEdgeTypes.clear();
+    _filters.focusId = null;
+    _focusMode = false;
+    _saveVFilter();
+    const sb = document.querySelector('.cm-search');
+    if (sb) sb.value = '';
+    const ks = document.querySelector('.cm-knowledge input[type=range]');
+    if (ks) ks.value = 0;
+    document.querySelectorAll('.cm-knowledge-val').forEach(el => el.textContent = '0');
+    _syncFilterChipUI();
+    _applyVisualFilter();
+  }
+
+  // Sync chip 'is-on' class to current filter state.
+  function _syncFilterChipUI() {
+    document.querySelectorAll('.cm-chip[data-status]').forEach(b => {
+      b.classList.toggle('is-on', _filters.statuses.has(b.dataset.status));
+    });
+    document.querySelectorAll('.cm-chip[data-edge-type]').forEach(b => {
+      b.classList.toggle('is-off', _filters.hiddenEdgeTypes.has(b.dataset.edgeType));
+    });
+    const focusBtn = document.querySelector('.cm-focus-toggle');
+    if (focusBtn) focusBtn.classList.toggle('is-on', _focusMode);
+    const hopsBox = document.querySelector('.cm-focus-hops');
+    if (hopsBox) hopsBox.hidden = !_focusMode;
+  }
+
   function _applyFactionFilter() {
     if (!_cy) return;
     // For non-character nodes (location, mystery, event):
@@ -468,6 +738,7 @@ export const CloudMap = (() => {
   }
 
   function _destroy() {
+    _hideCtxMenu();
     Object.keys(_inertiaRaf).forEach(_killInertia);
     Object.values(_edgeLabels).forEach(({ div, svgEls }) => {
       if (div) div.remove();
@@ -500,6 +771,12 @@ export const CloudMap = (() => {
   function _buildUI(mode) {
     _currentMode = mode;
     _hiddenFactions = new Set(); // reset; _loadPositions() may repopulate from localStorage
+    // Reset visual filter then load saved state for this mode
+    _filters = { search: '', statuses: new Set(), minKnowledge: 0,
+                 hiddenEdgeTypes: new Set(), focusId: null, focusHops: 2 };
+    _focusMode = false;
+    _loadVFilter();
+
     document.getElementById('main-content').style.display = '';
     document.getElementById('main-content').innerHTML = `
       <div class="map-container">
@@ -507,15 +784,77 @@ export const CloudMap = (() => {
           <div class="map-title">☁ Myšlenkový Palác</div>
           <a href="#/mapa/frakce"    class="map-mode-btn ${mode==='frakce'    ?'active':''}">Frakce</a>
           <a href="#/mapa/vztahy"    class="map-mode-btn ${mode==='vztahy'    ?'active':''}">Vztahy</a>
+          <a href="#/mapa/mista"     class="map-mode-btn ${mode==='mista'     ?'active':''}">Místa</a>
           <a href="#/mapa/tajemstvi" class="map-mode-btn ${mode==='tajemstvi' ?'active':''}">Záhady</a>
           <button class="map-mode-btn cm-save-pos" onclick="CloudMap.resetLayout()" title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
           <button class="map-mode-btn cm-save-pos" onclick="CloudMap.savePositions()" title="Uloží aktuální pozice uzlů">💾 Uložit pozice</button>
           <span class="map-hint">Klik = detail · Táhni = pohyb · Scroll = zoom</span>
         </div>
+        ${_buildFilterBar(mode)}
         <div id="cy-container"></div>
         <div class="map-legend" id="map-legend"></div>
       </div>
     `;
+  }
+
+  // Per-mode toolbar row with search, status/knowledge/edge chips, focus toggle.
+  function _buildFilterBar(mode) {
+    const statusMap = Store.getStatusMap();
+    const statusChips = Object.entries(statusMap).map(([key, s]) => {
+      const on = _filters.statuses.has(key) ? ' is-on' : '';
+      return `<button type="button" class="cm-chip${on}" data-status="${key}"
+        onclick="CloudMap.toggleStatus('${key}')" title="${_esc(s.label)}"
+        style="--chip-color:${s.color || '#888'}">${s.icon || ''} ${_esc(s.label)}</button>`;
+    }).join('');
+
+    // Edge-type chips depend on mode
+    let edgeChips = '';
+    const buildEdgeChip = (t, label, color) => {
+      const off = _filters.hiddenEdgeTypes.has(t) ? ' is-off' : '';
+      return `<button type="button" class="cm-chip cm-chip-edge${off}" data-edge-type="${t}"
+        onclick="CloudMap.toggleEdgeType('${t}')" style="--chip-color:${color}">${_esc(label)}</button>`;
+    };
+    if (mode === 'vztahy') {
+      edgeChips = [
+        ['commands','velí',EDGE_COLORS.commands], ['ally','spojenec',EDGE_COLORS.ally],
+        ['enemy','nepřítel',EDGE_COLORS.enemy], ['mission','mise',EDGE_COLORS.mission],
+        ['mystery','záhada',EDGE_COLORS.mystery], ['negotiates','jednání',EDGE_COLORS.negotiates],
+        ['captured_by','zajat',EDGE_COLORS.captured_by], ['history','minulost',EDGE_COLORS.history],
+        ['uncertain','nejistota',EDGE_COLORS.uncertain],
+      ].map(([t,l,c]) => buildEdgeChip(t,l,c)).join('');
+    } else if (mode === 'frakce') {
+      edgeChips = [
+        ['member','frakce','#888'], ['located_at','lokace','#5D7A3A'],
+        ['commands','velí',EDGE_COLORS.commands], ['negotiates','jednání',EDGE_COLORS.negotiates],
+        ['ally','spojenec',EDGE_COLORS.ally],
+      ].map(([t,l,c]) => buildEdgeChip(t,l,c)).join('');
+    }
+
+    const focusOn = _focusMode ? ' is-on' : '';
+    return `
+      <div class="map-filterbar">
+        <input type="text" class="cm-search" placeholder="🔍 Hledat (jméno, tag, region…)"
+               value="${_esc(_filters.search)}"
+               oninput="CloudMap.setSearch(this.value)">
+        ${statusChips ? `<div class="cm-chip-group" title="Filtr podle stavu">${statusChips}</div>` : ''}
+        <label class="cm-knowledge" title="Skrýt postavy se znalostí pod prahem">
+          <span>Znalost ≥</span>
+          <input type="range" min="0" max="4" step="1" value="${_filters.minKnowledge}"
+                 oninput="CloudMap.setMinKnowledge(this.value)">
+          <span class="cm-knowledge-val">${_filters.minKnowledge}</span>
+        </label>
+        ${edgeChips ? `<div class="cm-chip-group cm-chip-group-edge" title="Skrýt typy vazeb">${edgeChips}</div>` : ''}
+        <button type="button" class="cm-focus-toggle${focusOn}"
+                onclick="CloudMap.toggleFocusMode()"
+                title="Klik na uzel zaměří jeho okolí místo otevření detailu">🎯 Fokus</button>
+        <span class="cm-focus-hops" ${_focusMode ? '' : 'hidden'}>
+          <input type="range" min="1" max="4" step="1" value="${_filters.focusHops}"
+                 oninput="CloudMap.setFocusHops(this.value)">
+          <span class="cm-focus-hops-val">${_filters.focusHops}</span> hop
+        </span>
+        <button type="button" class="cm-clear-filters" onclick="CloudMap.clearFilters()"
+                title="Vymazat všechny filtry">⨯</button>
+      </div>`;
   }
 
   // ── Cytoscape init ───────────────────────────────────────────
@@ -1017,17 +1356,35 @@ export const CloudMap = (() => {
 
   // ── Tap / highlight ──────────────────────────────────────────
   function _onTap(evt) {
-    // Tap on background → clear all highlights
+    // Tap on background → clear focus / temporary highlights, keep persistent filters
     if (evt.target === _cy) {
-      _cy.elements().removeClass('faded highlighted');
+      if (_focusMode && _filters.focusId) {
+        _filters.focusId = null;
+        _saveVFilter();
+      }
       Object.values(_cloudMap).forEach(w => {
-        w.firstElementChild && w.firstElementChild.classList.remove('cm-faded', 'cm-highlighted');
+        w.firstElementChild && w.firstElementChild.classList.remove('cm-highlighted');
       });
+      _applyVisualFilter();
       return;
     }
 
-    const node      = evt.target;
+    const node = evt.target;
     if (!node.isNode()) return;
+
+    // Focus mode: zaměří okolí, žádná navigace
+    if (_focusMode) {
+      _filters.focusId = node.id();
+      _saveVFilter();
+      _applyVisualFilter();
+      const wrapper = _cloudMap[node.id()];
+      if (wrapper && wrapper.firstElementChild) {
+        wrapper.firstElementChild.classList.add('cm-highlighted');
+      }
+      return;
+    }
+
+    // Standard behavior: 1-hop highlight then navigate
     const connected = node.connectedEdges().connectedNodes().union(node);
     const ids       = new Set(connected.map(n => n.id()));
 
@@ -1056,6 +1413,127 @@ export const CloudMap = (() => {
       if (d.type === 'faction')   window.location.hash = `#/frakce/${d.id.replace('hub_', '')}`;
       if (d.type === 'location')  window.location.hash = `#/misto/${d.id}`;
     }, 120);
+  }
+
+  // ── Right-click context menu ─────────────────────────────────
+  // Singleton menu element appended to <body>; rebuilt per invocation.
+  let _ctxMenu = null;
+
+  function _hideCtxMenu() {
+    if (_ctxMenu) { _ctxMenu.remove(); _ctxMenu = null; }
+  }
+
+  function _detailHashFor(d) {
+    if (d.type === 'character') return `#/postava/${d.id}`;
+    if (d.type === 'mystery')   return `#/zahada/${d.id}`;
+    if (d.type === 'event')     return `#/udalost/${d.id}`;
+    if (d.type === 'faction')   return `#/frakce/${d.id.replace('hub_','')}`;
+    if (d.type === 'location')  return `#/misto/${d.id}`;
+    return null;
+  }
+
+  function _onCtxNode(evt) {
+    _hideCtxMenu();
+    const node = evt.target;
+    const d = node.data();
+    const isFocused = _focusMode && _filters.focusId === node.id();
+
+    const items = [];
+    const hash = _detailHashFor(d);
+    if (hash) items.push({ label: '↗ Otevřít detail', action: () => { window.location.hash = hash; } });
+
+    if (isFocused) {
+      items.push({ label: '⨯ Zrušit fokus', action: () => {
+        _filters.focusId = null;
+        _saveVFilter();
+        _applyVisualFilter();
+      }});
+    } else {
+      items.push({ label: '🎯 Zaměřit okolí', action: () => {
+        _focusMode = true;
+        _filters.focusId = node.id();
+        _saveVFilter();
+        _syncFilterChipUI();
+        _applyVisualFilter();
+        const wrapper = _cloudMap[node.id()];
+        if (wrapper && wrapper.firstElementChild) {
+          wrapper.firstElementChild.classList.add('cm-highlighted');
+        }
+      }});
+    }
+
+    if (d.type === 'location' && _currentMode !== 'mista') {
+      items.push({ label: '📍 Otevřít v módu Místa', action: () => {
+        window.location.hash = '#/mapa/mista';
+      }});
+    }
+    if (d.type === 'character' && _currentMode !== 'vztahy') {
+      items.push({ label: '🔗 Zobrazit vazby', action: () => {
+        window.location.hash = '#/mapa/vztahy';
+      }});
+    }
+    if (d.type === 'character') {
+      items.push({ label: '➕ Přidat vazbu odsud', action: () => {
+        // Land on the character page; in edit mode the relationship form
+        // is rendered inline and pre-focused on the new-row.
+        window.location.hash = `#/postava/${d.id}`;
+        // Best-effort: scroll to the new-row after the page renders.
+        setTimeout(() => {
+          const row = document.querySelector(`#rel-section-${d.id} .rel-add-form`);
+          if (row) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            row.querySelector('select')?.focus();
+          }
+        }, 250);
+      }});
+    }
+
+    // Position menu near cursor (use rendered position from cytoscape event)
+    const oe = evt.originalEvent;
+    const x = oe ? oe.clientX : 100;
+    const y = oe ? oe.clientY : 100;
+    _showCtxMenu(items, x, y);
+  }
+
+  function _showCtxMenu(items, x, y) {
+    _ctxMenu = document.createElement('div');
+    _ctxMenu.className = 'cm-ctx-menu';
+    _ctxMenu.innerHTML = items.map((it, i) =>
+      `<button type="button" class="cm-ctx-item" data-idx="${i}">${_esc(it.label)}</button>`
+    ).join('');
+    _ctxMenu.addEventListener('click', e => {
+      const btn = e.target.closest('.cm-ctx-item');
+      if (!btn) return;
+      const idx = +btn.dataset.idx;
+      const it = items[idx];
+      _hideCtxMenu();
+      if (it && it.action) it.action();
+    });
+    document.body.appendChild(_ctxMenu);
+
+    // Clamp inside viewport
+    const rect = _ctxMenu.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const cx = Math.min(x, vw - rect.width  - 6);
+    const cy = Math.min(y, vh - rect.height - 6);
+    _ctxMenu.style.left = Math.max(4, cx) + 'px';
+    _ctxMenu.style.top  = Math.max(4, cy) + 'px';
+
+    // One-shot dismiss on next outside click / Esc / scroll
+    setTimeout(() => {
+      const dismiss = (e) => {
+        if (_ctxMenu && _ctxMenu.contains(e.target)) return;
+        _hideCtxMenu();
+        document.removeEventListener('mousedown', dismiss);
+        document.removeEventListener('keydown',   onEsc);
+        window.removeEventListener('blur',        offBlur);
+      };
+      const onEsc = (e) => { if (e.key === 'Escape') dismiss(e); };
+      const offBlur = () => dismiss({ target: document.body });
+      document.addEventListener('mousedown', dismiss);
+      document.addEventListener('keydown',   onEsc);
+      window.addEventListener('blur',        offBlur);
+    }, 0);
   }
 
   // ── Post-render height correction ────────────────────────────
@@ -1091,6 +1569,8 @@ export const CloudMap = (() => {
     _cy.on('drag',    'node',  _bounce);
     _cy.on('dragfree','node',  evt => { _onDragFree(evt); });
     _cy.on('tap',              _onTap);
+    _cy.on('cxttap',  'node',  _onCtxNode);
+    _cy.on('cxttap',           evt => { if (evt.target === _cy) _hideCtxMenu(); });
 
     // ── Smooth zoom — override Cytoscape's coarse wheel zoom ──────
     // Cytoscape's built-in wheel step (~15–20 % per tick) feels jumpy.
@@ -1125,6 +1605,12 @@ export const CloudMap = (() => {
       requestAnimationFrame(() => {
         _resizeToActual();
         _sync();
+        // Apply persisted visual filters (search/status/knowledge/edge-type/focus)
+        _syncFilterChipUI();
+        if (_filters.search || _filters.statuses.size || _filters.minKnowledge ||
+            _filters.hiddenEdgeTypes.size || (_focusMode && _filters.focusId)) {
+          _applyVisualFilter();
+        }
         // Positions are saved manually via the "Uložit pozice" button in edit mode
       });
     });
@@ -1449,12 +1935,70 @@ export const CloudMap = (() => {
     }
   }
 
+  // ── MODE: MÍSTA ─────────────────────────────────────────────
+  // Locations as primary nodes; edges from each location's connections[].
+  // Each card shows region + status + character chips (inhabitants).
+  function _renderMista() {
+    _buildUI('mista');
+    const locations = Store.getLocations();
+    const locById = new Map(locations.map(l => [l.id, l]));
+
+    const nodes = locations.map(l =>
+      _proxy(l.id, 'location', CW, _locationCloudH(l, 'mista'))
+    );
+
+    // Dedupe undirected connections by sorted pair key
+    const seen = new Set();
+    const edges = [];
+    locations.forEach(l => {
+      (l.connections || []).forEach(toId => {
+        if (!locById.has(toId) || toId === l.id) return;
+        const key = [l.id, toId].sort().join('|');
+        if (seen.has(key)) return;
+        seen.add(key);
+        edges.push({
+          data: {
+            id: `con_${key}`,
+            source: l.id, target: toId,
+            label: '', color: '#5D7A3A', width: 2, lineStyle: 'solid',
+          }
+        });
+      });
+    });
+
+    _initCy([...nodes, ...edges], {
+      name: 'cose', animate: true, animationDuration: 700,
+      nodeRepulsion: 18000, gravity: 0.16, idealEdgeLength: 220,
+      padding: 80, randomize: false, numIter: 3000,
+    });
+
+    locations.forEach(l => _addCloud(_locationCloudHTML(l, 'mista'), l.id));
+    _bind();
+    _addEdgeLabels();
+
+    const leg = document.getElementById('map-legend');
+    if (leg) {
+      leg.innerHTML = `
+        <div class="legend-title">Místa</div>
+        <div class="legend-item">
+          <div class="legend-dot" style="background:#5D7A3A"></div> Místo
+        </div>
+        <div class="legend-item">
+          <div class="legend-line" style="border-top:2px solid #5D7A3A"></div> Spojení
+        </div>
+        <div class="legend-item" style="margin-top:0.4rem;color:var(--text-muted)">
+          Štítky uvnitř karty ukazují postavy v místě.
+        </div>`;
+    }
+  }
+
   // ── Public ────────────────────────────────────────────────
   function render(mode) {
     _destroy();
     switch (mode) {
       case 'frakce':     _renderFrakce();     break;
       case 'vztahy':     _renderVztahy();     break;
+      case 'mista':      _renderMista();      break;
       case 'tajemstvi':  _renderTajemstvi();  break;
       case 'casova-osa': _renderCasovaOsa();  break;
       default:           _renderFrakce();
@@ -1467,5 +2011,16 @@ export const CloudMap = (() => {
     if (_currentMode) render(_currentMode);
   }
 
-  return { render, resetLayout, savePositions: _savePositions, toggleFaction: _toggleFaction };
+  return {
+    render, resetLayout,
+    savePositions:   _savePositions,
+    toggleFaction:   _toggleFaction,
+    setSearch:       _setSearch,
+    toggleStatus:    _toggleStatus,
+    setMinKnowledge: _setMinKnowledge,
+    toggleEdgeType:  _toggleEdgeType,
+    toggleFocusMode: _toggleFocusMode,
+    setFocusHops:    _setFocusHops,
+    clearFilters:    _clearFilters,
+  };
 })();

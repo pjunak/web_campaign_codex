@@ -316,6 +316,12 @@ export const Wiki = (() => {
       return c ? `<a class="relation-chip" href="#/postava/${cid}">${factions[c.faction]?.badge || "👤"} ${c.name}</a>` : "";
     }).join("");
 
+    const inlineCreate = EditMode.isActive() ? `
+      <div class="inline-create-row">
+        <button class="inline-create-btn" onclick="EditMode.startNewCharacterInLocation('${l.id}')">＋ Postava zde</button>
+        <button class="inline-create-btn" onclick="EditMode.startNewEvent({locations:['${l.id}']})">＋ Událost zde</button>
+      </div>` : "";
+
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
       <div class="location-article">
@@ -329,6 +335,7 @@ export const Wiki = (() => {
           <div class="char-section-title">Přítomné Postavy</div>
           <div class="relation-chips">${chars}</div>
         </div>` : ""}
+        ${inlineCreate}
       </div>
     `;
   }
@@ -566,6 +573,11 @@ export const Wiki = (() => {
       !c.rankChain || !(f.rankChains || []).find(ch => ch.id === c.rankChain)
     );
 
+    const inlineCreate = EditMode.isActive() ? `
+      <div class="inline-create-row">
+        <button class="inline-create-btn" onclick="EditMode.startNewCharacter({faction:'${id}'})">＋ Nová postava ve frakci</button>
+      </div>` : "";
+
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
       <div class="location-article">
@@ -576,6 +588,7 @@ export const Wiki = (() => {
             <div class="subtitle">${chars.length} postav</div>
           </div>
         </div>
+        ${inlineCreate}
         ${f.description ? `<p style="margin-top:1rem">${f.description}</p>` : ""}
         ${(f.rankChains || []).length ? `
           <div class="char-section" style="margin-top:1.5rem">

@@ -154,6 +154,30 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
 }
 .list-item-new:hover { background: rgba(200,160,64,0.16); }
 
+/* ── Inline contextual creation buttons (faction/location pages) ── */
+.inline-create-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.inline-create-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  background: rgba(200,160,64,0.08);
+  border: 1px solid rgba(200,160,64,0.3);
+  border-radius: var(--radius);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--accent-gold);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.inline-create-btn:hover { background: rgba(200,160,64,0.16); }
+
 /* ── Edit button on list items ───────────────────────────────── */
 .list-edit-btn {
   font-size: 0.78rem;

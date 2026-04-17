@@ -63,6 +63,31 @@ function _resolveOptions(source, excludeId) {
   return fn ? fn(excludeId) : [];
 }
 
+// ── Inline create — minimal-fields entity creation from picker UI ──
+// Returns the new entity's id, or null on failure.
+function _createInline(source, name) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return null;
+  const id = Store.generateId(trimmed);
+  if (source === 'character') {
+    const ok = Store.saveCharacter({
+      id, name: trimmed,
+      faction: 'neutral', status: 'alive', knowledge: 3,
+      title: '', description: '', portrait: '',
+      known: [], unknown: [], tags: [],
+    });
+    return ok === false ? null : id;
+  }
+  if (source === 'location') {
+    Store.saveLocation({
+      id, name: trimmed,
+      type: '', status: '', description: '', notes: '', characters: [],
+    });
+    return id;
+  }
+  return null;
+}
+
 // ── Combobox (single-select, searchable) ────────────────────────
 function _mountCombobox(el) {
   if (el.dataset.mounted === '1') return;
@@ -74,6 +99,7 @@ function _mountCombobox(el) {
   const placeholder = el.dataset.cbPlaceholder || 'Vyber…';
   const allowEmpty  = el.dataset.cbAllowEmpty === '1';
   const emptyLabel  = el.dataset.cbEmptyLabel || '— žádné —';
+  const onCreate  = el.dataset.cbOnCreate || ''; // 'character' | 'location' | ''
 
   let options = _resolveOptions(source, excludeId);
   if (allowEmpty) options = [{ value: '', label: emptyLabel }, ...options];
@@ -119,9 +145,21 @@ function _mountCombobox(el) {
       norm(o.label).includes(q) || norm(o.sublabel || '').includes(q)
     );
   }
+  function _createRowHtml() {
+    const typed = filterText.trim();
+    if (!onCreate || !typed) return '';
+    const q = norm(typed);
+    const exact = options.some(o => norm(o.label) === q);
+    if (exact) return '';
+    const kind = onCreate === 'location' ? 'místo' : 'postavu';
+    return `<div class="w-cb-create" data-create="${esc(typed)}" role="option">
+      ✦ Vytvořit ${esc(kind)} «${esc(typed)}»
+    </div>`;
+  }
   function _renderList() {
     const items = _filtered();
-    if (!items.length) {
+    const createRow = _createRowHtml();
+    if (!items.length && !createRow) {
       listEl.innerHTML = `<div class="w-cb-empty-row">Žádné výsledky</div>`;
       return;
     }
@@ -133,7 +171,15 @@ function _mountCombobox(el) {
       return `<div class="w-cb-item${sel}${hi}" data-val="${esc(o.value)}" role="option">
         ${badge}<span class="w-cb-lbl">${esc(o.label)}</span>${sub}
       </div>`;
-    }).join('');
+    }).join('') + createRow;
+  }
+  function _doCreate(typedName) {
+    const newId = _createInline(onCreate, typedName);
+    if (!newId) return;
+    // Refresh option list to include the new entity (preserve allowEmpty prefix)
+    options = _resolveOptions(source, excludeId);
+    if (allowEmpty) options = [{ value: '', label: emptyLabel }, ...options];
+    _select(newId);
   }
   function _openPop() {
     if (open) return;
@@ -178,11 +224,19 @@ function _mountCombobox(el) {
     else if (e.key === 'Enter') {
       e.preventDefault();
       const pick = items[highlight];
-      if (pick) _select(pick.value);
+      if (pick) { _select(pick.value); return; }
+      // No match highlighted — try inline create if enabled and text typed
+      if (onCreate && filterText.trim()) _doCreate(filterText.trim());
     }
     else if (e.key === 'Escape') { e.preventDefault(); _closePop(); trigger.focus(); }
   });
   listEl.addEventListener('mousedown', (e) => {
+    const create = e.target.closest('.w-cb-create');
+    if (create) {
+      e.preventDefault();
+      _doCreate(create.dataset.create);
+      return;
+    }
     const item = e.target.closest('.w-cb-item');
     if (!item) return;
     e.preventDefault();
@@ -223,9 +277,10 @@ function _mountMultiSelect(el) {
 
   const source      = el.dataset.msSource || 'character';
   const placeholder = el.dataset.msPlaceholder || 'Hledat…';
+  const onCreate    = el.dataset.msOnCreate || ''; // 'character' | 'location' | ''
   const initial     = (el.dataset.msValue || '').split(',').map(s => s.trim()).filter(Boolean);
 
-  const options = _resolveOptions(source, '');
+  let options = _resolveOptions(source, '');
   const selected = new Set(initial.filter(v => options.some(o => o.value === v)));
 
   let open = false;
@@ -278,9 +333,21 @@ function _mountMultiSelect(el) {
     if (q) list = list.filter(o => norm(o.label).includes(q) || norm(o.sublabel || '').includes(q));
     return list;
   }
+  function _createRowHtml() {
+    const typed = filterText.trim();
+    if (!onCreate || !typed) return '';
+    const q = norm(typed);
+    const exact = options.some(o => norm(o.label) === q);
+    if (exact) return '';
+    const kind = onCreate === 'location' ? 'místo' : 'postavu';
+    return `<div class="w-ms-create" data-create="${esc(typed)}" role="option">
+      ✦ Vytvořit ${esc(kind)} «${esc(typed)}»
+    </div>`;
+  }
   function _renderList() {
     const items = _filtered();
-    if (!items.length) {
+    const createRow = _createRowHtml();
+    if (!items.length && !createRow) {
       listEl.innerHTML = `<div class="w-ms-empty-row">Žádné výsledky</div>`;
       return;
     }
@@ -294,7 +361,19 @@ function _mountMultiSelect(el) {
         data-val="${esc(o.value)}" role="option">
         <span class="w-ms-check">${check}</span>${badge}<span class="w-ms-lbl">${esc(o.label)}</span>${sub}
       </div>`;
-    }).join('');
+    }).join('') + createRow;
+  }
+  function _doCreate(typedName) {
+    const newId = _createInline(onCreate, typedName);
+    if (!newId) return;
+    options = _resolveOptions(source, '');
+    selected.add(newId);
+    search.value = '';
+    filterText = '';
+    _renderChips();
+    _renderHidden();
+    _renderList();
+    el.dispatchEvent(new CustomEvent('w-ms-change', { detail: { value: [...selected] }, bubbles: true }));
   }
   function _openPop() {
     if (open) return;
@@ -332,7 +411,8 @@ function _mountMultiSelect(el) {
     else if (e.key === 'Enter') {
       e.preventDefault();
       const pick = items[highlight];
-      if (pick) { _toggle(pick.value); search.value = ''; filterText = ''; _renderList(); }
+      if (pick) { _toggle(pick.value); search.value = ''; filterText = ''; _renderList(); return; }
+      if (onCreate && filterText.trim()) _doCreate(filterText.trim());
     }
     else if (e.key === 'Escape') { e.preventDefault(); _closePop(); }
     else if (e.key === 'Backspace' && !search.value && selected.size) {
@@ -341,6 +421,13 @@ function _mountMultiSelect(el) {
     }
   });
   listEl.addEventListener('mousedown', (e) => {
+    const create = e.target.closest('.w-ms-create');
+    if (create) {
+      e.preventDefault();
+      _doCreate(create.dataset.create);
+      search.focus();
+      return;
+    }
     const item = e.target.closest('.w-ms-item');
     if (!item) return;
     e.preventDefault();

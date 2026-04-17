@@ -257,6 +257,34 @@
   background: linear-gradient(160deg, rgba(16,22,8,0.97) 0%, rgba(8,14,5,0.99) 100%);
 }
 
+/* Character chips inside a location card (Místa mode) */
+.cm-loc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+.cm-loc-chip {
+  --cc: #888;
+  font-family: var(--font-ui, 'Inter', sans-serif);
+  font-size: 9.5px;
+  line-height: 1.2;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--cc) 22%, rgba(20,18,16,0.6));
+  border: 1px solid color-mix(in srgb, var(--cc) 50%, transparent);
+  color: #f0e6d2;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cm-loc-chip-more {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.12);
+  color: var(--text-muted);
+}
+
 /* Faction territory glow — large soft radial behind hubs, smaller behind members */
 .cm-glow {
   position: absolute;
@@ -337,4 +365,188 @@
 }
 .edit-mode .cm-save-pos {
   display: inline-flex;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FILTER BAR — search / status / knowledge / edge-type / focus
+   Sits below .map-toolbar; UI for the visual-filter system.
+   ═══════════════════════════════════════════════════════════════ */
+.map-filterbar {
+  background: rgba(14,10,5,0.82);
+  border-bottom: 1px solid rgba(200,160,64,0.10);
+  padding: 0.4rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  z-index: 9;
+  flex-shrink: 0;
+  font-family: var(--font-ui);
+}
+.cm-search {
+  background: rgba(20,18,16,0.6);
+  border: 1px solid rgba(200,160,64,0.25);
+  color: #f0e6d2;
+  padding: 0.32rem 0.6rem;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.78rem;
+  outline: none;
+  min-width: 200px;
+  flex: 0 1 280px;
+}
+.cm-search:focus { border-color: var(--accent-gold, #C8A040); }
+
+.cm-chip-group {
+  display: flex;
+  gap: 0.2rem;
+  padding: 0.1rem 0.35rem;
+  border-left: 1px solid rgba(200,160,64,0.15);
+  border-right: 1px solid rgba(200,160,64,0.15);
+}
+
+.cm-chip {
+  --chip-color: #888;
+  background: rgba(20,18,16,0.5);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--text-light, #C8B89A);
+  padding: 0.22rem 0.5rem;
+  border-radius: 12px;
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s;
+}
+.cm-chip:hover {
+  border-color: color-mix(in srgb, var(--chip-color) 70%, transparent);
+}
+.cm-chip.is-on {
+  background: color-mix(in srgb, var(--chip-color) 26%, transparent);
+  border-color: var(--chip-color);
+  color: #fff;
+}
+.cm-chip-edge {
+  background: color-mix(in srgb, var(--chip-color) 18%, transparent);
+  border-color: color-mix(in srgb, var(--chip-color) 55%, transparent);
+  color: #f0e6d2;
+}
+.cm-chip-edge.is-off {
+  background: rgba(20,18,16,0.4);
+  border-color: rgba(255,255,255,0.06);
+  color: rgba(232,222,196,0.35);
+  text-decoration: line-through;
+}
+
+.cm-knowledge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text-light, #C8B89A);
+}
+.cm-knowledge input[type=range] {
+  width: 80px;
+  accent-color: var(--accent-gold, #C8A040);
+}
+.cm-knowledge-val {
+  display: inline-block;
+  min-width: 0.8em;
+  text-align: center;
+  color: var(--accent-gold, #C8A040);
+  font-weight: 600;
+}
+
+.cm-focus-toggle {
+  background: rgba(20,18,16,0.5);
+  border: 1px solid rgba(200,160,64,0.25);
+  color: var(--text-light);
+  padding: 0.28rem 0.6rem;
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-size: 0.74rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cm-focus-toggle:hover { border-color: var(--accent-gold, #C8A040); }
+.cm-focus-toggle.is-on {
+  background: rgba(200,160,64,0.18);
+  border-color: var(--accent-gold, #C8A040);
+  color: #ffe9a8;
+}
+.cm-focus-hops {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--text-light);
+}
+.cm-focus-hops input[type=range] {
+  width: 64px;
+  accent-color: var(--accent-gold, #C8A040);
+}
+.cm-focus-hops-val {
+  color: var(--accent-gold, #C8A040);
+  font-weight: 600;
+}
+.cm-focus-hops[hidden] { display: none; }
+
+.cm-clear-filters {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-muted);
+  padding: 0.22rem 0.5rem;
+  border-radius: 50%;
+  width: 26px; height: 26px;
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.cm-clear-filters:hover {
+  color: #ffb0b0;
+  border-color: #c44;
+}
+
+/* Visually-dim a cloud card when it doesn't match the active filters.
+   Uses opacity (not display:none) so context remains readable. */
+.cm-cloud.cm-vfilter-dim {
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+/* ── Right-click context menu ──────────────────────────────── */
+.cm-ctx-menu {
+  position: fixed;
+  z-index: 10002;
+  background: #1a1714;
+  border: 1px solid rgba(200,160,64,0.45);
+  border-radius: 5px;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.6);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  font-family: var(--font-ui);
+}
+.cm-ctx-item {
+  background: transparent;
+  border: none;
+  color: #f0e6d2;
+  text-align: left;
+  padding: 0.42rem 0.7rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  border-radius: 3px;
+  font: inherit;
+}
+.cm-ctx-item:hover {
+  background: rgba(200,160,64,0.18);
+  color: #ffe9a8;
+}
+
+@media (max-width: 768px) {
+  .map-filterbar { padding: 0.35rem 0.5rem; gap: 0.35rem; }
+  .cm-search { min-width: 140px; flex: 1 1 140px; }
+  .cm-chip-group { padding: 0 0.2rem; border: none; }
 }

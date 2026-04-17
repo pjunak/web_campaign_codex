@@ -13,6 +13,30 @@ export const EditMode = (() => {
 
   let _active = false;
 
+  // ── Prefill state for new-entity creation ──────────────────────
+  // Set by startNewCharacter / startNewLocation / startNewEvent and
+  // consumed once by the corresponding renderXxxEditor(null). Lets
+  // "+ Nová postava ve frakci" (and similar) pre-fill context fields
+  // instead of sending the user to a blank form.
+  let _prefill = { character: null, location: null, event: null };
+  function _consumePrefill(kind) {
+    const p = _prefill[kind];
+    _prefill[kind] = null;
+    return p || null;
+  }
+
+  // One-shot callbacks that run after a new entity has been saved.
+  // Used by "+ Postava zde" to link the new character into the source
+  // location's characters[] after the character is persisted.
+  let _afterSave = { character: null, location: null, event: null };
+  function _runAfterSave(kind, id) {
+    const fn = _afterSave[kind];
+    _afterSave[kind] = null;
+    if (typeof fn === 'function') {
+      try { fn(id); } catch (e) { console.warn(e); }
+    }
+  }
+
   function _genId(name) {
     return name.toLowerCase()
       .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -140,7 +164,31 @@ export const EditMode = (() => {
   //  CHARACTER EDITOR
   // ══════════════════════════════════════════════════════════════
   function renderCharacterEditor(c) {
+    if (!c || !c.id) {
+      const pf = _consumePrefill('character');
+      if (pf) return EditTemplates.renderCharacterEditor(pf);
+    }
     return EditTemplates.renderCharacterEditor(c);
+  }
+
+  /** Prefill a new character's fields, then navigate to the new-character form. */
+  function startNewCharacter(prefill) {
+    _prefill.character = prefill || {};
+    _afterSave.character = null;
+    _navigateOrRefresh('#/postava/new');
+  }
+
+  /** "+ Postava zde" — create a new character and auto-link it to a location. */
+  function startNewCharacterInLocation(locId) {
+    _prefill.character = {};
+    _afterSave.character = (newCharId) => {
+      const loc = Store.getLocation(locId);
+      if (!loc) return;
+      const chars = [...(loc.characters || [])];
+      if (!chars.includes(newCharId)) chars.push(newCharId);
+      Store.saveLocation({ ...loc, characters: chars });
+    };
+    _navigateOrRefresh('#/postava/new');
   }
 
   // ── Character save / delete ────────────────────────────────────
@@ -192,6 +240,7 @@ export const EditMode = (() => {
       _toast("⚠ Uložení selhalo – úložiště je plné.", false);
       return;
     }
+    _runAfterSave('character', newId);
     _toast("✓ Postava uložena");
     _navigateOrRefresh(`#/postava/${newId}`);
   }
@@ -309,7 +358,16 @@ export const EditMode = (() => {
   //  LOCATION EDITOR
   // ══════════════════════════════════════════════════════════════
   function renderLocationEditor(l) {
+    if (!l || !l.id) {
+      const pf = _consumePrefill('location');
+      if (pf) return EditTemplates.renderLocationEditor(pf);
+    }
     return EditTemplates.renderLocationEditor(l);
+  }
+
+  function startNewLocation(prefill) {
+    _prefill.location = prefill || {};
+    _navigateOrRefresh('#/misto/new');
   }
 
   function saveLocation(originalId) {
@@ -325,6 +383,7 @@ export const EditMode = (() => {
       notes:       document.getElementById(`lf-notes-${uid}`)?.value.trim()  || "",
       characters:  _checkVals(`lf-chars-${uid}`),
     });
+    _runAfterSave('location', newId);
     _toast("✓ Místo uloženo");
     _navigateOrRefresh(`#/misto/${newId}`);
   }
@@ -340,7 +399,16 @@ export const EditMode = (() => {
   //  EVENT EDITOR
   // ══════════════════════════════════════════════════════════════
   function renderEventEditor(e) {
+    if (!e || !e.id) {
+      const pf = _consumePrefill('event');
+      if (pf) return EditTemplates.renderEventEditor(pf);
+    }
     return EditTemplates.renderEventEditor(e);
+  }
+
+  function startNewEvent(prefill) {
+    _prefill.event = prefill || {};
+    _navigateOrRefresh('#/udalost/new');
   }
 
   function saveEvent(originalId) {
@@ -363,6 +431,7 @@ export const EditMode = (() => {
       locations:   _checkVals(`evf-locs-${uid}`),
       consequence: document.getElementById(`evf-cons-${uid}`)?.value             || "",
     });
+    _runAfterSave('event', newId);
     _toast("✓ Událost uložena");
     _navigateOrRefresh(`#/udalost/${newId}`);
   }
@@ -483,6 +552,8 @@ export const EditMode = (() => {
     renderEventEditor,
     renderMysteryEditor,
     renderFactionEditor,
+    startNewCharacter, startNewLocation, startNewEvent,
+    startNewCharacterInLocation,
   };
 
 })();
