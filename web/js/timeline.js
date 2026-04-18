@@ -167,8 +167,6 @@ export const Timeline = (() => {
       <div class="tl-shell">
         <div class="tl-toolbar">
           <div class="tl-title">⏳ Časová Osa</div>
-          <a href="#/mapa/palac" class="map-mode-btn">☁ Myšlenkový Palác</a>
-          <a href="#/mapa/svet" class="map-mode-btn">🗺 Pobřeží Meče</a>
           <span class="tl-hint">← Skroluj vodorovně · Klik na oblak = detail události</span>
         </div>
         <div class="tl-viewport" id="tl-viewport">

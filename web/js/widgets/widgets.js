@@ -19,6 +19,7 @@
 
 import { Store } from '../store.js';
 import { esc, norm, debounce } from '../utils.js';
+import { TagFilter } from './tagfilter.js';
 
 // ── Source resolvers ────────────────────────────────────────────
 // Each returns an array of {value, label, badge?, color?, sublabel?}.
@@ -463,6 +464,7 @@ function mountAll(root) {
   const r = root || document.body;
   r.querySelectorAll('.cb-mount').forEach(_mountCombobox);
   r.querySelectorAll('.ms-mount').forEach(_mountMultiSelect);
+  TagFilter.mountAll(r);
 }
 
 export const Widgets = { mountAll };

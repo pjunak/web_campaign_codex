@@ -16,8 +16,12 @@ export const WorldMap = (() => {
     town:       { icon: '🏘', label: 'Městečko',       color: '#A0B080' },
     village:    { icon: '🏠', label: 'Vesnice',        color: '#80A070' },
     fortress:   { icon: '🏰', label: 'Pevnost',        color: '#9090A0' },
+    camp:       { icon: '⛺', label: 'Tábor',           color: '#B88040' },
     dungeon:    { icon: '⚠', label: 'Dungeon',         color: '#A06040' },
-    landmark:   { icon: '⛩', label: 'Bod zájmu',      color: '#80A0B0' },
+    ruin:       { icon: '🏚', label: 'Ruina',          color: '#888070' },
+    shrine:     { icon: '⛩', label: 'Svatyně',        color: '#80A0B0' },
+    landmark:   { icon: '🗿', label: 'Bod zájmu',      color: '#80A0B0' },
+    curiosity:  { icon: '✨', label: 'Zajímavost',     color: '#C8A040' },
     region:     { icon: '🗺', label: 'Oblast',         color: '#708090' },
     enemy:      { icon: '💀', label: 'Nepřátelské',    color: '#B04040' },
     custom:     { icon: '📌', label: 'Vlastní',        color: '#8A5CC8' },
@@ -39,7 +43,8 @@ export const WorldMap = (() => {
   const PRIORITY_BY_TYPE = {
     major_city: 1, fortress: 1,
     city: 2, town: 2, region: 2,
-    village: 3, dungeon: 3, landmark: 3, enemy: 3, custom: 3,
+    village: 3, dungeon: 3, landmark: 3, shrine: 3, ruin: 3,
+    camp: 3, curiosity: 3, enemy: 3, custom: 3,
   };
   function _priorityOf(pin) {
     if (pin.priority === 1 || pin.priority === 2 || pin.priority === 3) return pin.priority;
@@ -71,11 +76,18 @@ export const WorldMap = (() => {
   function _toFrac(ll)    { return { x: ll.lng / _imgW, y: -ll.lat / _imgH }; }
 
   function render() {
+    // "+ Přidat místo" and "⚙ Mapa" are editor-only actions — hidden unless
+    // the body has .edit-mode set by EditMode.toggle().
     document.getElementById('main-content').innerHTML = `
       <div class="sc-shell">
         <div class="sc-toolbar">
           <div class="sc-title">🗺 Mapa světa</div>
-          <button class="sc-btn ${_addMode ? 'active' : ''}" id="sc-add-btn" onclick="WorldMap.toggleAddMode()">
+          <input type="search" class="sc-search" id="sc-search"
+                 placeholder="🔍 Najít místo…" autocomplete="off"
+                 oninput="WorldMap.onSearchInput(this.value)"
+                 onkeydown="if(event.key==='Enter'){WorldMap.jumpToFirstMatch();event.preventDefault();}">
+          <div class="sc-search-results" id="sc-search-results" hidden></div>
+          <button class="sc-btn edit-only-inline ${_addMode ? 'active' : ''}" id="sc-add-btn" onclick="WorldMap.toggleAddMode()">
             ${_addMode ? '✕ Zrušit' : '+ Přidat místo'}
           </button>
           <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn" onclick="WorldMap.toggleEventPaths()" title="Zobraz polohy a trasy událostí z Časové Osy">
@@ -86,7 +98,7 @@ export const WorldMap = (() => {
             <button class="sc-btn" onclick="WorldMap.zoomMajorCities()" title="Přiblížit k hlavním městům">🏙 Hlavní</button>
             <button class="sc-btn" onclick="WorldMap.zoomCurrentSitting()" title="Přiblížit k místům posledního sezení">📍 Dění</button>
           </span>
-          <button class="sc-btn" onclick="WorldMap.showSettings()">⚙ Mapa</button>
+          <button class="sc-btn edit-only-inline" onclick="WorldMap.showSettings()">⚙ Mapa</button>
           <span class="sc-hint">${_addMode
             ? 'Klikni na mapu pro přidání nového místa'
             : 'Klik = detail místa · Kolečko = zoom · Táhni = pohyb'
@@ -627,6 +639,60 @@ export const WorldMap = (() => {
     return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
+  // ── Toolbar search — pan/zoom to a pin by name ──────────────
+  function _searchResultsEl() { return document.getElementById('sc-search-results'); }
+  function _hideSearchResults() { const el = _searchResultsEl(); if (el) el.setAttribute('hidden', ''); }
+  function _showSearchResults() { const el = _searchResultsEl(); if (el) el.removeAttribute('hidden'); }
+
+  function _searchMatches(q) {
+    const qn = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    if (!qn) return [];
+    const pins = Store.getMapPins();
+    const locs = Store.getLocations();
+    const haystack = pins.map(p => {
+      const loc = p.locationId ? locs.find(l => l.id === p.locationId) : null;
+      const text = [p.name, p.notes, loc?.name, loc?.region, loc?.type]
+        .filter(Boolean).join(' ')
+        .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      return { pin: p, text };
+    });
+    return haystack.filter(h => h.text.includes(qn)).slice(0, 8).map(h => h.pin);
+  }
+
+  function onSearchInput(q) {
+    const el = _searchResultsEl();
+    if (!el) return;
+    const hits = _searchMatches(q);
+    if (!hits.length) { el.innerHTML = ''; _hideSearchResults(); return; }
+    el.innerHTML = hits.map(p => {
+      const pt = PIN_TYPES[p.type] || PIN_TYPES.custom;
+      return `<div class="sc-search-item" onclick="WorldMap.zoomToPin('${p.id}')">
+        <span class="sc-search-ico">${pt.icon}</span>
+        <span class="sc-search-name">${_esc(p.name)}</span>
+        <span class="sc-search-sub">${_esc(pt.label)}</span>
+      </div>`;
+    }).join('');
+    _showSearchResults();
+  }
+
+  function jumpToFirstMatch() {
+    const q = document.getElementById('sc-search')?.value;
+    const hits = _searchMatches(q);
+    if (hits.length) zoomToPin(hits[0].id);
+  }
+
+  function zoomToPin(pinId) {
+    const pin = Store.getMapPins().find(p => p.id === pinId);
+    if (!pin || !_map) return;
+    const ll = _toLL(pin.x, pin.y);
+    const capZoom = Math.min(0, _map.getMaxZoom());
+    _map.flyTo(ll, capZoom, { animate: true, duration: 0.6 });
+    _hideSearchResults();
+    const searchEl = document.getElementById('sc-search');
+    if (searchEl) searchEl.value = '';
+    _openPinPanel(pinId);
+  }
+
   return {
     render,
     toggleAddMode, closePanel,
@@ -634,5 +700,6 @@ export const WorldMap = (() => {
     openEditPin, openPinPanel, savePin, deletePin,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll, zoomMajorCities, zoomCurrentSitting,
+    onSearchInput, jumpToFirstMatch, zoomToPin,
   };
 })();

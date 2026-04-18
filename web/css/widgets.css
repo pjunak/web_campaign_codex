@@ -173,3 +173,51 @@
 .w-ms-lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .w-ms-sub { color: rgba(232, 222, 196, 0.55); font-size: 0.8rem; margin-left: auto; }
 .w-ms-empty-row { padding: 0.6rem; color: rgba(232, 222, 196, 0.5); font-style: italic; text-align: center; }
+
+/* ── TagFilter: search box with removable chip filters ─────────── */
+.w-tf {
+  display: block;
+  width: 100%;
+}
+.w-tf-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+  background: rgba(20, 18, 16, 0.6);
+  border: 1px solid rgba(212, 184, 122, 0.25);
+  border-radius: 4px;
+  padding: 0.3rem 0.45rem;
+  min-height: 34px;
+}
+.w-tf-row:focus-within { border-color: rgba(212, 184, 122, 0.6); }
+.w-tf-chips {
+  display: contents;
+}
+.w-tf-chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  background: rgba(212, 184, 122, 0.14);
+  border: 1px solid rgba(212, 184, 122, 0.35);
+  color: #f0e6d2;
+  padding: 0.12rem 0.35rem 0.12rem 0.5rem;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.w-tf-chip-x {
+  background: none; border: none; color: rgba(232, 222, 196, 0.75);
+  font-size: 1rem; line-height: 1; cursor: pointer;
+  padding: 0 0.15rem; border-radius: 3px;
+}
+.w-tf-chip-x:hover { color: #fff; background: rgba(255, 120, 120, 0.3); }
+.w-tf-input {
+  flex: 1 1 120px; min-width: 120px;
+  background: transparent; border: none; outline: none;
+  color: #e8dec4; font: inherit; font-size: 0.88rem;
+  padding: 0.15rem 0.2rem;
+}
+.w-tf-input::placeholder { color: rgba(232, 222, 196, 0.45); }
+.w-tf-hint {
+  font-size: 0.72rem;
+  color: rgba(232, 222, 196, 0.5);
+  margin-top: 0.25rem;
+  font-style: italic;
+}

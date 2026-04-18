@@ -411,10 +411,13 @@ export const CloudMap = (() => {
   const LS_VFILTER_PREFIX = 'cm_vf_';
   function _vfilterKey() { return LS_VFILTER_PREFIX + _currentMode; }
 
+  // Chip-style filter values. Each entry is a free-text query; a node
+  // matches iff EVERY value is a diacritic-insensitive substring of the
+  // node's searchable text blob (see _nodeSearchText). Status / knowledge
+  // / species / faction dropdowns are all expressed as chips now — the
+  // user types them into the TagFilter widget.
   let _filters = {
-    search: '',
-    statuses: new Set(),       // empty = no status filter
-    minKnowledge: 0,
+    values: [],                // array of strings (chip labels)
     hiddenEdgeTypes: new Set(),
     focusId: null,
     focusHops: 2,
@@ -427,9 +430,19 @@ export const CloudMap = (() => {
       const raw = localStorage.getItem(_vfilterKey());
       if (!raw) return;
       const o = JSON.parse(raw);
-      _filters.search          = o.search || '';
-      _filters.statuses        = new Set(o.statuses || []);
-      _filters.minKnowledge    = +o.minKnowledge || 0;
+      // Prefer new shape (values[]); fall back to migrating legacy shape
+      // (search + statuses) to chip values so users don't lose their state.
+      if (Array.isArray(o.values)) {
+        _filters.values = o.values.slice();
+      } else {
+        const migrated = [];
+        if (o.search) migrated.push(String(o.search));
+        if (Array.isArray(o.statuses)) {
+          const sm = Store.getStatusMap();
+          o.statuses.forEach(s => { if (sm[s]) migrated.push(sm[s].label); });
+        }
+        _filters.values = migrated;
+      }
       _filters.hiddenEdgeTypes = new Set(o.hiddenEdgeTypes || []);
       _filters.focusHops       = +o.focusHops || 2;
       _focusMode               = !!o.focusMode;
@@ -439,9 +452,7 @@ export const CloudMap = (() => {
     if (!_currentMode) return;
     try {
       localStorage.setItem(_vfilterKey(), JSON.stringify({
-        search:          _filters.search,
-        statuses:        [..._filters.statuses],
-        minKnowledge:    _filters.minKnowledge,
+        values:          _filters.values,
         hiddenEdgeTypes: [..._filters.hiddenEdgeTypes],
         focusHops:       _filters.focusHops,
         focusMode:       _focusMode,
@@ -450,32 +461,45 @@ export const CloudMap = (() => {
   }
 
   // Returns concatenated searchable text for a node (diacritic-insensitive match).
+  // Covers all fields a chip filter might want to match: names, titles, tags,
+  // status/knowledge labels, species/gender, faction name, location type/region.
   function _nodeSearchText(node) {
     const id = node.id(), type = node.data('type');
     if (type === 'character') {
       const c = Store.getCharacter(id);
       if (!c) return '';
-      return [c.name, c.title, ...(c.tags || [])].filter(Boolean).join(' ');
+      const f = Store.getFactions()[c.faction] || {};
+      const s = Store.getStatusMap()[c.status] || {};
+      const kNames = ['Neznámý','Tušený','Základní','Dobře znám','Plně zmapován'];
+      return [
+        c.name, c.title, c.species, c.gender, c.age,
+        s.label, f.name, kNames[c.knowledge || 0],
+        ...(c.tags || []),
+      ].filter(Boolean).join(' ');
     }
     if (type === 'location') {
       const l = Store.getLocation(id);
       if (!l) return '';
-      return [l.name, l.region, ...(l.tags || [])].filter(Boolean).join(' ');
+      return [l.name, l.region, l.type, l.status, ...(l.tags || [])]
+        .filter(Boolean).join(' ');
     }
     if (type === 'mystery') {
       const m = Store.getMystery(id);
       if (!m) return '';
-      return [m.name, ...(m.questions || [])].filter(Boolean).join(' ');
+      return [m.name, m.priority, ...(m.questions || []), ...(m.clues || [])]
+        .filter(Boolean).join(' ');
     }
     if (type === 'event') {
       const e = Store.getEvent(id);
       if (!e) return '';
-      return [e.name, e.short, e.description].filter(Boolean).join(' ');
+      return [e.name, e.short, e.description, e.priority,
+              e.sitting ? `sezeni ${e.sitting}` : 'minulost',
+              ...(e.tags || [])].filter(Boolean).join(' ');
     }
     if (type === 'faction') {
       const fId = id.replace(/^hub_/, '');
       const f = Store.getFactions()[fId];
-      return f ? [f.name, f.badge].filter(Boolean).join(' ') : '';
+      return f ? [f.name, f.badge, f.description].filter(Boolean).join(' ') : '';
     }
     return '';
   }
@@ -523,24 +547,24 @@ export const CloudMap = (() => {
   // for free; wrappers get .cm-vfilter-dim for fast CSS opacity.
   function _applyVisualFilter() {
     if (!_cy) return;
-    const q = norm(_filters.search);
+    // Each chip is a substring query; AND across chips, OR within a chip
+    // against the node's enriched searchable text blob.
+    const queries = (_filters.values || [])
+      .map(v => norm(v))
+      .filter(Boolean);
     const focusSet = (_focusMode && _filters.focusId)
       ? _bfsNeighborhood(_filters.focusId, _filters.focusHops)
       : null;
 
     const dim = new Set();
     _cy.nodes().forEach(node => {
-      const id   = node.id();
-      const type = node.data('type');
+      const id = node.id();
       let match = true;
 
-      if (q && !norm(_nodeSearchText(node)).includes(q)) match = false;
-
-      if (match && type === 'character') {
-        const c = Store.getCharacter(id);
-        if (c) {
-          if (_filters.statuses.size && !_filters.statuses.has(c.status || 'unknown')) match = false;
-          if (match && _filters.minKnowledge > 0 && (c.knowledge || 0) < _filters.minKnowledge) match = false;
+      if (queries.length) {
+        const hay = norm(_nodeSearchText(node));
+        for (const q of queries) {
+          if (!hay.includes(q)) { match = false; break; }
         }
       }
 
@@ -575,23 +599,12 @@ export const CloudMap = (() => {
   // Public setters used by inline event handlers in the filter bar.
   const _applyVisualFilterDebounced = debounce(_applyVisualFilter, 80);
 
-  function _setSearch(q) {
-    _filters.search = String(q || '');
+  // New unified chip-filter setter. Called by the TagFilter widget via the
+  // 'tf-change' CustomEvent. Each chip is a free-text substring query.
+  function _setFilterValues(arr) {
+    _filters.values = Array.isArray(arr) ? arr.slice() : [];
     _saveVFilter();
     _applyVisualFilterDebounced();
-  }
-  function _toggleStatus(s) {
-    if (_filters.statuses.has(s)) _filters.statuses.delete(s);
-    else _filters.statuses.add(s);
-    _saveVFilter();
-    _syncFilterChipUI();
-    _applyVisualFilter();
-  }
-  function _setMinKnowledge(n) {
-    _filters.minKnowledge = Math.max(0, Math.min(4, +n || 0));
-    document.querySelectorAll('.cm-knowledge-val').forEach(el => el.textContent = _filters.minKnowledge);
-    _saveVFilter();
-    _applyVisualFilter();
   }
   function _toggleEdgeType(t) {
     if (_filters.hiddenEdgeTypes.has(t)) _filters.hiddenEdgeTypes.delete(t);
@@ -614,27 +627,20 @@ export const CloudMap = (() => {
     if (_focusMode && _filters.focusId) _applyVisualFilter();
   }
   function _clearFilters() {
-    _filters.search = '';
-    _filters.statuses.clear();
-    _filters.minKnowledge = 0;
+    _filters.values = [];
     _filters.hiddenEdgeTypes.clear();
     _filters.focusId = null;
     _focusMode = false;
     _saveVFilter();
-    const sb = document.querySelector('.cm-search');
-    if (sb) sb.value = '';
-    const ks = document.querySelector('.cm-knowledge input[type=range]');
-    if (ks) ks.value = 0;
-    document.querySelectorAll('.cm-knowledge-val').forEach(el => el.textContent = '0');
+    const tf = document.getElementById('cm-filter');
+    if (tf && tf._tagfilter) tf._tagfilter.clear();
     _syncFilterChipUI();
     _applyVisualFilter();
   }
 
-  // Sync chip 'is-on' class to current filter state.
+  // Sync chip 'is-on' class to current filter state. Status chips are gone
+  // (replaced by TagFilter), so only edge-type chips and focus need syncing.
   function _syncFilterChipUI() {
-    document.querySelectorAll('.cm-chip[data-status]').forEach(b => {
-      b.classList.toggle('is-on', _filters.statuses.has(b.dataset.status));
-    });
     document.querySelectorAll('.cm-chip[data-edge-type]').forEach(b => {
       b.classList.toggle('is-off', _filters.hiddenEdgeTypes.has(b.dataset.edgeType));
     });
@@ -772,13 +778,13 @@ export const CloudMap = (() => {
     _currentMode = mode;
     _hiddenFactions = new Set(); // reset; _loadPositions() may repopulate from localStorage
     // Reset visual filter then load saved state for this mode
-    _filters = { search: '', statuses: new Set(), minKnowledge: 0,
-                 hiddenEdgeTypes: new Set(), focusId: null, focusHops: 2 };
+    _filters = { values: [], hiddenEdgeTypes: new Set(), focusId: null, focusHops: 2 };
     _focusMode = false;
     _loadVFilter();
 
-    document.getElementById('main-content').style.display = '';
-    document.getElementById('main-content').innerHTML = `
+    const container = document.getElementById('main-content');
+    container.style.display = '';
+    container.innerHTML = `
       <div class="map-container">
         <div class="map-toolbar">
           <div class="map-title">☁ Myšlenkový Palác</div>
@@ -795,18 +801,21 @@ export const CloudMap = (() => {
         <div class="map-legend" id="map-legend"></div>
       </div>
     `;
+
+    // Bridge TagFilter's 'tf-change' CustomEvent into the filter state.
+    // One listener per buildUI call; it's attached to the container so it
+    // dies with the next innerHTML swap.
+    container.addEventListener('tf-change', (ev) => {
+      if (ev.target && ev.target.id === 'cm-filter') {
+        _setFilterValues(ev.detail.values);
+      }
+    });
   }
 
-  // Per-mode toolbar row with search, status/knowledge/edge chips, focus toggle.
+  // Per-mode toolbar row: one TagFilter for free-text chip filters (name,
+  // status, species, faction, tag, …), edge-type toggles where relevant,
+  // focus toggle, clear button.
   function _buildFilterBar(mode) {
-    const statusMap = Store.getStatusMap();
-    const statusChips = Object.entries(statusMap).map(([key, s]) => {
-      const on = _filters.statuses.has(key) ? ' is-on' : '';
-      return `<button type="button" class="cm-chip${on}" data-status="${key}"
-        onclick="CloudMap.toggleStatus('${key}')" title="${_esc(s.label)}"
-        style="--chip-color:${s.color || '#888'}">${s.icon || ''} ${_esc(s.label)}</button>`;
-    }).join('');
-
     // Edge-type chips depend on mode
     let edgeChips = '';
     const buildEdgeChip = (t, label, color) => {
@@ -830,19 +839,15 @@ export const CloudMap = (() => {
       ].map(([t,l,c]) => buildEdgeChip(t,l,c)).join('');
     }
 
-    const focusOn = _focusMode ? ' is-on' : '';
+    const focusOn  = _focusMode ? ' is-on' : '';
+    const tfValue  = (_filters.values || []).join(',');
     return `
       <div class="map-filterbar">
-        <input type="text" class="cm-search" placeholder="🔍 Hledat (jméno, tag, region…)"
-               value="${_esc(_filters.search)}"
-               oninput="CloudMap.setSearch(this.value)">
-        ${statusChips ? `<div class="cm-chip-group" title="Filtr podle stavu">${statusChips}</div>` : ''}
-        <label class="cm-knowledge" title="Skrýt postavy se znalostí pod prahem">
-          <span>Znalost ≥</span>
-          <input type="range" min="0" max="4" step="1" value="${_filters.minKnowledge}"
-                 oninput="CloudMap.setMinKnowledge(this.value)">
-          <span class="cm-knowledge-val">${_filters.minKnowledge}</span>
-        </label>
+        <div class="tf-mount cm-filter-mount"
+             data-tf-id="cm-filter"
+             data-tf-placeholder="🔍 Filtr — napiš a Enter (stav, druh, tag, místo…)"
+             data-tf-hint="Víc chipů = AND. Např. „naživu“ + „elf“ → živí elfové."
+             data-tf-value="${_esc(tfValue)}"></div>
         ${edgeChips ? `<div class="cm-chip-group cm-chip-group-edge" title="Skrýt typy vazeb">${edgeChips}</div>` : ''}
         <button type="button" class="cm-focus-toggle${focusOn}"
                 onclick="CloudMap.toggleFocusMode()"
@@ -1605,10 +1610,16 @@ export const CloudMap = (() => {
       requestAnimationFrame(() => {
         _resizeToActual();
         _sync();
-        // Apply persisted visual filters (search/status/knowledge/edge-type/focus)
+        // Always fit the viewport to all nodes on initial render so saved
+        // positions (or an empty viewport after container resize) don't
+        // leave nodes off-screen — this is what caused the "empty" look
+        // on mind palace modes like Záhady.
+        if (_cy.nodes().nonempty()) _cy.fit(undefined, 60);
+        _sync();
         _syncFilterChipUI();
-        if (_filters.search || _filters.statuses.size || _filters.minKnowledge ||
-            _filters.hiddenEdgeTypes.size || (_focusMode && _filters.focusId)) {
+        if ((_filters.values && _filters.values.length) ||
+            _filters.hiddenEdgeTypes.size ||
+            (_focusMode && _filters.focusId)) {
           _applyVisualFilter();
         }
         // Positions are saved manually via the "Uložit pozice" button in edit mode
@@ -2015,9 +2026,7 @@ export const CloudMap = (() => {
     render, resetLayout,
     savePositions:   _savePositions,
     toggleFaction:   _toggleFaction,
-    setSearch:       _setSearch,
-    toggleStatus:    _toggleStatus,
-    setMinKnowledge: _setMinKnowledge,
+    setFilterValues: _setFilterValues,   // called by TagFilter via tf-change event
     toggleEdgeType:  _toggleEdgeType,
     toggleFocusMode: _toggleFocusMode,
     setFocusHops:    _setFocusHops,

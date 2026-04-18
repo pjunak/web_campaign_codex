@@ -61,11 +61,18 @@ window.Admin = Admin;
     const section = parts[0] || "";
     const sub     = parts[1] || "";
 
+    // Timeline — own top-level section (was nested under /mapa/casova-osa)
+    if (section === "casova-osa") {
+      Timeline.render();
+      return;
+    }
+
     // Maps — full-screen layout
     if (section === "mapa") {
       if (sub === "svet") {
         WorldMap.render();
       } else if (sub === "casova-osa") {
+        // Legacy alias: keep /mapa/casova-osa working for any bookmarked links
         Timeline.render();
       } else if (sub === "palac" || sub === "frakce" || sub === "vztahy" || sub === "mista" || sub === "tajemstvi") {
         CloudMap.render(sub === "palac" ? "frakce" : sub);
