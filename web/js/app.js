@@ -59,7 +59,12 @@ window.Admin = Admin;
 
     const parts   = route.split("/").filter(Boolean);
     const section = parts[0] || "";
-    const sub     = parts[1] || "";
+    // IDs saved via Store.generateId are ASCII, but legacy data may carry
+    // diacritics (e.g. "chrám_chantone"). The browser percent-encodes them
+    // in the hash, so decode before handing to renderers.
+    const subRaw  = parts[1] || "";
+    let sub;
+    try { sub = decodeURIComponent(subRaw); } catch { sub = subRaw; }
 
     // Timeline — own top-level section (was nested under /mapa/casova-osa)
     if (section === "casova-osa") {

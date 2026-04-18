@@ -65,6 +65,10 @@ export const WorldMap = (() => {
   let _markers   = {};
   let _addMode   = false;
   let _editPinId = null;
+  // When set, the next map click in add-mode assigns x/y to this existing
+  // location id instead of opening the new-pin form. Used by the wiki's
+  // "📍 Umístit na mapu" button.
+  let _placeForLocId = null;
   let _hiddenCount = 0;  // tracked by _applyPinVisibility for the legend
   let _modeObserver    = null;
   let _resizeObserver  = null;
@@ -252,6 +256,23 @@ export const WorldMap = (() => {
     _map.on('click', evt => {
       if (!_addMode) return;
       const frac = _toFrac(evt.latlng);
+      // If we're placing an existing location (from the wiki "Umístit na
+      // mapu" button), just write x/y and re-render instead of opening
+      // the new-pin form.
+      if (_placeForLocId) {
+        const loc = Store.getLocation(_placeForLocId);
+        _placeForLocId = null;
+        _setAddMode(false);
+        if (!loc) return;
+        const patch = { ...loc, x: frac.x, y: frac.y };
+        if (_currentParentId) patch.parentId = _currentParentId;
+        if (!patch.pinType)   patch.pinType   = 'custom';
+        if (!patch.mapStatus) patch.mapStatus = 'known';
+        Store.saveLocation(patch);
+        _refreshPin(loc.id);
+        setTimeout(() => zoomToPin(loc.id), 50);
+        return;
+      }
       _openNewPin(frac.x, frac.y);
       _setAddMode(false);
     });
@@ -657,7 +678,36 @@ export const WorldMap = (() => {
     if (_map) _map.getContainer().style.cursor = on ? 'crosshair' : '';
   }
 
-  function toggleAddMode() { _setAddMode(!_addMode); }
+  function toggleAddMode() {
+    // Leaving add-mode (user cancelled) must also clear any pending
+    // "place this existing location" intent so the next add-click
+    // creates a new pin as usual.
+    if (_addMode) _placeForLocId = null;
+    _setAddMode(!_addMode);
+  }
+
+  // Public entry-point for the wiki "📍 Umístit na mapu" button. Navigates
+  // to the correct map (world or parent's local map), enters add-mode, and
+  // arms the next click to assign x/y to this existing location.
+  function startPlacingPin(locId) {
+    const loc = Store.getLocation(locId);
+    if (!loc) return;
+    const targetParent = loc.parentId || null;
+    _placeForLocId = locId;
+    const arm = () => {
+      _setAddMode(true);
+      const hint = document.querySelector('.sc-hint');
+      if (hint) hint.textContent = `Klikni na mapu pro umístění: ${loc.name}`;
+    };
+    const alreadyOnMap = !!_map && targetParent === _currentParentId;
+    if (alreadyOnMap) { arm(); return; }
+    if (window.location.hash !== '#/mapa/svet') window.location.hash = '#/mapa/svet';
+    // Defer until the route change (and any parent-map render) finishes.
+    setTimeout(() => {
+      if (targetParent) render(targetParent);
+      setTimeout(arm, 120);
+    }, 0);
+  }
 
   function closePanel() {
     document.getElementById('sc-panel')?.setAttribute('hidden', '');
@@ -850,6 +900,6 @@ export const WorldMap = (() => {
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll, zoomMajorCities, zoomCurrentSitting,
     onSearchInput, jumpToFirstMatch, zoomToPin, showPin,
-    openLocalMap,
+    openLocalMap, startPlacingPin,
   };
 })();

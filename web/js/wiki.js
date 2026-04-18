@@ -579,10 +579,15 @@ export const Wiki = (() => {
       </div>` : '';
 
     // World-map / local-map entry points.
+    const placed = (typeof l.x === 'number' && typeof l.y === 'number');
     const mapButtons = [];
-    if (typeof l.x === 'number' && typeof l.y === 'number') {
+    if (placed) {
       mapButtons.push(
         `<button class="inline-create-btn" onclick="WorldMap.showPin('${l.id}')">🧭 Najít na mapě</button>`
+      );
+    } else if (EditMode.isActive()) {
+      mapButtons.push(
+        `<button class="inline-create-btn" onclick="WorldMap.startPlacingPin('${l.id}')">📍 Umístit na mapu</button>`
       );
     }
     if (l.localMap) {
