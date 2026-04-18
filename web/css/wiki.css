@@ -476,6 +476,9 @@
   background: var(--bg-card);
 }
 .list-search-input::placeholder { color: var(--text-muted); }
+/* Wiki list toolbar uses the shared TagFilter widget. Give it the same
+   flex behaviour the old <input> had so search + sort stay aligned. */
+.list-search-tf { flex: 1; min-width: 240px; }
 .list-sort {
   display: inline-flex;
   align-items: center;

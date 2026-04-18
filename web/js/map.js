@@ -72,16 +72,59 @@ export const WorldMap = (() => {
   let _eventMarkers    = [];
   let _eventPolylines  = [];
 
+  // Current map context. null = the world map. Otherwise, a location id
+  // whose `localMap` image is shown and whose subplaces appear as pins.
+  let _currentParentId = null;
+
+  // Pin shape derived from a Location. Map code below operates on this
+  // pin-like view; writes go through Store.saveLocation.
+  function _pinFromLocation(l) {
+    return {
+      id:         l.id,
+      locationId: l.id,
+      name:       l.name,
+      x:          l.x,
+      y:          l.y,
+      type:       l.pinType  || 'custom',
+      status:     l.mapStatus || 'known',
+      priority:   l.priority,
+      notes:      l.mapNotes || '',
+      parentId:   l.parentId || null,
+    };
+  }
+  // All pins for the currently-displayed map (world or a local sub-map).
+  function _pinsForCurrent() {
+    return Store.getLocationsOnMap(_currentParentId).map(_pinFromLocation);
+  }
+  // Background image URL for the active map context.
+  function _currentImgUrl() {
+    if (_currentParentId) {
+      const parent = Store.getLocation(_currentParentId);
+      if (parent && parent.localMap) return parent.localMap;
+    }
+    return _getImgUrl();
+  }
+
   function _toLL(fx, fy)  { return L.latLng(-fy * _imgH, fx * _imgW); }
   function _toFrac(ll)    { return { x: ll.lng / _imgW, y: -ll.lat / _imgH }; }
 
-  function render() {
+  function render(parentId) {
+    // Switching map context. parentId=null → world map; otherwise a
+    // location whose `localMap` image is the backdrop.
+    _currentParentId = parentId || null;
+    const parent = _currentParentId ? Store.getLocation(_currentParentId) : null;
+    const titleHtml = parent
+      ? `🗺 ${_esc(parent.name)} <span class="sc-breadcrumb">
+           · <a href="#/mapa/svet">↩ Pobřeží Meče</a>
+         </span>`
+      : `🗺 Mapa světa`;
+
     // "+ Přidat místo" and "⚙ Mapa" are editor-only actions — hidden unless
     // the body has .edit-mode set by EditMode.toggle().
     document.getElementById('main-content').innerHTML = `
       <div class="sc-shell">
         <div class="sc-toolbar">
-          <div class="sc-title">🗺 Mapa světa</div>
+          <div class="sc-title">${titleHtml}</div>
           <input type="search" class="sc-search" id="sc-search"
                  placeholder="🔍 Najít místo…" autocomplete="off"
                  oninput="WorldMap.onSearchInput(this.value)"
@@ -148,7 +191,7 @@ export const WorldMap = (() => {
     if (_resizeObserver) { _resizeObserver.disconnect(); _resizeObserver = null; }
     if (_map) { _map.remove(); _map = null; }
 
-    const imgUrl    = _getImgUrl();
+    const imgUrl    = _currentImgUrl();
     const container = document.getElementById('sc-map-container');
 
     const img = new Image();
@@ -192,7 +235,7 @@ export const WorldMap = (() => {
     requestAnimationFrame(() => _enforceFitZoom());
 
     _markers = {};
-    Store.getMapPins().forEach(_placePin);
+    _pinsForCurrent().forEach(_placePin);
     _applyPinVisibility();
 
     _map.on('zoomend', () => {
@@ -278,17 +321,17 @@ export const WorldMap = (() => {
 
     m.on('click', () => _openPinPanel(pin.id));
     m.on('dragend', () => {
-      const frac    = _toFrac(m.getLatLng());
-      const current = Store.getMapPins().find(p => p.id === pin.id);
-      if (!current) return;
-      Store.saveMapPin({ ...current, x: frac.x, y: frac.y });
+      const frac = _toFrac(m.getLatLng());
+      const loc  = Store.getLocation(pin.locationId);
+      if (!loc) return;
+      Store.saveLocation({ ...loc, x: frac.x, y: frac.y });
     });
 
     _markers[pin.id] = m;
   }
 
   function _refreshPin(pinId) {
-    const pin = Store.getMapPins().find(p => p.id === pinId);
+    const pin = _pinsForCurrent().find(p => p.id === pinId);
     if (!pin) return;
     if (_markers[pinId]) { _markers[pinId].remove(); delete _markers[pinId]; }
     _placePin(pin);
@@ -303,7 +346,7 @@ export const WorldMap = (() => {
     const z         = _map.getZoom();
     const threshold = _thresholdForZoom(z);
     const editable  = document.body.classList.contains('edit-mode');
-    const pinsById  = Object.fromEntries(Store.getMapPins().map(p => [p.id, p]));
+    const pinsById  = Object.fromEntries(_pinsForCurrent().map(p => [p.id, p]));
     let hidden = 0;
     for (const [id, marker] of Object.entries(_markers)) {
       const pin = pinsById[id];
@@ -333,7 +376,7 @@ export const WorldMap = (() => {
   }
   function zoomMajorCities() {
     if (!_map) return;
-    const pts = Store.getMapPins()
+    const pts = _pinsForCurrent()
       .filter(p => _priorityOf(p) === 1)
       .map(p => _toLL(p.x, p.y));
     if (!pts.length) { zoomFitAll(); return; }
@@ -351,7 +394,7 @@ export const WorldMap = (() => {
       for (const lid of e.locations || []) locs.add(lid);
     }
     if (!locs.size) { zoomFitAll(); return; }
-    const pts = Store.getMapPins()
+    const pts = _pinsForCurrent()
       .filter(p => p.locationId && locs.has(p.locationId))
       .map(p => _toLL(p.x, p.y));
     if (!pts.length) { zoomFitAll(); return; }
@@ -363,12 +406,21 @@ export const WorldMap = (() => {
   }
 
   function _openPinPanel(pinId) {
-    const pin = Store.getMapPins().find(p => p.id === pinId);
+    const pin = _pinsForCurrent().find(p => p.id === pinId);
     if (!pin) return;
     _editPinId = pinId;
     const pt = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
     const ps = PIN_STATUSES[pin.status] || PIN_STATUSES.known;
     const loc = pin.locationId ? Store.getLocation(pin.locationId) : null;
+
+    const subCount = loc ? Store.getSubLocations(loc.id).length : 0;
+    const hasLocalMap = !!(loc && loc.localMap);
+    const localMapBtn = hasLocalMap
+      ? `<button class="sc-btn ok" onclick="WorldMap.openLocalMap('${loc.id}')">🗺 Místní mapa</button>`
+      : '';
+    const subInfo = subCount
+      ? `<div class="sc-pin-meta" style="margin-top:0.4rem">⛬ ${subCount} dílčí ${subCount === 1 ? 'místo' : 'míst(a)'}</div>`
+      : '';
 
     document.getElementById('sc-panel-content').innerHTML = `
       <div class="sc-pin-view">
@@ -377,15 +429,17 @@ export const WorldMap = (() => {
           <div>
             <div class="sc-pin-name">${_esc(pin.name)}</div>
             <div class="sc-pin-meta">${pt.label} · <span style="color:${ps.labelColor}">${ps.label}</span></div>
+            ${subInfo}
           </div>
         </div>
         ${pin.notes ? `<div class="sc-pin-notes">${_esc(pin.notes)}</div>` : ''}
         ${loc ? `<div class="sc-pin-link">
-          📍 <a href="#/misto/${loc.id}" onclick="WorldMap.closePanel()">Otevřít stránku místa</a>
+          📖 <a href="#/misto/${loc.id}" onclick="WorldMap.closePanel()">Otevřít stránku místa</a>
         </div>` : ''}
         <div class="sc-pin-actions">
-          <button class="sc-btn ok" onclick="WorldMap.openEditPin('${pinId}')">✏ Upravit</button>
-          <button class="sc-btn err" onclick="WorldMap.deletePin('${pinId}')">🗑 Smazat</button>
+          ${localMapBtn}
+          <button class="sc-btn ok edit-only-inline" onclick="WorldMap.openEditPin('${pinId}')">✏ Upravit</button>
+          <button class="sc-btn err edit-only-inline" onclick="WorldMap.deletePin('${pinId}')">🗑 Odebrat z mapy</button>
         </div>
       </div>
     `;
@@ -393,7 +447,7 @@ export const WorldMap = (() => {
   }
 
   function openEditPin(pinId) {
-    const pin = Store.getMapPins().find(p => p.id === pinId) || {};
+    const pin = _pinsForCurrent().find(p => p.id === pinId) || {};
     _renderPinForm(pin, false);
   }
 
@@ -415,30 +469,36 @@ export const WorldMap = (() => {
         <input type="radio" name="spf-priority" value="${p}" ${currentPri===p?'checked':''}> ${priLabels[p]}
       </label>`).join('');
 
+    // For NEW pins on the world map: optional Combobox to drop an EXISTING
+    // location onto the map (sets x/y on it). Otherwise a fresh place is
+    // created. For existing pins, this picker is hidden.
+    const linkPicker = isNew ? `
+      <label class="sc-label">Použít existující místo (volitelné)</label>
+      <div class="cb-mount"
+        data-cb-id="spf-existing"
+        data-cb-source="location"
+        data-cb-value=""
+        data-cb-allow-empty="1"
+        data-cb-empty-label="— vytvořit nové —"
+        data-cb-placeholder="Hledat existující…"></div>` : '';
+
     document.getElementById('sc-panel-content').innerHTML = `
       <div class="sc-pin-form">
         <div class="sc-pin-form-title">${isNew ? 'Nové místo' : 'Upravit místo'}</div>
+        ${linkPicker}
         <label class="sc-label">Název *</label>
         <input class="sc-input" id="spf-name" type="text" value="${_esc(pin.name||'')}" placeholder="Waterdeep...">
         <label class="sc-label">Typ</label>
         <select class="sc-input" id="spf-type">${typeOpts}</select>
-        <label class="sc-label">Status</label>
+        <label class="sc-label">Příslušnost</label>
         <select class="sc-input" id="spf-status">${statusOpts}</select>
         <label class="sc-label">Důležitost (priorita zobrazení)</label>
         <div class="sc-pri-row" id="spf-priority">${priOpts}</div>
-        <label class="sc-label">Popis / Poznámky</label>
+        <label class="sc-label">Popis / Poznámky na mapě</label>
         <textarea class="sc-input" id="spf-notes" rows="3" placeholder="Krátký popis...">${_esc(pin.notes||'')}</textarea>
-        <label class="sc-label">Propojit s kampaňovým místem</label>
-        <div class="cb-mount"
-          data-cb-id="spf-location"
-          data-cb-source="location"
-          data-cb-value="${_esc(pin.locationId || '')}"
-          data-cb-allow-empty="1"
-          data-cb-empty-label="— žádné —"
-          data-cb-placeholder="Hledat místo…"
-          data-cb-on-create="location"></div>
         <div class="sc-pin-actions">
           <button class="sc-btn ok" onclick="WorldMap.savePin(${isNew}, ${pin.x||0}, ${pin.y||0})">💾 Uložit</button>
+          ${!isNew ? `<a class="sc-btn" href="#/misto/${pin.locationId}">📖 Otevřít místo</a>` : ''}
           ${!isNew ? `<button class="sc-btn" onclick="WorldMap.openPinPanel('${pin.id}')">Zpět</button>` : ''}
         </div>
       </div>
@@ -447,35 +507,56 @@ export const WorldMap = (() => {
     Widgets.mountAll(document.getElementById('sc-panel-content'));
   }
 
+  // Save form values onto a Location: either the linked existing one,
+  // the location currently being edited, or a freshly-created place.
   function savePin(isNew, x, y) {
     const name = document.getElementById('spf-name')?.value.trim();
     if (!name) { alert('Název je povinný.'); return; }
-    const id = _editPinId || ('pin_' + Store.generateId(name) + '_' + Date.now());
-    const existing = isNew ? null : Store.getMapPins().find(p => p.id === _editPinId);
     const priRaw = document.querySelector('#spf-priority input[name="spf-priority"]:checked')?.value;
     const priority = priRaw ? parseInt(priRaw, 10) : undefined;
-    Store.saveMapPin({
-      id,
-      name,
-      type:       document.getElementById('spf-type')?.value    || 'custom',
-      status:     document.getElementById('spf-status')?.value  || 'known',
-      notes:      document.getElementById('spf-notes')?.value   || '',
-      locationId: document.getElementById('spf-location')?.value || null,
-      priority:   (priority === 1 || priority === 2 || priority === 3) ? priority : undefined,
-      x: existing ? existing.x : x,
-      y: existing ? existing.y : y,
-    });
-    _refreshPin(id);
-    _openPinPanel(id);
+    const pinType   = document.getElementById('spf-type')?.value   || 'custom';
+    const mapStatus = document.getElementById('spf-status')?.value || 'known';
+    const mapNotes  = document.getElementById('spf-notes')?.value  || '';
+
+    let loc = null;
+    if (isNew) {
+      const existingId = document.getElementById('spf-existing')?.value || '';
+      if (existingId) loc = Store.getLocation(existingId);
+      if (!loc) {
+        const newId = 'loc_' + Store.generateId(name) + '_' + Date.now();
+        loc = { id: newId, name, type: '', status: '', description: '', notes: '', characters: [] };
+      }
+      loc = { ...loc, name, x, y };
+    } else {
+      loc = Store.getLocation(_editPinId);
+      if (!loc) return;
+      loc = { ...loc, name };
+    }
+    if (_currentParentId) loc.parentId = _currentParentId;
+    loc.pinType   = pinType;
+    loc.mapStatus = mapStatus;
+    loc.mapNotes  = mapNotes;
+    if (priority === 1 || priority === 2 || priority === 3) loc.priority = priority;
+    else delete loc.priority;
+    Store.saveLocation(loc);
+    _refreshPin(loc.id);
+    _openPinPanel(loc.id);
   }
 
   function openPinPanel(pinId) { _openPinPanel(pinId); }
 
+  // "Smazat" on a pin means "remove from map" — we strip the map-only
+  // fields and keep the Location intact. To delete the place itself,
+  // open it in the wiki (📖 Otevřít místo) and use Smazat there.
   function deletePin(pinId) {
-    const pin = Store.getMapPins().find(p => p.id === pinId);
-    if (!pin) return;
-    if (!confirm(`Smazat místo „${pin.name}"?`)) return;
-    Store.deleteMapPin(pinId);
+    const loc = Store.getLocation(pinId);
+    if (!loc) return;
+    if (!confirm(`Odebrat „${loc.name}" z mapy?\n(Stránka místa zůstane zachována.)`)) return;
+    const cleaned = { ...loc };
+    delete cleaned.x; delete cleaned.y;
+    delete cleaned.priority;
+    delete cleaned.pinType; delete cleaned.mapStatus; delete cleaned.mapNotes;
+    Store.saveLocation(cleaned);
     if (_markers[pinId]) { _markers[pinId].remove(); delete _markers[pinId]; }
     closePanel();
   }
@@ -491,7 +572,7 @@ export const WorldMap = (() => {
       return (a.order ?? 0) - (b.order ?? 0);
     });
 
-    const pins = Store.getMapPins();
+    const pins = _pinsForCurrent();
 
     const eventPoints = events.map(e => {
       const primaryLocId = (e.locations || [])[0];
@@ -644,19 +725,25 @@ export const WorldMap = (() => {
   function _hideSearchResults() { const el = _searchResultsEl(); if (el) el.setAttribute('hidden', ''); }
   function _showSearchResults() { const el = _searchResultsEl(); if (el) el.removeAttribute('hidden'); }
 
+  // Search every placed location across the world map and every local
+  // sub-map. zoomToPin handles map-context switching so a hit on a
+  // dungeon sub-pin opens the dungeon's local map and centers there.
   function _searchMatches(q) {
     const qn = String(q || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
     if (!qn) return [];
-    const pins = Store.getMapPins();
-    const locs = Store.getLocations();
-    const haystack = pins.map(p => {
-      const loc = p.locationId ? locs.find(l => l.id === p.locationId) : null;
-      const text = [p.name, p.notes, loc?.name, loc?.region, loc?.type]
-        .filter(Boolean).join(' ')
-        .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      return { pin: p, text };
-    });
-    return haystack.filter(h => h.text.includes(qn)).slice(0, 8).map(h => h.pin);
+    const pins = Store.getLocations()
+      .filter(l => typeof l.x === 'number' && typeof l.y === 'number')
+      .map(_pinFromLocation);
+    return pins
+      .map(p => {
+        const text = [p.name, p.notes, p.type]
+          .filter(Boolean).join(' ')
+          .toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return { pin: p, text };
+      })
+      .filter(h => h.text.includes(qn))
+      .slice(0, 8)
+      .map(h => h.pin);
   }
 
   function onSearchInput(q) {
@@ -681,16 +768,44 @@ export const WorldMap = (() => {
     if (hits.length) zoomToPin(hits[0].id);
   }
 
+  // Zoom to a pin. If the pin lives on a different map (e.g. a sub-pin
+  // in a dungeon while we're viewing the world map), switch context
+  // first, then center on the pin once the map has re-initialised.
   function zoomToPin(pinId) {
-    const pin = Store.getMapPins().find(p => p.id === pinId);
-    if (!pin || !_map) return;
-    const ll = _toLL(pin.x, pin.y);
+    const loc = Store.getLocation(pinId);
+    if (!loc || typeof loc.x !== 'number') return;
+    const targetParent = loc.parentId || null;
+    if (targetParent !== _currentParentId) {
+      render(targetParent);
+      // _initLeaflet runs async (image preload). Wait for the marker.
+      const tryFly = (tries) => {
+        if (_markers[pinId]) return zoomToPin(pinId);
+        if (tries > 30) return;
+        setTimeout(() => tryFly(tries + 1), 80);
+      };
+      setTimeout(() => tryFly(0), 80);
+      return;
+    }
+    if (!_map) return;
+    const ll = _toLL(loc.x, loc.y);
     const capZoom = Math.min(0, _map.getMaxZoom());
     _map.flyTo(ll, capZoom, { animate: true, duration: 0.6 });
     _hideSearchResults();
     const searchEl = document.getElementById('sc-search');
     if (searchEl) searchEl.value = '';
     _openPinPanel(pinId);
+  }
+
+  // Switch the map view to a parent location's local map (parent.localMap
+  // image, sub-pins overlaid). No-ops if the parent has no localMap set.
+  function openLocalMap(parentId) {
+    const parent = Store.getLocation(parentId);
+    if (!parent || !parent.localMap) {
+      alert('Toto místo nemá vlastní mapu. Otevři jeho stránku a nahraj obrázek mapy.');
+      return;
+    }
+    closePanel();
+    render(parentId);
   }
 
   return {
@@ -701,5 +816,6 @@ export const WorldMap = (() => {
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll, zoomMajorCities, zoomCurrentSitting,
     onSearchInput, jumpToFirstMatch, zoomToPin,
+    openLocalMap,
   };
 })();

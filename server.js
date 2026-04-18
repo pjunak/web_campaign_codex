@@ -88,6 +88,11 @@ function _broadcastDataChanged() {
 // Defense in depth: reject unknown collection names, relationship types,
 // and character statuses at the API boundary. Clients should never
 // produce these, but a buggy build or a hand-crafted PATCH could.
+// `mapPins` is DEPRECATED. Pins were folded into `locations` (every
+// Location can carry x/y/pinType/mapStatus/priority/parentId/localMap).
+// The collection name is still allowed so legacy data files can be read
+// and the client-side migration (Store._migrateMapPins) can write the
+// emptied array back. Drop after one full deploy cycle.
 const ALLOWED_TYPES = new Set([
   'characters', 'relationships', 'locations', 'events',
   'mysteries', 'mapPins', 'factions', 'deletedDefaults',

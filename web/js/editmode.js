@@ -378,13 +378,22 @@ export const EditMode = (() => {
     const name = document.getElementById(`lf-name-${uid}`)?.value.trim();
     if (!name) { _toast("Název je povinný", false); return; }
     const newId = originalId || _genId(name);
+    // Preserve map-only fields (x, y, pinType, mapStatus, priority, mapNotes)
+    // that this form doesn't expose. Only the wiki form would clobber them
+    // otherwise; the map's own pin form remains the place to edit them.
+    const existing = originalId ? (Store.getLocation(originalId) || {}) : {};
+    const parentId = document.getElementById(`lf-parent-${uid}`)?.value.trim() || "";
+    const localMap = document.getElementById(`lf-localmap-${uid}`)?.value.trim() || "";
     Store.saveLocation({
+      ...existing,
       id: newId, name,
       type:        document.getElementById(`lf-type-${uid}`)?.value.trim()   || "",
       status:      document.getElementById(`lf-status-${uid}`)?.value.trim() || "",
       description: document.getElementById(`lf-desc-${uid}`)?.value.trim()   || "",
       notes:       document.getElementById(`lf-notes-${uid}`)?.value.trim()  || "",
       characters:  _checkVals(`lf-chars-${uid}`),
+      parentId:    parentId || undefined,
+      localMap:    localMap || undefined,
     });
     _runAfterSave('location', newId);
     _toast("✓ Místo uloženo");
@@ -443,7 +452,7 @@ export const EditMode = (() => {
     if (!confirm("Opravdu smazat událost?")) return;
     Store.deleteEvent(id);
     _toast("Událost smazána");
-    window.location.hash = "#/udalosti";
+    window.location.hash = "#/mapa/casova-osa";
   }
 
   // ══════════════════════════════════════════════════════════════

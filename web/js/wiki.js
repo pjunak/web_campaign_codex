@@ -14,19 +14,31 @@ export const Wiki = (() => {
 
   // ── List-view UI state (search + sort) ─────────────────────────
   // Persisted so SSE re-renders and navigation keep the user's filter.
+  // Search is multi-chip via TagFilter: values[] AND-matched against
+  // a per-entity text blob (name + tags + type + description + …).
   const LS_LIST_KEY = 'wiki_list_state_v1';
   const _defaultListState = {
-    postavy: { q: '', sort: 'faction' },
-    mista:   { q: '', sort: 'name' },
-    frakce:  { q: '', sort: 'default' },
+    postavy: { values: [], sort: 'faction' },
+    mista:   { values: [], sort: 'name' },
+    frakce:  { values: [], sort: 'default' },
   };
+  function _migrateSlot(def, raw) {
+    const slot = { ...def, ...(raw || {}) };
+    // Back-compat: old shape used a single `q` string.
+    if (typeof slot.q === 'string' && !Array.isArray(slot.values)) {
+      slot.values = slot.q ? [slot.q] : [];
+    }
+    delete slot.q;
+    if (!Array.isArray(slot.values)) slot.values = [];
+    return slot;
+  }
   let _listState = (() => {
     try {
       const s = JSON.parse(localStorage.getItem(LS_LIST_KEY) || '{}');
       return {
-        postavy: { ..._defaultListState.postavy, ...(s.postavy || {}) },
-        mista:   { ..._defaultListState.mista,   ...(s.mista   || {}) },
-        frakce:  { ..._defaultListState.frakce,  ...(s.frakce  || {}) },
+        postavy: _migrateSlot(_defaultListState.postavy, s.postavy),
+        mista:   _migrateSlot(_defaultListState.mista,   s.mista),
+        frakce:  _migrateSlot(_defaultListState.frakce,  s.frakce),
       };
     } catch { return JSON.parse(JSON.stringify(_defaultListState)); }
   })();
@@ -34,9 +46,19 @@ export const Wiki = (() => {
     try { localStorage.setItem(LS_LIST_KEY, JSON.stringify(_listState)); } catch {}
   }
 
-  // Shared toolbar: search input + sort <select>. Re-renders only the
-  // matching grid-host div via Wiki.set<Kind>Search / set<Kind>Sort,
-  // so typing never loses focus.
+  // AND-match: every chip must be a substring of the normalized blob.
+  function _matchAll(values, blob) {
+    if (!values || !values.length) return true;
+    const b = norm(blob || '');
+    return values.every(v => {
+      const n = norm(v);
+      return n ? b.includes(n) : true;
+    });
+  }
+
+  // Shared toolbar: TagFilter (name + tags, unified) + sort <select>.
+  // Re-renders only the matching grid-host div via the delegated
+  // tf-change listener / Wiki.set<Kind>Sort, so focus never jumps.
   function _listToolbar(kind, sortOpts) {
     const s = _listState[kind];
     const opts = sortOpts.map(([v, label]) =>
@@ -45,9 +67,12 @@ export const Wiki = (() => {
     const Name = kind[0].toUpperCase() + kind.slice(1);
     return `
       <div class="list-toolbar">
-        <input class="list-search-input" type="search" id="wl-${kind}-q"
-               value="${esc(s.q)}" placeholder="🔍 Hledat…" autocomplete="off"
-               oninput="Wiki.set${Name}Search(this.value)">
+        <div class="tf-mount list-search-tf"
+             data-tf-id="wl-${kind}-tf"
+             data-tf-placeholder="🔍 Napiš a stiskni Enter…"
+             data-tf-hint="Jméno, tagy, typ — víc chipů = všechny musí sedět"
+             data-tf-value="${esc((s.values || []).join(','))}"
+             data-wl-kind="${kind}"></div>
         <label class="list-sort">
           <span class="list-sort-label">Řadit</span>
           <select class="list-sort-select" onchange="Wiki.set${Name}Sort(this.value)">
@@ -56,6 +81,20 @@ export const Wiki = (() => {
         </label>
       </div>`;
   }
+
+  // One-shot delegated listener: every tf-mount inside a list toolbar
+  // reports chip changes here, and we route to the matching grid refresh.
+  document.addEventListener('tf-change', (ev) => {
+    const el = ev.target;
+    if (!el || !el.classList || !el.classList.contains('list-search-tf')) return;
+    const kind = el.dataset.wlKind;
+    if (!kind || !_listState[kind]) return;
+    _listState[kind].values = Array.isArray(ev.detail?.values) ? [...ev.detail.values] : [];
+    _persistListState();
+    if (kind === 'postavy') { _refreshPostavyGrid(); _refreshPostavyCount(); }
+    else if (kind === 'mista')   { _refreshMistaGrid();   _refreshMistaCount(); }
+    else if (kind === 'frakce')  { _refreshFrakceGrid();  _refreshFrakceCount(); }
+  });
 
   // Czech-aware name compare. Falls back to default locale if `cs` not supported.
   const _czCompare = (a, b) => String(a||'').localeCompare(String(b||''), 'cs');
@@ -188,7 +227,11 @@ export const Wiki = (() => {
   // the faction filter-bar selection (orthogonal to text search).
   function _postavyApply(filterFaction) {
     const s = _listState.postavy;
-    let chars = s.q ? Store.searchCharacters(s.q) : Store.getCharacters();
+    let chars = Store.getCharacters();
+    if (s.values && s.values.length) {
+      chars = chars.filter(c => _matchAll(s.values,
+        `${c.name||''} ${c.title||''} ${(c.tags||[]).join(' ')} ${c.description||''} ${c.species||''} ${c.gender||''}`));
+    }
     if (filterFaction) chars = chars.filter(c => c.faction === filterFaction);
     chars = [...chars];
     switch (s.sort) {
@@ -263,8 +306,11 @@ export const Wiki = (() => {
     `;
   }
 
+  // Legacy shim: old callers passed a single string. Treat as a
+  // one-chip filter so inline-HTML that survived the refactor still works.
   function setPostavySearch(v) {
-    _listState.postavy.q = v || '';
+    const arr = Array.isArray(v) ? v : (v ? [String(v)] : []);
+    _listState.postavy.values = arr;
     _persistListState();
     _refreshPostavyGrid();
     _refreshPostavyCount();
@@ -399,7 +445,11 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   function _mistaApply() {
     const s = _listState.mista;
-    let locs = s.q ? Store.searchLocations(s.q) : Store.getLocations();
+    let locs = Store.getLocations();
+    if (s.values && s.values.length) {
+      locs = locs.filter(l => _matchAll(s.values,
+        `${l.name||''} ${l.type||''} ${l.region||''} ${(l.tags||[]).join(' ')} ${l.description||''} ${l.status||''}`));
+    }
     locs = [...locs];
     switch (s.sort) {
       case 'type':
@@ -467,7 +517,8 @@ export const Wiki = (() => {
   }
 
   function setMistaSearch(v) {
-    _listState.mista.q = v || '';
+    const arr = Array.isArray(v) ? v : (v ? [String(v)] : []);
+    _listState.mista.values = arr;
     _persistListState();
     _refreshMistaGrid();
     _refreshMistaCount();
@@ -501,21 +552,64 @@ export const Wiki = (() => {
       return c ? `<a class="relation-chip" href="#/postava/${cid}">${factions[c.faction]?.badge || "👤"} ${c.name}</a>` : "";
     }).join("");
 
+    // Hierarchy: ancestor breadcrumb + sub-locations.
+    const ancestors = Store.getAncestorLocations(id).reverse();
+    const breadcrumb = ancestors.length ? `
+      <div class="location-breadcrumb">
+        ${ancestors.map(a => `<a href="#/misto/${a.id}">📍 ${esc(a.name)}</a>`).join(' › ')}
+        <span> › <strong>${esc(l.name)}</strong></span>
+      </div>` : '';
+
+    const subs = Store.getSubLocations(id);
+    const subList = subs.length ? `
+      <div class="char-section">
+        <div class="char-section-title">Dílčí místa</div>
+        <div class="relation-chips">
+          ${subs.map(s => {
+            const onMap = (typeof s.x === 'number' && typeof s.y === 'number');
+            const dot = onMap ? '📍' : '·';
+            return `<a class="relation-chip" href="#/misto/${s.id}">${dot} ${esc(s.name)}</a>`;
+          }).join('')}
+        </div>
+      </div>` : '';
+
+    // World-map / local-map entry points.
+    const mapButtons = [];
+    if (typeof l.x === 'number' && typeof l.y === 'number') {
+      // Determine which map to open: the parent's local map if any, else world.
+      const targetParent = l.parentId || '';
+      const route = targetParent ? `#/mapa/svet` : `#/mapa/svet`;
+      mapButtons.push(
+        `<button class="inline-create-btn" onclick="WorldMap.zoomToPin('${l.id}');location.hash='${route}'">🧭 Najít na mapě</button>`
+      );
+    }
+    if (l.localMap) {
+      mapButtons.push(
+        `<a class="inline-create-btn" href="#/mapa/svet" onclick="setTimeout(()=>WorldMap.openLocalMap('${l.id}'),0)">🗺 Otevřít místní mapu</a>`
+      );
+    }
+    const mapRow = mapButtons.length
+      ? `<div class="inline-create-row">${mapButtons.join('')}</div>` : '';
+
     const inlineCreate = EditMode.isActive() ? `
       <div class="inline-create-row">
         <button class="inline-create-btn" onclick="EditMode.startNewCharacterInLocation('${l.id}')">＋ Postava zde</button>
         <button class="inline-create-btn" onclick="EditMode.startNewEvent({locations:['${l.id}']})">＋ Událost zde</button>
+        <button class="inline-create-btn" onclick="EditMode.startNewLocation({parentId:'${l.id}'})">＋ Dílčí místo</button>
       </div>` : "";
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
       <div class="location-article">
+        ${breadcrumb}
         <div class="page-header">
           <h1>📍 ${l.name}</h1>
-          <div class="subtitle">${l.type} · ${l.status}</div>
+          <div class="subtitle">${l.type || ''}${l.type && l.status ? ' · ' : ''}${l.status || ''}</div>
         </div>
-        <p>${l.description}</p>
+        <p>${l.description || ''}</p>
         ${l.notes ? `<div class="location-note">${l.notes}</div>` : ""}
+        ${mapRow}
+        ${subList}
         ${chars ? `<div class="char-section">
           <div class="char-section-title">Přítomné Postavy</div>
           <div class="relation-chips">${chars}</div>
@@ -526,40 +620,8 @@ export const Wiki = (() => {
   }
 
   // ══════════════════════════════════════════════════════════════
-  //  EVENT LIST & ARTICLE
+  //  EVENT ARTICLE (list view lives under /mapa/casova-osa)
   // ══════════════════════════════════════════════════════════════
-  function renderEventList() {
-    const events = Store.getEvents();
-    const newBtn = EditMode.isActive() ? `
-      <a href="#/udalost/new" class="list-item-new" style="text-decoration:none">＋ Nová událost</a>` : "";
-
-    return `
-      <div class="page-header" style="display:flex;align-items:center;gap:1rem">
-        <div style="flex:1">
-          <h1>Časová Osa</h1>
-          <div class="subtitle">Chronologie kampaně</div>
-        </div>
-        ${newBtn}
-      </div>
-      <div class="timeline">
-        ${[...events].sort((a,b) => a.order - b.order).map(e => {
-          const editBtn = EditMode.isActive()
-            ? `<span class="list-edit-btn" title="Upravit" style="flex-shrink:0">✏</span>` : "";
-          return `<div class="timeline-item">
-            <div class="timeline-dot">${e.order}</div>
-            <a class="timeline-content" href="#/udalost/${e.id}" style="text-decoration:none;display:flex;align-items:flex-start;gap:0.5rem">
-              <div style="flex:1">
-                <div class="timeline-event-name">${e.name}</div>
-                <div class="timeline-event-short">${e.short}</div>
-              </div>
-              ${editBtn}
-            </a>
-          </div>`;
-        }).join("")}
-      </div>
-    `;
-  }
-
   function renderEventArticle(id) {
     if (id === "new") return EditMode.renderEventEditor(null);
     const e = Store.getEvent(id);
@@ -685,7 +747,6 @@ export const Wiki = (() => {
     const s = _listState.frakce;
     const factions = Store.getFactions();
     const chars    = Store.getCharacters();
-    const q        = norm(s.q);
 
     // Entries with pre-computed member count for sort "members" option.
     let entries = Object.entries(factions).map(([id, f]) => ({
@@ -693,11 +754,9 @@ export const Wiki = (() => {
       memberCount: chars.filter(c => c.faction === id).length,
     }));
 
-    if (q) {
+    if (s.values && s.values.length) {
       entries = entries.filter(({ id, f }) =>
-        norm(f.name).includes(q)
-        || norm(id).includes(q)
-        || norm(f.description || '').includes(q)
+        _matchAll(s.values, `${id} ${f.name||''} ${f.description||''}`)
       );
     }
 
@@ -760,7 +819,8 @@ export const Wiki = (() => {
   }
 
   function setFrakceSearch(v) {
-    _listState.frakce.q = v || '';
+    const arr = Array.isArray(v) ? v : (v ? [String(v)] : []);
+    _listState.frakce.values = arr;
     _persistListState();
     _refreshFrakceGrid();
     _refreshFrakceCount();
@@ -873,7 +933,6 @@ export const Wiki = (() => {
       case "postava":    html = renderCharacterArticle(param); break;
       case "mista":      html = renderLocationList(); break;
       case "misto":      html = renderLocationArticle(param); break;
-      case "udalosti":   html = renderEventList(); break;
       case "udalost":    html = renderEventArticle(param); break;
       case "zahady":     html = renderMysteries(); break;
       case "zahada":     html = renderMysteryArticle(param); break;

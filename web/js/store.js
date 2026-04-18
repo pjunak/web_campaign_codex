@@ -12,7 +12,7 @@ export const Store = (() => {
   let _idxEventsByChar     = new Map();
   let _idxEventsByLocation = new Map();
   let _idxMysteriesByChar  = new Map();
-  let _idxPinsByLocation   = new Map();
+  let _idxChildLocations   = new Map();  // parentId -> [childLoc, ...]
 
   function _push(map, key, val) {
     if (!key) return;
@@ -28,7 +28,7 @@ export const Store = (() => {
     _idxEventsByChar     = new Map();
     _idxEventsByLocation = new Map();
     _idxMysteriesByChar  = new Map();
-    _idxPinsByLocation   = new Map();
+    _idxChildLocations   = new Map();
     if (!_data) return;
 
     for (const c of _data.characters || []) {
@@ -49,9 +49,54 @@ export const Store = (() => {
     for (const m of _data.mysteries || []) {
       for (const cid of m.characters || []) _push(_idxMysteriesByChar, cid, m);
     }
-    for (const p of _data.mapPins || []) {
-      if (p.locationId) _push(_idxPinsByLocation, p.locationId, p);
+    for (const l of _data.locations || []) {
+      if (l.parentId) _push(_idxChildLocations, l.parentId, l);
     }
+  }
+
+  // ── One-shot pin→location migration ──────────────────────────
+  // Folds legacy `mapPins[]` into `locations[]` as new fields:
+  //   x, y, priority, mapStatus, pinType, notes→mapNotes
+  // A pin with `locationId` updates that location in place. A pin
+  // without a linked location spawns a new Location. After migration
+  // the mapPins array is emptied; re-runs become no-ops.
+  function _migrateMapPins() {
+    if (!_data || !Array.isArray(_data.mapPins) || _data.mapPins.length === 0) return false;
+    const locs = _data.locations = _data.locations || [];
+    let changed = false;
+    for (const pin of _data.mapPins) {
+      if (!pin || typeof pin.x !== 'number' || typeof pin.y !== 'number') continue;
+      let loc = null;
+      if (pin.locationId) loc = locs.find(l => l.id === pin.locationId);
+      if (!loc) {
+        // Create a new Location from the pin
+        const newId = pin.locationId
+          ? pin.locationId
+          : 'loc_' + generateId(pin.name || 'misto') + '_' + (pin.id || Date.now());
+        loc = {
+          id:          newId,
+          name:        pin.name || 'Neznámé místo',
+          type:        '',
+          status:      '',
+          description: '',
+          notes:       '',
+          characters:  [],
+        };
+        locs.push(loc);
+      }
+      // Merge map fields. Do not clobber an existing location's name/desc.
+      loc.x         = pin.x;
+      loc.y         = pin.y;
+      if (typeof pin.priority === 'number') loc.priority = pin.priority;
+      if (pin.status) loc.mapStatus = pin.status;   // affiliation: known/visited/enemy/fog
+      if (pin.type)   loc.pinType   = pin.type;     // icon type: city/fortress/...
+      if (pin.notes && !loc.mapNotes) loc.mapNotes = pin.notes;
+      changed = true;
+    }
+    // Empty the legacy collection — keep the key so server writes an
+    // empty file and doesn't re-hydrate from disk on the next load.
+    _data.mapPins = [];
+    return changed;
   }
 
   function _defaults() {
@@ -92,6 +137,8 @@ export const Store = (() => {
         if (serverData && serverData.characters) {
           _data = serverData;
           _mergeDefaults();
+          // One-shot legacy pins → locations migration. Re-saves if it did work.
+          if (_migrateMapPins()) _persist();
           _reindex();
           return;
         }
@@ -170,10 +217,41 @@ export const Store = (() => {
   function getLocations()     { init(); return _data.locations; }
   function getEvents()        { init(); return _data.events; }
   function getMysteries()     { init(); return _data.mysteries; }
-  function getMapPins()       { init(); return _data.mapPins || (_data.mapPins = JSON.parse(JSON.stringify(MAP_PINS))); }
   function getFactions()      { init(); return _data.factions; }
   function getFaction(id)     { return getFactions()[id] || null; }
   function getStatusMap()     { return STATUS; }
+
+  // Locations with map coordinates set. `parentId=null` returns only
+  // top-level places (on the world map). Pass a parentId to get the
+  // places placed on that parent's local map. Falsy/unset parentId
+  // on a location means "on the world map".
+  function getLocationsOnMap(parentId) {
+    init();
+    const p = parentId || null;
+    return _data.locations.filter(l =>
+      typeof l.x === 'number' && typeof l.y === 'number'
+      && (l.parentId || null) === p
+    );
+  }
+  // All children of a parent location (whether placed on its map or not).
+  function getSubLocations(parentId) {
+    init(); return _idxChildLocations.get(parentId) || [];
+  }
+  // Walk parentId chain up from a location (closest-first).
+  function getAncestorLocations(locId) {
+    init();
+    const chain = [];
+    const seen  = new Set();
+    let cur = _data.locations.find(l => l.id === locId);
+    while (cur && cur.parentId && !seen.has(cur.parentId)) {
+      seen.add(cur.parentId);
+      const parent = _data.locations.find(l => l.id === cur.parentId);
+      if (!parent) break;
+      chain.push(parent);
+      cur = parent;
+    }
+    return chain;
+  }
 
   function getCharacter(id) { return getCharacters().find(c => c.id === id) || null; }
   function getLocation(id)  { return getLocations().find(l => l.id === id) || null; }
@@ -280,21 +358,12 @@ export const Store = (() => {
     return _sync('factions', 'delete', { id });
   }
 
-  function saveMapPin(pin) {
-    init();
-    const pins = getMapPins();
-    const idx  = pins.findIndex(p => p.id === pin.id);
-    if (idx >= 0) pins[idx] = pin; else pins.push(pin);
-    _reindex();
-    return _sync('mapPins', 'save', pin);
-  }
-
-  function deleteMapPin(id) {
-    init();
-    _data.mapPins = getMapPins().filter(p => p.id !== id);
-    _reindex();
-    return _sync('mapPins', 'delete', { id });
-  }
+  // Legacy shims — kept so any straggling caller throws loudly instead of
+  // silently writing to a removed collection. All map writes now go
+  // through saveLocation with x/y/priority/mapStatus/pinType set.
+  function saveMapPin(_pin)   { throw new Error('Store.saveMapPin removed — use saveLocation with x/y/mapStatus/pinType.'); }
+  function deleteMapPin(_id)  { throw new Error('Store.deleteMapPin removed — clear x/y on the location via saveLocation.'); }
+  function getMapPins()       { throw new Error('Store.getMapPins removed — use getLocationsOnMap(parentId).'); }
 
   // ── Indexed lookups ─────────────────────────────────────────
   function getCharactersByFaction(factionId) {
@@ -315,8 +384,17 @@ export const Store = (() => {
   function getMysteriesWithCharacter(charId) {
     init(); return _idxMysteriesByChar.get(charId) || [];
   }
+  // Legacy alias — pin metadata now lives directly on the Location.
   function getPinForLocation(locId) {
-    init(); const arr = _idxPinsByLocation.get(locId); return arr ? arr[0] : null;
+    init();
+    const l = _data.locations.find(x => x.id === locId);
+    if (!l || typeof l.x !== 'number' || typeof l.y !== 'number') return null;
+    return {
+      id: l.id, name: l.name, x: l.x, y: l.y,
+      type: l.pinType, status: l.mapStatus,
+      priority: l.priority, locationId: l.id,
+      notes: l.mapNotes || '',
+    };
   }
 
   // ── Search ─────────────────────────────────────────────────
@@ -418,7 +496,7 @@ export const Store = (() => {
     init();
     const ts = new Date().toLocaleString('cs-CZ');
     return JSON.stringify({
-      _version:      3,
+      _version:      4,
       _exported:     ts,
       factions:      _data.factions,
       characters:    _data.characters,
@@ -426,7 +504,6 @@ export const Store = (() => {
       locations:     _data.locations,
       events:        _data.events,
       mysteries:     _data.mysteries,
-      mapPins:       getMapPins(),
     }, null, 2);
   }
 
@@ -436,6 +513,7 @@ export const Store = (() => {
     getCharacters, getRelationships, getLocations, getEvents, getMysteries,
     getMapPins, getFactions, getFaction, getStatusMap,
     getCharacter, getLocation, getEvent, getMystery,
+    getLocationsOnMap, getSubLocations, getAncestorLocations,
     getCharactersByFaction, getCharactersInLocation, getRelationshipsFor,
     getEventsWithCharacter, getEventsAtLocation, getMysteriesWithCharacter,
     getPinForLocation,

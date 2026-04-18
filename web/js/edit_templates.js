@@ -264,7 +264,8 @@ export const EditTemplates = (() => {
   function renderLocationEditor(l) {
     const isNew = !l || !l.id;
     if (isNew) {
-      const defaults = { id:"", name:"", type:"", status:"", description:"", notes:"", characters:[] };
+      const defaults = { id:"", name:"", type:"", status:"", description:"", notes:"", characters:[],
+                         parentId:"", localMap:"" };
       l = { ...defaults, ...(l || {}) };
     }
     const uid = l.id || "new_loc";
@@ -274,6 +275,22 @@ export const EditTemplates = (() => {
         <input type="checkbox" value="${c.id}" ${(l.characters||[]).includes(c.id)?"checked":""}>
         ${_charBadge(c)}${_esc(c.name)}
       </label>`).join("");
+
+    // Subplace hierarchy: parent picker excludes self (and could exclude
+    // descendants but a deep cycle check belongs in save).
+    const parentMount = `<div class="cb-mount"
+      data-cb-id="lf-parent-${uid}"
+      data-cb-source="location"
+      data-cb-value="${_esc(l.parentId || '')}"
+      data-cb-exclude="${_esc(l.id || '')}"
+      data-cb-allow-empty="1"
+      data-cb-empty-label="— žádné (samostatné místo) —"
+      data-cb-placeholder="Vyber rodičovské místo…"></div>`;
+
+    const onMap = (typeof l.x === 'number' && typeof l.y === 'number');
+    const mapBadge = onMap
+      ? `<span class="badge" style="background:rgba(46,125,50,0.18);color:#a5d6a7">📍 Na mapě</span>`
+      : `<span class="badge" style="background:rgba(255,255,255,0.07);color:var(--text-muted)">Není na mapě</span>`;
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
@@ -307,6 +324,21 @@ export const EditTemplates = (() => {
           <label class="edit-label">Záhadné poznámky</label>
           <textarea class="edit-textarea" id="lf-notes-${uid}" rows="2">${_esc(l.notes||"")}</textarea>
         </div>
+
+        <div class="edit-section">
+          <div class="edit-section-title">Hierarchie a mapa <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">${mapBadge}</span></div>
+          <div class="edit-field">
+            <label class="edit-label">Rodičovské místo (volitelné — pro dílčí mapy)</label>
+            ${parentMount}
+            <div class="edit-hint" style="margin-top:0.25rem">Např. dungeon uvnitř města. Toto místo se objeví na mapě rodiče.</div>
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">URL vlastní mapy (volitelné — pro dílčí mapu tohoto místa)</label>
+            <input class="edit-input" id="lf-localmap-${uid}" value="${_esc(l.localMap||'')}" placeholder="/maps/local/dungeon.jpg nebo data:image/...">
+            <div class="edit-hint" style="margin-top:0.25rem">Když je vyplněno, na stránce místa se objeví tlačítko 🗺 Místní mapa, kde se zobrazí podřízená místa.</div>
+          </div>
+        </div>
+
         <div class="edit-section">
           <div class="edit-section-title">Přítomné postavy</div>
           <div class="edit-checks" id="lf-chars-${uid}">${charChecks}</div>

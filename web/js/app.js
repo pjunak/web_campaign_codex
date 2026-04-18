@@ -99,7 +99,7 @@ window.Admin = Admin;
       case "misto":
         Wiki.renderPage("misto", sub); break;
       case "udalosti":
-        Wiki.renderPage("udalosti"); break;
+        window.location.hash = "#/mapa/casova-osa"; return;
       case "udalost":
         Wiki.renderPage("udalost", sub); break;
       case "zahady":
