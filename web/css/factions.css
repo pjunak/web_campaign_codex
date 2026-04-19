@@ -64,57 +64,82 @@
   line-height: 1;
 }
 
-/* ── Rank chains in article view ────────────────────────────── */
+/* ── Rank chains — themed via inline --chain-color ──────────────
+   Accepts --chain-color (accent base) and --chain-text (title color)
+   set by renderRankChain(). All surfaces derive from --chain-color
+   via color-mix so each chain adopts its faction's palette
+   cohesively instead of clashing with a hardcoded gold accent.      */
 .rank-chain {
-  background: var(--bg-card);
-  border: 1px solid rgba(212,184,122,0.12);
-  border-radius: 6px;
+  --chain-color: #C9A14B;
+  --chain-text:  var(--chain-color);
+  background: color-mix(in srgb, var(--chain-color) 7%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--chain-color) 30%, transparent);
+  border-radius: 8px;
   margin-bottom: 1rem;
   overflow: hidden;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--chain-color) 10%, transparent);
 }
 .rank-chain-title {
   font-family: var(--font-title);
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--accent-gold);
-  padding: 0.5rem 1rem;
-  background: rgba(212,184,122,0.06);
-  border-bottom: 1px solid rgba(212,184,122,0.12);
+  color: var(--chain-text);
+  padding: 0.55rem 1rem;
+  background: color-mix(in srgb, var(--chain-color) 15%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--chain-color) 22%, transparent);
 }
 .rank-row {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.45rem 1rem;
-  border-bottom: 1px solid rgba(212,184,122,0.06);
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--chain-color) 10%, transparent);
 }
 .rank-row:last-child { border-bottom: none; }
+.rank-row-unranked {
+  background: color-mix(in srgb, var(--chain-color) 4%, transparent);
+  font-style: italic;
+}
 .rank-row-label {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  min-width: 160px;
-  font-size: 0.85rem;
+  gap: 0.55rem;
+  min-width: 180px;
+  font-size: 0.88rem;
   color: var(--text-parchment);
 }
+.rank-row-name { line-height: 1.2; }
 .rank-dot {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 700;
-  color: #fff;
+  color: var(--chain-text);
+  background: color-mix(in srgb, var(--chain-color) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chain-color) 55%, transparent);
   flex-shrink: 0;
+}
+.rank-dot-unknown {
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.12);
 }
 .rank-row-members {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
   flex: 1;
+}
+.rank-row-empty {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  font-style: italic;
 }
 
 /* ── Rank chain editor (EditMode / Admin) ───────────────────── */

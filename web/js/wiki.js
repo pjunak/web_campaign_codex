@@ -856,32 +856,25 @@ export const Wiki = (() => {
 
     const chars = Store.getCharacters().filter(c => c.faction === id);
 
+    const _charChip = c => `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`;
     const chainSections = (f.rankChains || []).map(chain => {
       const chainMembers = chars.filter(c => c.rankChain === chain.id);
-      const rankRows = chain.ranks.map((rank, ri) => {
-        const ranked = chainMembers.filter(c => c.rank === rank);
-        return `<div class="rank-row">
-          <div class="rank-row-label">
-            <span class="rank-dot" style="background:${f.color}">${ri + 1}</span>
-            ${rank}
-          </div>
-          <div class="rank-row-members">
-            ${ranked.length
-              ? ranked.map(c => `<a class="relation-chip" href="#/postava/${c.id}">${c.name}</a>`).join("")
-              : `<span style="font-size:0.75rem;opacity:0.5">Nikdo</span>`}
-          </div>
-        </div>`;
-      }).join("");
-      const unranked = chainMembers.filter(c => !chain.ranks.includes(c.rank));
-      return `<div class="rank-chain">
-        <div class="rank-chain-title">${chain.name}</div>
-        ${rankRows}
-        ${unranked.length ? `<div class="rank-row">
-          <div class="rank-row-label"><span class="rank-dot" style="background:#555">?</span> Neznámá hodnost</div>
-          <div class="rank-row-members">${unranked.map(c => `<a class="relation-chip" href="#/postava/${c.id}">${c.name}</a>`).join("")}</div>
-        </div>` : ""}
-      </div>`;
-    }).join("");
+      const rows = chain.ranks.map(rank => ({
+        label:   rank,
+        members: chainMembers.filter(c => c.rank === rank).map(_charChip).join(''),
+      }));
+      const unrankedMembers = chainMembers.filter(c => !chain.ranks.includes(c.rank));
+      const footer = unrankedMembers.length
+        ? { label: 'Neznámá hodnost', members: unrankedMembers.map(_charChip).join('') }
+        : null;
+      return renderRankChain({
+        title:     chain.name,
+        color:     f.color,
+        textColor: f.textColor,
+        rows,
+        footer,
+      });
+    }).join('');
 
     const unchained = chars.filter(c =>
       !c.rankChain || !(f.rankChains || []).find(ch => ch.id === c.rankChain)
@@ -921,6 +914,55 @@ export const Wiki = (() => {
         </div>
       </div>
     `;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  RANK CHAIN — reusable themed hierarchy list
+  //  Renders a card with a title strip and a series of numbered rows
+  //  tinted to a single colour (faction color by default). Useful for
+  //  rank chains, pantheon tiers, command hierarchies — anything where
+  //  a short ordered list of buckets needs a themed wrapper.
+  //
+  //  Shape:
+  //    renderRankChain({
+  //      title:    "Dračí spáry",         // strip title
+  //      color:    "#A0291C",             // accent base; derives all surfaces
+  //      textColor:"#ffb6a8",             // optional — contrasted title text
+  //      rows: [
+  //        { label: "Velmistr", members: "<chips html>" },  // members = html
+  //        { label: "Učeň",     members: "" }                // empty → "Nikdo"
+  //      ],
+  //      footer: { label: "Neznámá hodnost", members: "<chips>" } // optional
+  //    })
+  // ══════════════════════════════════════════════════════════════
+  function renderRankChain({ title, color, textColor, rows, footer }) {
+    const accent = color || '#C9A14B';
+    const label  = textColor || accent;
+    const rowsHtml = (rows || []).map((r, i) => `
+      <div class="rank-row">
+        <div class="rank-row-label">
+          <span class="rank-dot">${i + 1}</span>
+          <span class="rank-row-name">${esc(r.label)}</span>
+        </div>
+        <div class="rank-row-members">
+          ${r.members && r.members.trim()
+            ? r.members
+            : `<span class="rank-row-empty">Nikdo</span>`}
+        </div>
+      </div>`).join('');
+    const footerHtml = footer ? `
+      <div class="rank-row rank-row-unranked">
+        <div class="rank-row-label">
+          <span class="rank-dot rank-dot-unknown">?</span>
+          <span class="rank-row-name">${esc(footer.label)}</span>
+        </div>
+        <div class="rank-row-members">${footer.members || ''}</div>
+      </div>` : '';
+    return `
+      <div class="rank-chain" style="--chain-color:${accent};--chain-text:${label}">
+        <div class="rank-chain-title">${esc(title)}</div>
+        ${rowsHtml}${footerHtml}
+      </div>`;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -1141,6 +1183,7 @@ export const Wiki = (() => {
 
   return {
     renderPage,
+    renderRankChain,
     setPostavySearch, setPostavySort,
     setMistaSearch,   setMistaSort,
     setFrakceSearch,  setFrakceSort,
