@@ -650,7 +650,7 @@ export const Wiki = (() => {
       <div class="location-article">
         <div class="page-header">
           <h1>${e.name}</h1>
-          <div class="subtitle">Událost #${e.order}</div>
+          <div class="subtitle">${e.sitting ? `Sezení ${e.sitting}` : 'Dávná minulost'}</div>
         </div>
         <p>${e.description}</p>
         ${chars ? `<div class="char-section"><div class="char-section-title">Zúčastněné Postavy</div><div class="relation-chips">${chars}</div></div>` : ""}

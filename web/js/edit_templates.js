@@ -415,7 +415,7 @@ export const EditTemplates = (() => {
   function renderEventEditor(e) {
     const isNew = !e || !e.id;
     if (isNew) {
-      const defaults = { id:"", name:"", order:99, sitting:null, short:"", description:"", characters:[], locations:[] };
+      const defaults = { id:"", name:"", sitting:null, short:"", description:"", characters:[], locations:[] };
       e = { ...defaults, ...(e || {}) };
     }
     const uid = e.id || "new_ev";
@@ -449,13 +449,10 @@ export const EditTemplates = (() => {
             <input class="edit-input" id="evf-name-${uid}" value="${_esc(e.name)}" placeholder="Název události">
           </div>
           <div class="edit-field">
-            <label class="edit-label">Pořadí na ose</label>
-            <input class="edit-input" type="number" id="evf-order-${uid}" value="${e.order}" min="1">
+            <label class="edit-label">Sezení (číslo setkání)</label>
+            <input class="edit-input" type="number" id="evf-sitting-${uid}" value="${e.sitting ?? ''}" min="1" placeholder="prázdné = vzdálená minulost">
+            <div class="edit-hint" style="margin-top:0.25rem">Pořadí událostí v rámci sezení se nastavuje přetažením oblaků na časové ose.</div>
           </div>
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Sezení (číslo setkání)</label>
-          <input class="edit-input" type="number" id="evf-sitting-${uid}" value="${e.sitting ?? ''}" min="1" placeholder="prázdné = vzdálená minulost">
         </div>
         <div class="edit-field">
           <label class="edit-label">Krátký popis</label>

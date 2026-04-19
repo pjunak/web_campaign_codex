@@ -505,10 +505,23 @@ export const EditMode = (() => {
     const sitting    = sittingRaw ? (parseInt(sittingRaw) || null) : null;
     // Preserve fields not exposed in the editor
     const existingEv = originalId ? (Store.getEvent(originalId) || {}) : {};
+    // Order is no longer user-editable — it's owned by the timeline
+    // drag-drop. On first save, park the event at the end of its sitting
+    // so it gets a stable slot. Existing events keep whatever order the
+    // timeline has already assigned them; if sitting changed, rebase to
+    // the tail of the new sitting group.
+    let order = existingEv.order;
+    const sittingChanged = existingEv.sitting !== sitting;
+    if (order == null || sittingChanged) {
+      const tail = Store.getEvents()
+        .filter(ev => ev.id !== newId && (ev.sitting ?? null) === sitting)
+        .reduce((m, ev) => Math.max(m, ev.order ?? 0), 0);
+      order = tail + 1;
+    }
     Store.saveEvent({
       ...existingEv,
       id: newId, name,
-      order:       parseInt(document.getElementById(`evf-order-${uid}`)?.value)  || 99,
+      order,
       sitting,
       short:       document.getElementById(`evf-short-${uid}`)?.value.trim()     || "",
       description: document.getElementById(`evf-desc-${uid}`)?.value.trim()      || "",

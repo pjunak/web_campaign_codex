@@ -315,10 +315,14 @@ export const Admin = (() => {
         <button class="admin-btn-sm ok" onclick="Admin.editEvent(null)">+ Nová</button>
       </div>
       <div class="admin-list-items">
-        ${[...Store.getEvents()].sort((a,b)=>a.order-b.order).map(e => `
+        ${[...Store.getEvents()].sort((a,b) => {
+          const sA = a.sitting ?? 0, sB = b.sitting ?? 0;
+          if (sA !== sB) return sA - sB;
+          return (a.order ?? 0) - (b.order ?? 0);
+        }).map(e => `
           <div class="admin-list-item ${_editId===e.id?'active':''}" onclick="Admin.editEvent('${e.id}')">
             <div class="ali-info">
-              <div class="ali-name">#${e.order} ${e.name}</div>
+              <div class="ali-name">${e.sitting ? `S${e.sitting}` : '✦'} ${e.name}</div>
               <div class="ali-sub">${e.short||''}</div>
             </div>
           </div>`).join('')}
@@ -793,7 +797,6 @@ export const Admin = (() => {
     _renderList();
     const el = _el('admin-editor-panel');
     const e = id ? Store.getEvent(id) : null;
-    const maxOrder = Math.max(0, ...Store.getEvents().map(ev => ev.order));
     const allChars = Store.getCharacters();
     const allLocs  = Store.getLocations();
 
@@ -801,10 +804,6 @@ export const Admin = (() => {
       <div class="admin-form">
         <div class="admin-form-title">${id ? 'Upravit: ' + e?.name : 'Nová Událost'}</div>
         <div class="admin-row">
-          <div class="admin-field">
-            <label class="admin-label">Pořadí</label>
-            <input class="admin-input" id="f-ev-order" type="number" min="1" value="${e?.order||(maxOrder+1)}">
-          </div>
           <div class="admin-field">
             <label class="admin-label">Sezení (prázdné = vzdálená minulost)</label>
             <input class="admin-input" id="f-ev-sitting" type="number" min="1" value="${e?.sitting ?? ''}" placeholder="1, 2, 3…">
@@ -815,6 +814,7 @@ export const Admin = (() => {
               ${id?'readonly style="opacity:0.5"':''} placeholder="auto z názvu">
           </div>
         </div>
+        <div class="admin-hint">Pořadí událostí v rámci sezení se nastavuje přetažením oblaků na časové ose.</div>
         <div class="admin-field">
           <label class="admin-label">Název *</label>
           <input class="admin-input" id="f-ev-name" type="text" value="${_esc(e?.name||'')}">
@@ -865,10 +865,20 @@ export const Admin = (() => {
     const sitting    = sittingRaw ? (parseInt(sittingRaw) || null) : null;
     // Preserve extra fields not in the form
     const existingEv = id ? (Store.getEvent(id) || {}) : {};
+    // Order is owned by the timeline drag-drop. Auto-assign on first save
+    // (or when sitting changes) by parking at the end of the target sitting.
+    let order = existingEv.order;
+    const sittingChanged = existingEv.sitting !== sitting;
+    if (order == null || sittingChanged) {
+      const tail = Store.getEvents()
+        .filter(ev => ev.id !== id && (ev.sitting ?? null) === sitting)
+        .reduce((m, ev) => Math.max(m, ev.order ?? 0), 0);
+      order = tail + 1;
+    }
     Store.saveEvent({
       ...existingEv,
       id, name,
-      order:       parseInt(_val('f-ev-order')||'1'),
+      order,
       sitting,
       short:       _val('f-ev-short'),
       description: _val('f-ev-desc'),

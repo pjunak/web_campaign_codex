@@ -89,7 +89,7 @@ export const Timeline = (() => {
     return `
       <div class="tl-cloud" data-id="${e.id}" tabindex="0" role="button"
            aria-label="${_esc(e.name)}" style="--tc:${_eventAccentColor(e)}">
-        <div class="tl-cloud-strip">${sitting} · <span class="tl-strip-order">#${e.order}</span></div>
+        <div class="tl-cloud-strip">${sitting}</div>
         <div class="tl-cloud-name">${_esc(e.name)}</div>
         <div class="tl-cloud-divider"></div>
         ${e.short ? `<div class="tl-cloud-desc">${_esc(e.short)}</div>` : ''}

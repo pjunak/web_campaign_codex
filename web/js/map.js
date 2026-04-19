@@ -726,7 +726,6 @@ export const WorldMap = (() => {
         html: `<div class="sc-event-marker" title="${_esc(e.name)}"
                     style="background:${bgColor}">
                  <span class="sc-event-marker-label">${_esc(sittingLabel)}</span>
-                 <span class="sc-event-marker-num">#${e.order}</span>
                </div>`,
       });
       const m = L.marker(ll, { icon, interactive: true }).addTo(_map);

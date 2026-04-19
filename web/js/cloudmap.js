@@ -278,7 +278,7 @@ export const CloudMap = (() => {
     const snippet = lines.join(' ') + (lines.length < _wrap(desc, FONT_FACT, IW).length ? '…' : '');
     return `<div class="cm-cloud cm-event" data-id="${e.id}" data-type="event"
               style="--cc:#8B6914; width:${CW}px">
-      <div class="cm-strip">📜 Událost ${e.order ? '#' + e.order : ''}</div>
+      <div class="cm-strip">📜 ${e.sitting ? `Sezení ${e.sitting}` : 'Minulost'}</div>
       <div class="cm-name">${_esc(e.name)}</div>
       <div class="cm-divider"></div>
       <div class="cm-fact cm-dim">${_esc(snippet)}</div>
