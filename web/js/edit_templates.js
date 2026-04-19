@@ -443,17 +443,12 @@ export const EditTemplates = (() => {
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteEvent('${e.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-row-2">
-          <div class="edit-field">
-            <label class="edit-label">Název *</label>
-            <input class="edit-input" id="evf-name-${uid}" value="${_esc(e.name)}" placeholder="Název události">
-          </div>
-          <div class="edit-field">
-            <label class="edit-label">Sezení (číslo setkání)</label>
-            <input class="edit-input" type="number" id="evf-sitting-${uid}" value="${e.sitting ?? ''}" min="1" placeholder="prázdné = vzdálená minulost">
-            <div class="edit-hint" style="margin-top:0.25rem">Pořadí událostí v rámci sezení se nastavuje přetažením oblaků na časové ose.</div>
-          </div>
+        <div class="edit-field">
+          <label class="edit-label">Název *</label>
+          <input class="edit-input" id="evf-name-${uid}" value="${_esc(e.name)}" placeholder="Název události">
+          <div class="edit-hint" style="margin-top:0.25rem">Zařazení do sezení a pořadí se nastavuje přetažením kartičky na Časové ose.</div>
         </div>
+        <input type="hidden" id="evf-sitting-${uid}" value="${e.sitting ?? ''}">
         <div class="edit-field">
           <label class="edit-label">Krátký popis</label>
           <input class="edit-input" id="evf-short-${uid}" value="${_esc(e.short)}" placeholder="Jedna věta">
