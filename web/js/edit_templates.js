@@ -254,10 +254,6 @@ export const EditTemplates = (() => {
             <div class="edit-section-title">Vazby</div>
             <p class="edit-hint">Uložte postavu nejprve, pak přidejte vazby.</p>
           </div>`}
-        <div class="edit-bottom-actions">
-          <button class="edit-save-btn" onclick="EditMode.saveCharacter('${c.id}')">💾 Uložit změny</button>
-          ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteCharacter('${c.id}')">🗑 Smazat postavu</button>` : ""}
-        </div>
       </div>
     `;
   }
@@ -404,10 +400,6 @@ export const EditTemplates = (() => {
           <div class="edit-section-title">Přítomné postavy</div>
           ${charsPicker}
         </div>
-        <div class="edit-bottom-actions">
-          <button class="edit-save-btn" onclick="EditMode.saveLocation('${l.id}')">💾 Uložit místo</button>
-          ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteLocation('${l.id}')">🗑 Smazat místo</button>` : ""}
-        </div>
       </div>
     `;
   }
@@ -482,10 +474,6 @@ export const EditTemplates = (() => {
                 </div>`
               : `<button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Umístit pin na mapu</button>`}
         </div>
-        <div class="edit-bottom-actions">
-          <button class="edit-save-btn" onclick="EditMode.saveEvent('${e.id}')">💾 Uložit událost</button>
-          ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteEvent('${e.id}')">🗑 Smazat událost</button>` : ""}
-        </div>
       </div>
     `;
   }
@@ -530,10 +518,6 @@ export const EditTemplates = (() => {
         <div class="edit-section">
           <div class="edit-section-title">Spojené postavy</div>
           ${charPicker}
-        </div>
-        <div class="edit-bottom-actions">
-          <button class="edit-save-btn" onclick="EditMode.saveMystery('${m.id}')">💾 Uložit záhadu</button>
-          ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteMystery('${m.id}')">🗑 Smazat záhadu</button>` : ""}
         </div>
       </div>
     `;
@@ -622,10 +606,6 @@ export const EditTemplates = (() => {
             onclick="EditMode.addRankChain('chains-${uid}','${uid}')">+ Přidat řetězec</button>
         </div>
 
-        <div class="edit-bottom-actions">
-          <button class="edit-save-btn" onclick="EditMode.saveFaction('${isNew ? "" : facId}')">💾 Uložit frakci</button>
-          ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteFaction('${facId}')">🗑 Smazat frakci</button>` : ""}
-        </div>
       </div>
     `;
   }
