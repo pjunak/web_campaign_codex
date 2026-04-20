@@ -7,6 +7,7 @@
 
 import { Store } from './store.js';
 import { norm, debounce } from './utils.js';
+import { REL_TYPES, getRelType } from './data.js';
 
 export const CloudMap = (() => {
 
@@ -208,13 +209,8 @@ export const CloudMap = (() => {
       if (rels.length) {
         const counts = {};
         rels.forEach(r => { counts[r.type] = (counts[r.type] || 0) + 1; });
-        const TYPE_LABELS = {
-          commands:'velení', ally:'spojenec', enemy:'nepřítel',
-          mission:'mise', mystery:'záhada', history:'minulost',
-          uncertain:'nejistota', negotiates:'jednání', captured_by:'zajatec',
-        };
         const top = Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0, 2)
-          .map(([t,n]) => `${TYPE_LABELS[t] || t}×${n}`).join(', ');
+          .map(([t,n]) => `${getRelType(t).label}×${n}`).join(', ');
         body += `<div class="cm-fact cm-dim">${top}</div>`;
       }
 
@@ -290,31 +286,21 @@ export const CloudMap = (() => {
   }
 
   // ── Edge definitions ────────────────────────────────────────
-  const EDGE_COLORS = {
-    commands:    '#8B0000', ally:        '#2E7D32', enemy:       '#C62828',
-    mission:     '#E65100', mystery:     '#6A1B9A', captured_by: '#0D47A1',
-    history:     '#555555', uncertain:   '#757575', negotiates:  '#1565C0',
-    located_at:  '#5D7A3A',
-  };
-  const EDGE_STYLES = {
-    commands:    { 'line-style': 'solid',  width: 3 },
-    ally:        { 'line-style': 'solid',  width: 2 },
-    enemy:       { 'line-style': 'solid',  width: 2 },
-    mission:     { 'line-style': 'dashed', width: 2 },
-    mystery:     { 'line-style': 'dotted', width: 2 },
-    captured_by: { 'line-style': 'solid',  width: 2 },
-    history:     { 'line-style': 'dashed', width: 1 },
-    uncertain:   { 'line-style': 'dashed', width: 1 },
-    negotiates:  { 'line-style': 'dashed', width: 2 },
-    member:      { 'line-style': 'dashed', width: 1.5 },
-    located_at:  { 'line-style': 'dotted', width: 2 },
-  };
-
-  const EDGE_TYPE_LABELS = {
-    commands:'velí', ally:'spojenec', enemy:'nepřítel', mission:'mise',
-    mystery:'záhada', captured_by:'zajat/a', history:'historie',
-    uncertain:'nejistota', negotiates:'jednání',
-  };
+  // Most edge visuals come from the canonical REL_TYPES. Extra
+  // non-relationship edge kinds used only here (member, located_at)
+  // are declared separately and merged in at the bottom.
+  const EDGE_COLORS      = Object.fromEntries(REL_TYPES.map(t => [t.id, t.color]));
+  const EDGE_TYPE_LABELS = Object.fromEntries(REL_TYPES.map(t => [t.id, t.label]));
+  const EDGE_STYLES = Object.fromEntries(REL_TYPES.map(t => {
+    // Stronger weight for command edges; keep REL_TYPES single
+    // width control out of the shared record.
+    const width = t.id === 'commands' ? 3 : (t.style === 'dashed' || t.style === 'dotted') && t.id !== 'negotiates' ? 1 : 2;
+    return [t.id, { 'line-style': t.style, width }];
+  }));
+  // Cloudmap-only edge kinds (not real relationships).
+  EDGE_COLORS.located_at = '#5D7A3A';
+  EDGE_STYLES.member     = { 'line-style': 'dashed', width: 1.5 };
+  EDGE_STYLES.located_at = { 'line-style': 'dotted', width: 2   };
 
   function _relEdge(r) {
     const es = EDGE_STYLES[r.type] || {};

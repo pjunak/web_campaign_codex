@@ -1,6 +1,7 @@
 import {
   FACTIONS, STATUS, CHARACTERS, LOCATIONS, EVENTS, RELATIONSHIPS, MYSTERIES, MAP_PINS,
   SPECIES, PANTHEON, ARTIFACTS, ARTIFACT_STATES,
+  SETTINGS_DEFAULTS, SETTINGS_USAGE_MAP,
 } from './data.js';
 import { norm } from './utils.js';
 
@@ -114,6 +115,7 @@ export const Store = (() => {
       species:       JSON.parse(JSON.stringify(SPECIES)),
       pantheon:      JSON.parse(JSON.stringify(PANTHEON)),
       artifacts:     JSON.parse(JSON.stringify(ARTIFACTS)),
+      settings:      JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)),
     };
   }
 
@@ -140,6 +142,21 @@ export const Store = (() => {
     for (const s of SPECIES) {
       if (!seedIds.has(s.id) && !deleted.has(s.id)) {
         _data.species.push(JSON.parse(JSON.stringify(s)));
+      }
+    }
+    // Seed/merge settings enums. For each category in SETTINGS_DEFAULTS,
+    // start with an empty array if missing, then add defaults whose ids
+    // aren't yet present and aren't tombstoned. User-edited entries are
+    // left untouched so label/colour edits survive across restarts.
+    if (!_data.settings || typeof _data.settings !== 'object') _data.settings = {};
+    for (const [cat, defArr] of Object.entries(SETTINGS_DEFAULTS)) {
+      if (!Array.isArray(_data.settings[cat])) _data.settings[cat] = [];
+      const existing = new Set(_data.settings[cat].map(x => x.id));
+      for (const item of defArr) {
+        const tombstoneKey = `settings:${cat}:${item.id}`;
+        if (!existing.has(item.id) && !deleted.has(tombstoneKey)) {
+          _data.settings[cat].push(JSON.parse(JSON.stringify(item)));
+        }
       }
     }
   }
@@ -269,14 +286,22 @@ export const Store = (() => {
   function getMysteries()     { init(); return _data.mysteries; }
   function getFactions()      { init(); return _data.factions; }
   function getFaction(id)     { return getFactions()[id] || null; }
-  function getStatusMap()     { return STATUS; }
+  // Pull status map live from user-editable settings, falling back
+  // to the hardcoded STATUS (data.js) if settings haven't loaded yet.
+  function getStatusMap() {
+    const arr = (_data?.settings?.characterStatuses) || SETTINGS_DEFAULTS.characterStatuses;
+    return Object.fromEntries(arr.map(s => [s.id, s]));
+  }
   function getSpecies()       { init(); return _data.species  || []; }
   function getPantheon()      { init(); return _data.pantheon || []; }
   function getArtifacts()     { init(); return _data.artifacts || []; }
   function getSpeciesItem(id) { return getSpecies().find(s => s.id === id)  || null; }
   function getBuh(id)         { return getPantheon().find(g => g.id === id) || null; }
   function getArtifact(id)    { return getArtifacts().find(a => a.id === id) || null; }
-  function getArtifactStateMap() { return ARTIFACT_STATES; }
+  function getArtifactStateMap() {
+    const arr = (_data?.settings?.artifactStates) || SETTINGS_DEFAULTS.artifactStates;
+    return Object.fromEntries(arr.map(s => [s.id, s]));
+  }
 
   // Locations with map coordinates set. `parentId=null` returns only
   // top-level places (on the world map). Pass a parentId to get the
@@ -315,8 +340,52 @@ export const Store = (() => {
   function getEvent(id)     { return getEvents().find(e => e.id === id) || null; }
   function getMystery(id)   { return getMysteries().find(m => m.id === id) || null; }
 
+  // Stamp the entity with a last-modified timestamp. Used by the
+  // dashboard activity feed and any "Naposledy upraveno" label.
+  function _stamp(entity) {
+    if (entity && typeof entity === 'object') entity.updatedAt = Date.now();
+    return entity;
+  }
+
+  // ── Trash: session-only undo for deletes ──────────────────────
+  // Every delete*() helper stores a snapshot keyed by `${kind}:${id}`.
+  // `Store.undelete(kind, id)` re-applies the snapshot. Trash lives
+  // only for the current browser session (deliberately not persisted)
+  // — a reload commits all deletions.
+  const _trash = new Map();
+
+  function _trashKey(kind, id) { return `${kind}:${id}`; }
+
+  /** Restore a previously-deleted entity + its dependents from trash.
+   *  Returns true if something was restored, false if the trash entry
+   *  wasn't found (expired, already restored, or never created). */
+  function undelete(kind, id) {
+    const key = _trashKey(kind, id);
+    const snap = _trash.get(key);
+    if (!snap) return false;
+    _trash.delete(key);
+    // Apply entity restore through the public saveX API so every
+    // entity gets reindexed and synced cleanly. `_stamp` refreshes
+    // updatedAt so the restored item appears at the top of activity.
+    switch (snap.kind) {
+      case 'characters':    saveCharacter(snap.entity);      break;
+      case 'locations':     saveLocation(snap.entity);       break;
+      case 'events':        saveEvent(snap.entity);          break;
+      case 'mysteries':     saveMystery(snap.entity);        break;
+      case 'factions':      saveFaction(snap.id, snap.entity); break;
+      case 'species':       saveSpecies(snap.entity);        break;
+      case 'pantheon':      saveBuh(snap.entity);            break;
+      case 'artifacts':     saveArtifact(snap.entity);       break;
+      case 'relationships': saveRelationship(snap.entity);   break;
+    }
+    // Character delete cascade-stripped relationships — restore those.
+    for (const r of snap.relationships || []) saveRelationship(r);
+    return true;
+  }
+
   function saveCharacter(char) {
     init();
+    _stamp(char);
     const idx = _data.characters.findIndex(c => c.id === char.id);
     if (idx >= 0) _data.characters[idx] = char; else _data.characters.push(char);
     _reindex();
@@ -326,6 +395,16 @@ export const Store = (() => {
   function deleteCharacter(id) {
     init();
     const char = _data.characters.find(c => c.id === id);
+    // Snapshot character + its direct relationships for undo.
+    if (char) {
+      _trash.set(_trashKey('characters', id), {
+        kind: 'characters',
+        entity: JSON.parse(JSON.stringify(char)),
+        relationships: _data.relationships
+          .filter(r => r.source === id || r.target === id)
+          .map(r => JSON.parse(JSON.stringify(r))),
+      });
+    }
     if (char?.portrait) deletePortrait(char.portrait);
     if (CHARACTERS.some(c => c.id === id)) {
       if (!_data.deletedDefaults) _data.deletedDefaults = [];
@@ -341,6 +420,7 @@ export const Store = (() => {
 
   function saveRelationship(rel) {
     init();
+    _stamp(rel);
     const key = r => `${r.source}||${r.target}||${r.type}`;
     const k   = key(rel);
     const idx = _data.relationships.findIndex(r => key(r) === k);
@@ -351,6 +431,15 @@ export const Store = (() => {
 
   function deleteRelationship(source, target, type) {
     init();
+    const rel = _data.relationships.find(
+      r => r.source === source && r.target === target && r.type === type
+    );
+    if (rel) {
+      _trash.set(_trashKey('relationships', `${source}|${target}|${type}`), {
+        kind: 'relationships',
+        entity: JSON.parse(JSON.stringify(rel)),
+      });
+    }
     _data.relationships = _data.relationships.filter(
       r => !(r.source === source && r.target === target && r.type === type)
     );
@@ -360,6 +449,7 @@ export const Store = (() => {
 
   function saveLocation(loc) {
     init();
+    _stamp(loc);
     const idx = _data.locations.findIndex(l => l.id === loc.id);
     if (idx >= 0) _data.locations[idx] = loc; else _data.locations.push(loc);
     _reindex();
@@ -368,6 +458,8 @@ export const Store = (() => {
 
   function deleteLocation(id) {
     init();
+    const loc = _data.locations.find(l => l.id === id);
+    if (loc) _trash.set(_trashKey('locations', id), { kind:'locations', entity: JSON.parse(JSON.stringify(loc)) });
     _data.locations = _data.locations.filter(l => l.id !== id);
     _reindex();
     return _sync('locations', 'delete', { id });
@@ -375,6 +467,7 @@ export const Store = (() => {
 
   function saveEvent(evt) {
     init();
+    _stamp(evt);
     const idx = _data.events.findIndex(e => e.id === evt.id);
     if (idx >= 0) _data.events[idx] = evt; else _data.events.push(evt);
     _reindex();
@@ -383,6 +476,8 @@ export const Store = (() => {
 
   function deleteEvent(id) {
     init();
+    const evt = _data.events.find(e => e.id === id);
+    if (evt) _trash.set(_trashKey('events', id), { kind:'events', entity: JSON.parse(JSON.stringify(evt)) });
     _data.events = _data.events.filter(e => e.id !== id);
     _reindex();
     return _sync('events', 'delete', { id });
@@ -390,6 +485,7 @@ export const Store = (() => {
 
   function saveMystery(mys) {
     init();
+    _stamp(mys);
     const idx = _data.mysteries.findIndex(m => m.id === mys.id);
     if (idx >= 0) _data.mysteries[idx] = mys; else _data.mysteries.push(mys);
     _reindex();
@@ -398,6 +494,8 @@ export const Store = (() => {
 
   function deleteMystery(id) {
     init();
+    const m = _data.mysteries.find(x => x.id === id);
+    if (m) _trash.set(_trashKey('mysteries', id), { kind:'mysteries', entity: JSON.parse(JSON.stringify(m)) });
     _data.mysteries = _data.mysteries.filter(m => m.id !== id);
     _reindex();
     return _sync('mysteries', 'delete', { id });
@@ -405,6 +503,7 @@ export const Store = (() => {
 
   function saveSpecies(sp) {
     init();
+    _stamp(sp);
     if (!Array.isArray(_data.species)) _data.species = [];
     const idx = _data.species.findIndex(s => s.id === sp.id);
     if (idx >= 0) _data.species[idx] = sp; else _data.species.push(sp);
@@ -412,6 +511,8 @@ export const Store = (() => {
   }
   function deleteSpecies(id) {
     init();
+    const s = (_data.species || []).find(x => x.id === id);
+    if (s) _trash.set(_trashKey('species', id), { kind:'species', entity: JSON.parse(JSON.stringify(s)) });
     if (SPECIES.some(s => s.id === id)) {
       if (!_data.deletedDefaults) _data.deletedDefaults = [];
       if (!_data.deletedDefaults.includes(id)) _data.deletedDefaults.push(id);
@@ -422,6 +523,7 @@ export const Store = (() => {
 
   function saveBuh(g) {
     init();
+    _stamp(g);
     if (!Array.isArray(_data.pantheon)) _data.pantheon = [];
     const idx = _data.pantheon.findIndex(x => x.id === g.id);
     if (idx >= 0) _data.pantheon[idx] = g; else _data.pantheon.push(g);
@@ -429,12 +531,15 @@ export const Store = (() => {
   }
   function deleteBuh(id) {
     init();
+    const g = (_data.pantheon || []).find(x => x.id === id);
+    if (g) _trash.set(_trashKey('pantheon', id), { kind:'pantheon', entity: JSON.parse(JSON.stringify(g)) });
     _data.pantheon = (_data.pantheon || []).filter(g => g.id !== id);
     return _sync('pantheon', 'delete', { id });
   }
 
   function saveArtifact(a) {
     init();
+    _stamp(a);
     if (!Array.isArray(_data.artifacts)) _data.artifacts = [];
     const idx = _data.artifacts.findIndex(x => x.id === a.id);
     if (idx >= 0) _data.artifacts[idx] = a; else _data.artifacts.push(a);
@@ -442,18 +547,147 @@ export const Store = (() => {
   }
   function deleteArtifact(id) {
     init();
+    const a = (_data.artifacts || []).find(x => x.id === id);
+    if (a) _trash.set(_trashKey('artifacts', id), { kind:'artifacts', entity: JSON.parse(JSON.stringify(a)) });
     _data.artifacts = (_data.artifacts || []).filter(a => a.id !== id);
     return _sync('artifacts', 'delete', { id });
   }
 
+  // ── Settings (user-editable enums) ────────────────────────────
+  // Each category is an array of `{ id, label, ... }` items. See
+  // SETTINGS_DEFAULTS in data.js for the shape and seed values.
+  function getSettings() { init(); return _data.settings || {}; }
+  function getEnum(cat)  { init(); return (_data.settings && _data.settings[cat]) || []; }
+
+  /** Return the full record for (cat, id), or a synthetic orphan
+   *  placeholder when the id isn't present — keeps consumers from
+   *  having to null-check every lookup. */
+  function getEnumValue(cat, id) {
+    const items = getEnum(cat);
+    const found = items.find(x => x.id === id);
+    if (found) return found;
+    return { id: id || '', label: id || '—', _orphan: true, color: '#555', icon: '?' };
+  }
+
+  /** Upsert an enum item by id. New ids slugified by the caller.
+   *  Sends the whole category array over the wire — `settings` is a
+   *  keyed object (one doc) on the server, not a per-entity list, so
+   *  the PATCH handler's object-collection branch (`container[id] =
+   *  data`) treats each category as a value to overwrite. */
+  function saveEnumItem(cat, item) {
+    init();
+    if (!_data.settings) _data.settings = {};
+    if (!Array.isArray(_data.settings[cat])) _data.settings[cat] = [];
+    const arr = _data.settings[cat];
+    const idx = arr.findIndex(x => x.id === item.id);
+    const stamped = { ...item, updatedAt: Date.now() };
+    if (idx >= 0) arr[idx] = stamped; else arr.push(stamped);
+    return _sync('settings', 'save', { id: cat, data: _data.settings[cat] });
+  }
+
+  /** Find every entity referencing the given enum id. Shape:
+   *    [{ collection, id, name, field }]
+   *  where `collection` is the lowercase collection name (e.g.
+   *  'characters'), `id` and `name` identify the referring entity,
+   *  and `field` is the property that holds the enum reference. */
+  function findEnumUsages(cat, id) {
+    init();
+    const bindings = SETTINGS_USAGE_MAP[cat] || [];
+    const out = [];
+    for (const b of bindings) {
+      const coll = _data[b.collection];
+      if (!coll) continue;
+      // Collections may be arrays (most) or keyed objects (factions);
+      // currently no enum points at factions, but be defensive.
+      const list = Array.isArray(coll) ? coll : Object.values(coll);
+      for (const e of list) {
+        if (e && e[b.field] === id) {
+          out.push({
+            collection: b.collection,
+            field:      b.field,
+            id:         e.id,
+            name:       e.name || e.id,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Delete an enum item.
+   *    opts.replaceWith   — remap all usages to this id, then delete.
+   *    opts.force         — delete even if there are usages (leaves
+   *                         orphan references; resolveEnum handles them).
+   *  Without either, the call is a no-op when usages > 0.
+   *  Returns `{ ok, usages }`.                                         */
+  function deleteEnumItem(cat, id, opts = {}) {
+    init();
+    const usages = findEnumUsages(cat, id);
+    if (usages.length > 0 && !opts.force && !opts.replaceWith) {
+      return { ok: false, usages };
+    }
+    // Remap usages to a replacement if requested.
+    if (opts.replaceWith) {
+      const bindings = SETTINGS_USAGE_MAP[cat] || [];
+      for (const b of bindings) {
+        const coll = _data[b.collection];
+        if (!Array.isArray(coll)) continue;
+        coll.forEach(e => { if (e && e[b.field] === id) e[b.field] = opts.replaceWith; });
+      }
+    }
+    // Remove the item and tombstone its default so it doesn't reseed.
+    const arr = (_data.settings && _data.settings[cat]) || [];
+    _data.settings[cat] = arr.filter(x => x.id !== id);
+    const wasDefault = (SETTINGS_DEFAULTS[cat] || []).some(d => d.id === id);
+    if (wasDefault) {
+      if (!_data.deletedDefaults) _data.deletedDefaults = [];
+      const key = `settings:${cat}:${id}`;
+      if (!_data.deletedDefaults.includes(key)) _data.deletedDefaults.push(key);
+    }
+    // Sync: push the full post-delete category array plus persist
+    // any collections whose rows were remapped. The latter uses the
+    // entity-level save path so each touched record gets its own
+    // PATCH (correct audit trail on the server).
+    _sync('settings', 'save', { id: cat, data: _data.settings[cat] });
+    if (opts.replaceWith) {
+      const bindings = SETTINGS_USAGE_MAP[cat] || [];
+      for (const b of bindings) {
+        const coll = _data[b.collection];
+        if (!Array.isArray(coll)) continue;
+        coll.forEach(e => {
+          if (e && e[b.field] === opts.replaceWith) {
+            _sync(b.collection, 'save', e);
+          }
+        });
+      }
+    }
+    _reindex();
+    return { ok: true, usages };
+  }
+
+  /** Re-seed a category from defaults (adds missing, leaves edits). */
+  function resetEnumCategory(cat) {
+    init();
+    if (!_data.settings) _data.settings = {};
+    if (!Array.isArray(_data.settings[cat])) _data.settings[cat] = [];
+    const existing = new Set(_data.settings[cat].map(x => x.id));
+    for (const item of SETTINGS_DEFAULTS[cat] || []) {
+      if (!existing.has(item.id)) _data.settings[cat].push(JSON.parse(JSON.stringify(item)));
+    }
+    return _sync('settings', 'save', { id: cat, data: _data.settings[cat] });
+  }
+
   function saveFaction(id, fac) {
     init();
+    _stamp(fac);
     _data.factions[id] = fac;
     return _sync('factions', 'save', { id, data: fac });
   }
 
   function deleteFaction(id) {
     init();
+    const f = _data.factions[id];
+    if (f) _trash.set(_trashKey('factions', id), { kind:'factions', id, entity: JSON.parse(JSON.stringify(f)) });
     delete _data.factions[id];
     return _sync('factions', 'delete', { id });
   }
@@ -571,12 +805,59 @@ export const Store = (() => {
     };
   }
 
+  /** Generate a unique id for a new entity. The id is a diacritic-stripped
+   *  slug of the name PLUS a short random suffix, so renaming is safe
+   *  (the id never changes) and two entities with the same name get
+   *  distinct keys — no silent overwrites on save.
+   *
+   *  Shape: `frulam_mondath_a7b3c9`. Readable in URLs, unique in practice.
+   *  Existing records already in `_data` keep whatever id they had. */
+  /** Return the most-recently-edited entities across every collection.
+   *  Each item is `{ kind, id, name, updatedAt, route }` — consumed by
+   *  the dashboard "Poslední úpravy" feed and the global search.
+   *  Items without `updatedAt` are treated as epoch 0 (oldest). */
+  function getRecentActivity(limit = 5) {
+    init();
+    const entries = [];
+    const collect = (kind, route, list, nameOf) => {
+      for (const e of list || []) {
+        entries.push({
+          kind, id: e.id,
+          name: nameOf(e),
+          updatedAt: e.updatedAt || 0,
+          route,
+        });
+      }
+    };
+    collect('postava',  '#/postava',  _data.characters, e => e.name);
+    collect('misto',    '#/misto',    _data.locations,  e => e.name);
+    collect('udalost',  '#/udalost',  _data.events,     e => e.name);
+    collect('zahada',   '#/zahada',   _data.mysteries,  e => e.name);
+    collect('druh',     '#/druh',     _data.species,    e => e.name);
+    collect('buh',      '#/buh',      _data.pantheon,   e => e.name);
+    collect('artefakt', '#/artefakt', _data.artifacts,  e => e.name);
+    // Factions are a keyed object rather than an array.
+    for (const [id, f] of Object.entries(_data.factions || {})) {
+      entries.push({
+        kind: 'frakce', id, name: f.name, updatedAt: f.updatedAt || 0,
+        route: '#/frakce',
+      });
+    }
+    return entries
+      .filter(e => e.updatedAt > 0)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit);
+  }
+
   function generateId(name) {
-    return name.toLowerCase()
+    const base = String(name || '')
+      .toLowerCase()
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_|_$/g, '')
-      .substring(0, 40);
+      .substring(0, 30);
+    const suffix = Math.random().toString(36).slice(2, 8);
+    return (base || 'e') + '_' + suffix;
   }
 
   function reset() {
@@ -648,6 +929,7 @@ export const Store = (() => {
     getPinForLocation,
     searchCharacters, searchLocations, searchEvents, searchMysteries,
     searchSpecies, searchPantheon, searchArtifacts, searchAll,
+    getRecentActivity,
     saveCharacter, deleteCharacter,
     saveRelationship, deleteRelationship,
     saveLocation, deleteLocation,
@@ -658,6 +940,9 @@ export const Store = (() => {
     saveSpecies, deleteSpecies,
     saveBuh, deleteBuh,
     saveArtifact, deleteArtifact,
+    undelete,
+    getSettings, getEnum, getEnumValue,
+    saveEnumItem, deleteEnumItem, findEnumUsages, resetEnumCategory,
     generateId, reset, exportJS, exportJSON, importJSON,
   };
 })();

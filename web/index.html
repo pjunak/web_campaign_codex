@@ -56,6 +56,12 @@
       </div>
     </div>
 
+    <button class="sidebar-search-btn" type="button" onclick="GlobalSearch.open()" title="Globální vyhledávání (Ctrl+K)">
+      <span class="sidebar-search-icon">🔍</span>
+      <span class="sidebar-search-label">Hledat…</span>
+      <span class="sidebar-search-kbd">Ctrl K</span>
+    </button>
+
     <div class="sidebar-section">Přehled</div>
     <ul class="sidebar-nav">
       <li><a href="#/" class="nav-link" data-route="/">
@@ -95,6 +101,7 @@
     <!-- Edit mode toggle + backup in sidebar footer -->
     <div class="sidebar-footer">
       <a class="sidebar-export-btn edit-only-btn" id="export-btn" href="/api/backup" title="Stáhne zálohu celé datové složky jako ZIP">📥 Záloha</a>
+      <a class="sidebar-export-btn edit-only-btn" href="#/nastaveni" title="Číselníky: vazby, pohlaví, typy míst…">⚙ Nastavení</a>
       <button class="edit-mode-toggle" onclick="EditMode.toggle()">✏ Úpravy</button>
     </div>
   </nav>
@@ -121,16 +128,21 @@
       <span class="bottom-icon">⏳</span>
       <span class="bottom-label">Časová Osa</span>
     </a>
-    <a href="#/mapa/frakce" class="bottom-item" data-route="/mapa/frakce">
-      <span class="bottom-icon">🕸</span>
-      <span class="bottom-label">Mapy</span>
-    </a>
+    <button class="bottom-item" id="mobile-menu-btn" type="button"
+            onclick="document.body.classList.toggle('mobile-nav-open')">
+      <span class="bottom-icon">☰</span>
+      <span class="bottom-label">Menu</span>
+    </button>
     <!-- Edit mode toggle (mobile) -->
     <button class="bottom-item edit-mode-toggle" onclick="EditMode.toggle()">
       <span class="bottom-icon">✏</span>
       <span class="bottom-label">Úpravy</span>
     </button>
   </nav>
+
+  <!-- Drawer backdrop — click dismisses the mobile sidebar. -->
+  <div class="sidebar-backdrop" id="sidebar-backdrop"
+       onclick="document.body.classList.remove('mobile-nav-open')"></div>
 
   <!-- ── MAP MODE SHEET (mobile) ───────────────────────────── -->
   <div class="map-sheet" id="map-sheet" hidden>

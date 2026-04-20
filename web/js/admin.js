@@ -5,23 +5,20 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
+import { REL_TYPES as REL_TYPES_CANON } from './data.js';
 
 export const Admin = (() => {
 
   let _tab    = 'characters';
   let _editId = null;   // id of entity being edited (null = new)
 
-  const REL_TYPES = [
-    { id: 'commands',    label: 'Velí',           color: '#8B0000' },
-    { id: 'ally',        label: 'Spojenec',        color: '#2E7D32' },
-    { id: 'enemy',       label: 'Nepřítel',        color: '#C62828' },
-    { id: 'mission',     label: 'Mise / Úkol',     color: '#E65100' },
-    { id: 'mystery',     label: 'Záhada / Tajná',  color: '#6A1B9A' },
-    { id: 'captured_by', label: 'Zajat/a',         color: '#0D47A1' },
-    { id: 'history',     label: 'Historie',        color: '#555555' },
-    { id: 'uncertain',   label: 'Nejasná',         color: '#757575' },
-    { id: 'negotiates',  label: 'Vyjednává',       color: '#1565C0' },
-  ];
+  // Admin uses canonical REL_TYPES from data.js. Capitalises the label
+  // for the admin form (character detail view uses the lowercase one).
+  const REL_TYPES = REL_TYPES_CANON.map(t => ({
+    id:    t.id,
+    color: t.color,
+    label: t.label.charAt(0).toUpperCase() + t.label.slice(1),
+  }));
 
   const PRIORITIES = ['kritická', 'vysoká', 'střední', 'nízká'];
 

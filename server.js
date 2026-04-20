@@ -113,22 +113,16 @@ function _broadcastDataChanged() {
 const ALLOWED_TYPES = new Set([
   'characters', 'relationships', 'locations', 'events',
   'mysteries', 'mapPins', 'factions', 'deletedDefaults',
-  'species', 'pantheon', 'artifacts',
+  'species', 'pantheon', 'artifacts', 'settings',
 ]);
-const ALLOWED_REL_TYPES = new Set([
-  'commands', 'ally', 'enemy', 'mission', 'mystery',
-  'captured_by', 'history', 'uncertain', 'negotiates',
-]);
-// Narrowed: `captured` was folded into a free-text `circumstances` field.
-// Old data is migrated client-side (Store._migrateCapturedStatus).
-const ALLOWED_CHAR_STATUS = new Set(['alive', 'dead', 'unknown']);
-const ALLOWED_ARTIFACT_STATES = new Set([
-  'nalezen', 'u_postavy', 'strezeny', 'skryty', 'ztraceny', 'zniceny',
-]);
+// Enum validation (relationship type / character status / artifact
+// state) was moved to the `settings` collection; server trusts the
+// client to send valid ids. Structural validation (collection name,
+// action) stays here.
 
 app.get('/api/data', (_req, res) => {
   try {
-    const types    = ['characters', 'relationships', 'locations', 'events', 'mysteries', 'mapPins', 'factions', 'deletedDefaults', 'species', 'pantheon', 'artifacts'];
+    const types    = ['characters', 'relationships', 'locations', 'events', 'mysteries', 'mapPins', 'factions', 'deletedDefaults', 'species', 'pantheon', 'artifacts', 'settings'];
     const campaign = {};
     let foundAny   = false;
     for (const t of types) {
@@ -191,21 +185,13 @@ app.patch('/api/data', requireAuth, (req, res) => {
     if (action !== 'save' && action !== 'delete') {
       return res.status(400).json({ error: `Unknown action: ${action}` });
     }
-    if (action === 'save' && type === 'relationships' && payload && payload.type
-        && !ALLOWED_REL_TYPES.has(payload.type)) {
-      return res.status(400).json({ error: `Unknown relationship type: ${payload.type}` });
-    }
-    if (action === 'save' && type === 'characters' && payload && payload.status
-        && !ALLOWED_CHAR_STATUS.has(payload.status)) {
-      return res.status(400).json({ error: `Unknown character status: ${payload.status}` });
-    }
-    if (action === 'save' && type === 'artifacts' && payload && payload.state
-        && !ALLOWED_ARTIFACT_STATES.has(payload.state)) {
-      return res.status(400).json({ error: `Unknown artifact state: ${payload.state}` });
-    }
+    // Enum validation (relationship type, character status, artifact
+    // state) now lives in the client-side `settings` collection.
 
     const p = getFile(type);
-    let container = type === 'factions' ? {} : [];
+    // Keyed-object collections: factions (id → record) and settings
+    // (category → array). Everything else is an entity list.
+    let container = (type === 'factions' || type === 'settings') ? {} : [];
     if (fs.existsSync(p)) container = JSON.parse(fs.readFileSync(p, 'utf8'));
 
     // Auto-migrate portrait to canonical subfolder on character save

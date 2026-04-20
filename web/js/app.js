@@ -9,7 +9,10 @@ import { CloudMap } from './cloudmap.js';
 import { Timeline } from './timeline.js';
 import { WorldMap } from './map.js';
 import { Admin } from './admin.js';
+import { Settings } from './settings.js';
 import { Widgets } from './widgets/widgets.js';
+import { GlobalSearch } from './search.js';
+import { setWikiLinkResolver, norm } from './utils.js';
 
 // Expose modules to global scope for inline event handlers (onclick="...")
 window.Store = Store;
@@ -19,6 +22,8 @@ window.CloudMap = CloudMap;
 window.Timeline = Timeline;
 window.WorldMap = WorldMap;
 window.Admin = Admin;
+window.Settings = Settings;
+window.GlobalSearch = GlobalSearch;
 
 (function () {
 
@@ -26,6 +31,46 @@ window.Admin = Admin;
   if (typeof cytoscape !== "undefined" && typeof dagre !== "undefined") {
     try { cytoscape.use(cytoscapeDagre); } catch(e) {}
   }
+
+  // ── Wiki-link resolver for `[[Name]]` syntax in prose ───────
+  // Looks up `label` across every entity collection and returns
+  // `{ kind, id }` for the first exact-name match. The `hint`
+  // form supports manual disambiguation:
+  //     [[Frulam|postava:frulam_a7b3c9]]       (explicit id)
+  //     [[Frulam|postava]]                     (scope search)
+  const KIND_ROUTE = {
+    characters:'postava', locations:'misto',   events:'udalost',
+    mysteries: 'zahada',  species:'druh',      pantheon:'buh',
+    artifacts:'artefakt',
+  };
+  setWikiLinkResolver((label, hint) => {
+    if (!label) return null;
+    // Explicit disambiguation `[[X|kind:id]]`
+    if (hint && hint.includes(':')) {
+      const [kind, id] = hint.split(':');
+      return { kind, id };
+    }
+    // Scoped search `[[X|postava]]`
+    const scopeRoute = hint || '';
+    const all = Store.searchAll ? Store.searchAll(label) : null;
+    if (!all) return null;
+    const targetN = norm(label);
+    const order = ['characters','locations','events','mysteries','species','pantheon','artifacts'];
+    for (const k of order) {
+      const route = KIND_ROUTE[k];
+      if (scopeRoute && route !== scopeRoute) continue;
+      const hit = (all[k] || []).find(e => norm(e.name) === targetN);
+      if (hit) return { kind: route, id: hit.id };
+    }
+    // Faction special-case — factions aren't in searchAll, hit them by name.
+    if (!scopeRoute || scopeRoute === 'frakce') {
+      const factions = Store.getFactions ? Store.getFactions() : {};
+      for (const [id, f] of Object.entries(factions)) {
+        if (norm(f.name) === targetN) return { kind: 'frakce', id };
+      }
+    }
+    return null;
+  });
 
   // ── Router ──────────────────────────────────────────────────
   function getRoute() {
@@ -40,6 +85,9 @@ window.Admin = Admin;
       Widgets.mountAll(document.body);
       EditMode.mountEasyMDE(document.body);
     });
+
+    // Close the mobile drawer if navigating via a sidebar link.
+    document.body.classList.remove('mobile-nav-open');
 
     // Mind-map sub-routes that all belong to Myšlenkový Palác
     const PALAC_ROUTES = new Set(["/mapa/palac", "/mapa/frakce", "/mapa/vztahy", "/mapa/tajemstvi"]);
@@ -132,6 +180,8 @@ window.Admin = Admin;
         Wiki.renderPage("artefakt", sub); break;
       case "admin":
         Admin.render(); break;
+      case "nastaveni":
+        Settings.render(); break;
       default:
         Wiki.renderPage("dashboard");
     }

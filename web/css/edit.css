@@ -530,9 +530,25 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
   box-shadow: var(--shadow-card);
   transition: opacity 0.2s, transform 0.2s;
 }
-.edit-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.edit-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
 .edit-toast.ok   { border-color: rgba(46,125,50,0.5);  color: #a5d6a7; }
 .edit-toast.err  { border-color: rgba(139,0,0,0.5);    color: #ef9a9a; }
+.edit-toast-msg { margin-right: 0.6rem; }
+.edit-toast-action {
+  background: rgba(200,160,64,0.15);
+  border: 1px solid rgba(200,160,64,0.55);
+  color: var(--accent-gold);
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.edit-toast-action:hover {
+  background: rgba(200,160,64,0.3);
+  border-color: var(--accent-gold);
+}
 
 /* ── Markdown view + edit preview ─────────────────────────────── */
 .md-view p:first-child,
@@ -570,6 +586,15 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
 }
 .md-view a,
 .md-edit-preview a { color: var(--accent-gold); }
+
+/* Broken `[[...]]` wiki-link — resolver found no match. Dashed red
+   underline so the GM notices and can fix the reference. */
+.wlink-missing {
+  color: #ef9a9a;
+  text-decoration: underline dashed rgba(239,154,154,0.6);
+  text-underline-offset: 3px;
+  cursor: help;
+}
 
 /* ── Split editor layout ─────────────────────────────────────
    Character (and any other "article-style") editor splits into

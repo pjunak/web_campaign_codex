@@ -6,8 +6,10 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
-import { norm, esc, renderMarkdown, extractOutline } from './utils.js';
+import { norm, esc, renderMarkdown, extractOutline, humanTime } from './utils.js';
 import { PIN_TYPES } from './map.js';
+import { relLabel } from './data.js';
+import { PARTY_FACTION_ID } from './constants.js';
 
 export const Wiki = (() => {
 
@@ -123,13 +125,7 @@ export const Wiki = (() => {
     return `<span class="badge badge-knowledge">👁 ${KNOWLEDGE_LABELS[lvl] || "?"}</span>`;
   }
 
-  function relationLabel(type) {
-    return {
-      commands:"velí", ally:"spojenec/kyně", enemy:"nepřítel", mission:"mise",
-      mystery:"záhada", captured_by:"zajat/a", history:"historie",
-      uncertain:"nejasná vazba", negotiates:"vyjednává",
-    }[type] || type;
-  }
+  function relationLabel(type) { return relLabel(type); }
 
   // ── Portrait wrapper (knowledge + dead overlay) ────────────────
   function portraitWrap(c, extraClass) {
@@ -146,6 +142,24 @@ export const Wiki = (() => {
   // ── Edit overlay on cards (only visible in edit mode) ─────────
   function editOverlay(href) {
     return `<span class="edit-card-overlay" title="Upravit">✏</span>`;
+  }
+
+  // ── Empty-state onboarding card ───────────────────────────────
+  // Rendered on list pages when the underlying collection is truly
+  // empty (not filtered-to-empty). Shows a big icon, a short prompt
+  // explaining what this collection is for, and a primary CTA that
+  // auto-enables edit mode if it isn't already on.
+  function _renderEmptyState({ icon, title, description, ctaLabel, ctaHref, ctaOnClick }) {
+    const onClick = ctaOnClick ? ` onclick="${ctaOnClick}"` : '';
+    const cta = (ctaHref || ctaOnClick) ? `
+      <a class="empty-cta" href="${ctaHref || '#'}"${onClick}>＋ ${esc(ctaLabel || 'Vytvořit první')}</a>` : '';
+    return `
+      <div class="empty-state">
+        <div class="empty-state-icon">${icon || '✦'}</div>
+        <div class="empty-state-title">${esc(title || 'Zatím prázdné')}</div>
+        <div class="empty-state-desc">${esc(description || '')}</div>
+        ${cta}
+      </div>`;
   }
 
   // ── Article shell helper ─────────────────────────────────────
@@ -227,8 +241,8 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   function renderDashboard() {
     const allChars  = Store.getCharacters();
-    const party     = allChars.filter(c => c.faction === 'party');
-    const chars     = allChars.filter(c => c.faction !== 'party');   // NPCs
+    const party     = allChars.filter(c => c.faction === PARTY_FACTION_ID);
+    const chars     = allChars.filter(c => c.faction !== PARTY_FACTION_ID);   // NPCs
     const mysteries = Store.getMysteries();
     const totalChars    = chars.length;
     const knownChars    = chars.filter(c => c.knowledge >= 3).length;
@@ -298,6 +312,8 @@ export const Wiki = (() => {
         </div>
       </div>
 
+      ${_recentActivityBlock()}
+
       <div class="dash-section-title" style="margin-top:2rem">Kritické Záhady</div>
       <div class="mystery-list">
         ${mysteries.filter(m => m.priority === "kritická" || m.priority === "vysoká").map(m => `
@@ -307,6 +323,28 @@ export const Wiki = (() => {
             <div class="mystery-desc md-view">${renderMarkdown(m.description)}</div>
           </div>`).join("")}
       </div>
+    `;
+  }
+
+  // Dashboard "Poslední úpravy" — top 5 most-recently edited entities
+  // across every collection. Returns empty string if nothing has been
+  // edited yet (i.e. fresh install with no updatedAt stamps anywhere).
+  function _recentActivityBlock() {
+    const items = Store.getRecentActivity(5);
+    if (!items.length) return '';
+    const ICONS = {
+      postava:'👤', misto:'📍', udalost:'⏳', zahada:'❓',
+      druh:'🧬', buh:'✨', artefakt:'🗝', frakce:'⬡',
+    };
+    const rows = items.map(it => `
+      <a class="activity-row" href="${it.route === '#/frakce' ? '#/frakce/' + it.id : it.route + '/' + it.id}">
+        <span class="activity-icon">${ICONS[it.kind] || '•'}</span>
+        <span class="activity-name">${esc(it.name || it.id)}</span>
+        <span class="activity-time">${esc(humanTime(it.updatedAt))}</span>
+      </a>`).join('');
+    return `
+      <div class="dash-section-title" style="margin-top:2rem">Poslední úpravy</div>
+      <div class="activity-list">${rows}</div>
     `;
   }
 
@@ -324,7 +362,7 @@ export const Wiki = (() => {
     const s = _listState.postavy;
     // Party PCs live on their own page (#/parta) and are omitted from the
     // NPC roster unconditionally. Combobox sources are untouched.
-    let chars = Store.getCharacters().filter(c => c.faction !== 'party');
+    let chars = Store.getCharacters().filter(c => c.faction !== PARTY_FACTION_ID);
     if (s.values && s.values.length) {
       chars = chars.filter(c => _matchAll(s.values,
         `${c.name||''} ${c.title||''} ${(c.tags||[]).join(' ')} ${c.description||''} ${c.species||''} ${c.gender||''}`));
@@ -369,16 +407,28 @@ export const Wiki = (() => {
   }
 
   function renderCharacterList(filterFaction) {
-    if (filterFaction === 'party') filterFaction = null;
+    if (filterFaction === PARTY_FACTION_ID) filterFaction = null;
     _listState.postavy.faction = filterFaction || null;
     _persistListState();
 
     const factions = Store.getFactions();
     // Postavy = NPCs only. Party PCs live at /parta.
-    const allChars = Store.getCharacters().filter(c => c.faction !== 'party');
+    const allChars = Store.getCharacters().filter(c => c.faction !== PARTY_FACTION_ID);
+
+    // Truly-empty collection (not just filtered) → onboarding card.
+    if (allChars.length === 0) {
+      return `
+        <div class="page-header"><h1>Postavy</h1></div>
+        ${_renderEmptyState({
+          icon: '👤',
+          title: 'Zatím žádné postavy',
+          description: 'NPCs, spojenci a nepřátelé, které parta potkává. Přidej první postavu a začni budovat svět.',
+          ctaLabel: 'Nová postava', ctaHref: '#/postava/new',
+        })}`;
+    }
 
     const filters = Object.entries(factions).map(([id, f]) => {
-      if (id === 'party') return "";
+      if (id === PARTY_FACTION_ID) return "";
       const count = allChars.filter(c => c.faction === id).length;
       if (count === 0) return "";
       return `<button class="filter-btn ${filterFaction === id ? "active" : ""}"
@@ -425,7 +475,7 @@ export const Wiki = (() => {
     if (host) host.innerHTML = _postavyGridHtml(_listState.postavy.faction);
   }
   function _refreshPostavyCount() {
-    const total = Store.getCharacters().filter(c => c.faction !== 'party').length;
+    const total = Store.getCharacters().filter(c => c.faction !== PARTY_FACTION_ID).length;
     const shown = _postavyApply(_listState.postavy.faction).length;
     const sub = document.querySelector('.page-header .subtitle');
     if (!sub) return;
@@ -608,6 +658,16 @@ export const Wiki = (() => {
   function renderLocationList() {
     const total = Store.getLocations().length;
     const shown = _mistaApply().length;
+    if (total === 0) {
+      return `
+        <div class="page-header"><h1>Místa</h1></div>
+        ${_renderEmptyState({
+          icon: '📍',
+          title: 'Zatím žádná místa',
+          description: 'Lokace v kampani — města, dungeons, divočina, místa na mapě.',
+          ctaLabel: 'Nové místo', ctaHref: '#/misto/new',
+        })}`;
+    }
     const newBtn = EditMode.isActive() ? `
       <a href="#/misto/new" class="list-item-new" style="text-decoration:none">＋ Nové místo</a>` : "";
 
@@ -796,6 +856,16 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   function renderMysteries() {
     const mysteries = Store.getMysteries();
+    if (mysteries.length === 0) {
+      return `
+        <div class="page-header"><h1>❓ Záhady</h1></div>
+        ${_renderEmptyState({
+          icon: '❓',
+          title: 'Žádné záhady',
+          description: 'Otevřené otázky kampaně — co není známo, co je třeba odhalit, co parta zkoumá.',
+          ctaLabel: 'Nová záhada', ctaHref: '#/zahada/new',
+        })}`;
+    }
     const sorted = [...mysteries].sort((a,b) => {
       const order = { kritická: 0, vysoká: 1, střední: 2 };
       return (order[a.priority] || 9) - (order[b.priority] || 9);
@@ -942,6 +1012,16 @@ export const Wiki = (() => {
   function renderFactionList() {
     const total = Object.keys(Store.getFactions()).length;
     const shown = _frakceApply().length;
+    if (total === 0) {
+      return `
+        <div class="page-header"><h1>⬡ Frakce</h1></div>
+        ${_renderEmptyState({
+          icon: '⬡',
+          title: 'Žádné frakce',
+          description: 'Organizace, spolky, armády — definují barvy, hodnosti a příslušnost postav. Povinné pro hodnostní řetězce.',
+          ctaLabel: 'Nová frakce', ctaHref: '#/frakce/new',
+        })}`;
+    }
     return `
       <div class="page-header" style="display:flex;align-items:center;gap:1rem">
         <div style="flex:1">
@@ -1063,8 +1143,20 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   function renderPartyList() {
     const party = Store.getCharacters()
-      .filter(c => c.faction === 'party')
+      .filter(c => c.faction === PARTY_FACTION_ID)
       .sort((a, b) => _czCompare(a.name, b.name));
+
+    if (party.length === 0) {
+      return `
+        <div class="page-header"><h1>🛡 Parta</h1></div>
+        ${_renderEmptyState({
+          icon: '🛡',
+          title: 'Parta je zatím prázdná',
+          description: 'Aktivní hráčské postavy v kampani. Přidej prvního člena — hráči, družina, PCs.',
+          ctaLabel: 'Nový člen party',
+          ctaOnClick: `EditMode.startNewCharacter({faction:'${PARTY_FACTION_ID}',knowledge:4,status:'alive'});return false;`,
+        })}`;
+    }
 
     const newCard = EditMode.isActive() ? `
       <a class="char-card char-card-new"
@@ -1170,9 +1262,17 @@ export const Wiki = (() => {
   function renderSpeciesList() {
     const items = Store.getSpecies().slice()
       .sort((a, b) => _czCompare(a.name, b.name));
-    const grid = items.length === 0
-      ? `<div class="list-empty">Žádné druhy.</div>`
-      : items.map(s => {
+    if (items.length === 0) {
+      return `
+        <div class="page-header"><h1>🧬 Druhy</h1></div>
+        ${_renderEmptyState({
+          icon: '🧬',
+          title: 'Žádné druhy',
+          description: 'Rasy a druhy bytostí — Člověk, Elf, Dračizeň… Postavy odkazují na druh z této kolekce.',
+          ctaLabel: 'Nový druh', ctaHref: '#/druh/new',
+        })}`;
+    }
+    const grid = items.map(s => {
           const editBtn = EditMode.isActive()
             ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
           return `<a class="loc-card" href="#/druh/${s.id}" style="text-decoration:none;position:relative">
@@ -1221,9 +1321,17 @@ export const Wiki = (() => {
   function renderPantheonList() {
     const items = Store.getPantheon().slice()
       .sort((a, b) => _czCompare(a.name, b.name));
-    const grid = items.length === 0
-      ? `<div class="list-empty">Žádná božstva.</div>`
-      : items.map(g => {
+    if (items.length === 0) {
+      return `
+        <div class="page-header"><h1>✨ Panteon</h1></div>
+        ${_renderEmptyState({
+          icon: '✨',
+          title: 'Žádná božstva',
+          description: 'Bohové, jejich domény, rituály a kněží — panteon, ve který postavy věří nebo ne.',
+          ctaLabel: 'Nové božstvo', ctaHref: '#/buh/new',
+        })}`;
+    }
+    const grid = items.map(g => {
           const editBtn = EditMode.isActive()
             ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
           const sub = [g.domain, g.alignment].filter(Boolean).map(esc).join(' · ');
@@ -1272,9 +1380,17 @@ export const Wiki = (() => {
   function renderArtifactList() {
     const items = Store.getArtifacts().slice()
       .sort((a, b) => _czCompare(a.name, b.name));
-    const grid = items.length === 0
-      ? `<div class="list-empty">Žádné artefakty.</div>`
-      : items.map(a => {
+    if (items.length === 0) {
+      return `
+        <div class="page-header"><h1>🗝 Artefakty</h1></div>
+        ${_renderEmptyState({
+          icon: '🗝',
+          title: 'Žádné artefakty',
+          description: 'Předměty moci — magické zbraně, prokleté šperky, ztracené relikvie.',
+          ctaLabel: 'Nový artefakt', ctaHref: '#/artefakt/new',
+        })}`;
+    }
+    const grid = items.map(a => {
           const editBtn = EditMode.isActive()
             ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
           return `<a class="loc-card" href="#/artefakt/${a.id}" style="text-decoration:none;position:relative">

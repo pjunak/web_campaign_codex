@@ -632,6 +632,87 @@
 
 /* ── Location Article (legacy — width owned by .wiki-article) ── */
 .location-article { /* kept as hook for specific styling needs */ }
+
+/* ── Empty-state onboarding card ──────────────────────────────── */
+.empty-state {
+  max-width: 520px;
+  margin: 3rem auto;
+  text-align: center;
+  padding: 2.5rem 2rem;
+  background: var(--bg-raised);
+  border: 1px dashed rgba(212,184,122,0.25);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+.empty-state-icon {
+  font-size: 4rem;
+  line-height: 1;
+  opacity: 0.85;
+  margin-bottom: 0.5rem;
+}
+.empty-state-title {
+  font-family: var(--font-title);
+  font-size: 1.35rem;
+  color: var(--accent-gold);
+}
+.empty-state-desc {
+  font-size: 0.92rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  max-width: 40ch;
+}
+.empty-cta {
+  margin-top: 1rem;
+  display: inline-block;
+  padding: 0.65rem 1.4rem;
+  background: rgba(200,160,64,0.15);
+  border: 1px solid rgba(200,160,64,0.55);
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 0.9rem;
+  color: var(--accent-gold);
+  text-decoration: none;
+  transition: background 0.12s, border-color 0.12s;
+}
+.empty-cta:hover {
+  background: rgba(200,160,64,0.25);
+  border-color: var(--accent-gold);
+}
+
+/* ── Dashboard: recent-activity feed ──────────────────────────── */
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-top: 0.75rem;
+}
+.activity-row {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text-parchment);
+  background: var(--bg-raised);
+  border: 1px solid rgba(212,184,122,0.12);
+  transition: border-color 0.12s, background 0.12s;
+}
+.activity-row:hover {
+  border-color: rgba(200,160,64,0.5);
+  background: rgba(200,160,64,0.06);
+}
+.activity-icon { font-size: 1.05rem; }
+.activity-name { font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-time {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
 .location-note {
   background: rgba(106,27,154,0.15);
   border: 1px solid rgba(156,77,204,0.3);

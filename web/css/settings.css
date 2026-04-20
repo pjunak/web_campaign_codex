@@ -1,0 +1,244 @@
+/* ═══════════════════════════════════════════════════════════════
+   SETTINGS PAGE — /nastaveni
+   Left tabs list categories, right panel edits the selected one.
+   Delete-with-usage modal lives at #settings-del-modal.
+   ═══════════════════════════════════════════════════════════════ */
+
+.settings-page { max-width: 1200px; margin: 0 auto; }
+
+.settings-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+  margin-top: 1rem;
+}
+@media (max-width: 820px) {
+  .settings-shell { grid-template-columns: 1fr; }
+}
+
+/* ── Category tabs (left column) ──────────────────────────────── */
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  background: var(--bg-raised);
+  border: 1px solid rgba(212,184,122,0.15);
+  border-radius: 10px;
+  padding: 0.5rem;
+  position: sticky;
+  top: 1rem;
+}
+.settings-tab {
+  display: grid;
+  grid-template-columns: 1.5rem 1fr auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-parchment);
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 0.88rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.settings-tab:hover   { background: rgba(200,160,64,0.08); }
+.settings-tab.is-active {
+  background: rgba(200,160,64,0.18);
+  color: var(--accent-gold);
+}
+.settings-tab-icon  { font-size: 1rem; }
+.settings-tab-count {
+  font-family: monospace;
+  font-size: 0.72rem;
+  padding: 0.1em 0.45em;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-muted);
+}
+
+/* ── Editor (right column) ────────────────────────────────────── */
+.settings-editor {
+  background: var(--bg-raised);
+  border: 1px solid rgba(212,184,122,0.15);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  min-width: 0;
+}
+.settings-editor-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(212,184,122,0.15);
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+}
+.settings-editor-head h2 {
+  font-family: var(--font-title);
+  color: var(--accent-gold);
+  font-size: 1.25rem;
+  margin: 0;
+}
+.settings-editor-actions { display: flex; gap: 0.5rem; }
+
+/* ── Item rows (each enum entry) ──────────────────────────────── */
+.settings-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+}
+.settings-row {
+  display: grid;
+  grid-template-columns: 1.6rem 1fr auto auto auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  background: rgba(0,0,0,0.15);
+  border: 1px solid rgba(212,184,122,0.1);
+  border-radius: 6px;
+}
+.settings-row-icon  { font-size: 1.05rem; text-align: center; }
+.settings-row-label { font-size: 0.92rem; }
+.settings-swatch {
+  display: inline-block;
+  width: 1rem; height: 1rem;
+  border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.15);
+}
+.settings-row-id {
+  font-family: monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.05);
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+}
+.settings-row-usage {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  min-width: 2em;
+  text-align: right;
+}
+.settings-row-actions { display: flex; gap: 0.25rem; }
+.settings-btn-edit,
+.settings-btn-del {
+  background: transparent;
+  border: 1px solid rgba(200,160,64,0.25);
+  color: var(--text-muted);
+  width: 28px;
+  height: 26px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.settings-btn-edit:hover { border-color: var(--accent-gold); color: var(--accent-gold); }
+.settings-btn-del:hover  { border-color: rgba(139,0,0,0.6); color: #ef9a9a; background: rgba(139,0,0,0.15); }
+
+.settings-empty {
+  padding: 1.5rem;
+  text-align: center;
+  font-style: italic;
+  color: var(--text-muted);
+}
+.settings-hint {
+  margin-top: 1rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ── Inline add/edit form ─────────────────────────────────────── */
+.settings-form {
+  background: rgba(200,160,64,0.05);
+  border: 1px solid rgba(200,160,64,0.35);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+.settings-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+.settings-field { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
+.settings-field-label {
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+.settings-field-readonly code {
+  padding: 0.35rem 0.5rem;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.settings-field input[type="color"] {
+  height: 2rem;
+  padding: 2px;
+  cursor: pointer;
+}
+.settings-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+/* ── Delete-with-usage modal ──────────────────────────────────── */
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+}
+.settings-modal-panel {
+  position: relative;
+  width: min(540px, 90vw);
+  background: var(--bg-raised);
+  border: 1px solid rgba(200,160,64,0.4);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: 80vh;
+  overflow: hidden;
+}
+.settings-modal-title {
+  font-family: var(--font-title);
+  font-size: 1.15rem;
+  color: var(--accent-gold);
+}
+.settings-modal-body { overflow-y: auto; }
+.settings-modal-usages {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.2rem;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 0.88rem;
+  color: var(--text-parchment);
+}
+.settings-modal-usages a { color: var(--accent-gold); text-decoration: none; }
+.settings-modal-usages a:hover { text-decoration: underline; }
+.settings-modal-choice { margin-top: 0.75rem; }
+.settings-modal-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}

@@ -1,5 +1,6 @@
 import { Store } from './store.js';
 import { PIN_TYPES } from './map.js';
+import { REL_TYPES } from './data.js';
 
 export const EditTemplates = (() => {
 
@@ -35,22 +36,12 @@ export const EditTemplates = (() => {
     return f ? f.badge + ' ' : '';
   }
 
-  // ── Relationship type configuration ──────────────────────────
-  // Each type defines: label, allowed target type, allowed directions.
-  // Directions: 'from' = this char → target, 'to' = target → this char, 'both' = bidirectional.
-  const REL_CONFIG = {
-    commands:    { label: 'velí',          target: 'character', dirs: ['from', 'to'] },
-    ally:        { label: 'spojenec',      target: 'character', dirs: ['from','to','both'] },
-    enemy:       { label: 'nepřítel',      target: 'character', dirs: ['from','to','both'] },
-    mission:     { label: 'mise',          target: 'location',  dirs: ['from'] },
-    mystery:     { label: 'záhada',        target: 'character', dirs: ['from','to','both'] },
-    captured_by: { label: 'zajat/a',       target: 'character', dirs: ['from','to'] },
-    history:     { label: 'historie',      target: 'character', dirs: ['from','to','both'] },
-    uncertain:   { label: 'nejasná vazba', target: 'character', dirs: ['from','to','both'] },
-    negotiates:  { label: 'vyjednává',     target: 'character', dirs: ['from','to','both'] },
-  };
-  const REL_TYPES  = Object.keys(REL_CONFIG);
-  const REL_LABELS = Object.fromEntries(REL_TYPES.map(t => [t, REL_CONFIG[t].label]));
+  // Relationship type config is the canonical REL_TYPES array from
+  // data.js. REL_IDS / REL_CONFIG / REL_LABELS are local views for
+  // backwards compatibility with the rest of this file's helpers.
+  const REL_IDS    = REL_TYPES.map(t => t.id);
+  const REL_CONFIG = Object.fromEntries(REL_TYPES.map(t => [t.id, t]));
+  const REL_LABELS = Object.fromEntries(REL_TYPES.map(t => [t.id, t.label]));
 
   const DIR_LABELS = {
     from: 'Tato postava →',
@@ -88,7 +79,7 @@ export const EditTemplates = (() => {
   function _relRow(charId, r, idx) {
     const isNew    = idx === 'new';
     const prefix   = isNew ? `rf-new-${charId}` : `rf-${idx}-${charId}`;
-    const type     = r ? r.type : REL_TYPES[0];
+    const type     = r ? r.type : REL_IDS[0];
     const label    = r ? (r.label || '') : '';
 
     // Determine current direction and other end from existing relationship
@@ -98,8 +89,8 @@ export const EditTemplates = (() => {
       else if (r.target === charId) { dir = 'to';   targetId = r.source; }
     }
 
-    const typeOpts   = REL_TYPES.map(t =>
-      `<option value="${t}" ${t===type?'selected':''}>${REL_CONFIG[t].label}</option>`
+    const typeOpts   = REL_IDS.map(id =>
+      `<option value="${id}" ${id===type?'selected':''}>${REL_CONFIG[id].label}</option>`
     ).join('');
     const dirOptions = _dirOpts(type, dir);
     const tgtMount   = _targetMount(type, charId, targetId, prefix);
@@ -164,16 +155,20 @@ export const EditTemplates = (() => {
     const unknownRows = (c.unknown || []).map(_dynRow).join("");
     const badge = factions[c.faction]?.badge || "👤";
 
-    // Gender: fixed choices + "Ostatní (specifikuj)" reveal.
-    // We stash the current value in data- so saveCharacter can decide whether
-    // it was one of the canonical labels or a free-text override.
-    const GENDER_FIXED = ['Muž', 'Žena'];
-    const isOtherGender = !!(c.gender && !GENDER_FIXED.includes(c.gender));
-    const genderSelectValue = c.gender === '' ? '' : (isOtherGender ? '__other__' : c.gender);
+    // Gender: dynamic list from user-editable settings + an "Ostatní
+    // (specifikuj)" reveal for one-off values. Back-compat: legacy
+    // records may hold a label ("Muž"/"Žena") — match both id and label
+    // when picking the currently-selected option.
+    const genderList = Store.getEnum('genders');
+    const currentGender = c.gender || '';
+    const matchedGender = genderList.find(g => g.id === currentGender || g.label === currentGender);
+    const isOtherGender = !!(currentGender && !matchedGender);
+    const genderSelectValue = !currentGender ? '' : (isOtherGender ? '__other__' : (matchedGender?.id || ''));
     const genderOpts = [
       `<option value="" ${genderSelectValue===''?'selected':''}>— nezadáno —</option>`,
-      `<option value="Muž" ${genderSelectValue==='Muž'?'selected':''}>Muž</option>`,
-      `<option value="Žena" ${genderSelectValue==='Žena'?'selected':''}>Žena</option>`,
+      ...genderList.map(g =>
+        `<option value="${_esc(g.id)}" ${genderSelectValue===g.id?'selected':''}>${_esc(g.label)}</option>`
+      ),
       `<option value="__other__" ${genderSelectValue==='__other__'?'selected':''}>Ostatní (specifikuj)</option>`,
     ].join('');
 

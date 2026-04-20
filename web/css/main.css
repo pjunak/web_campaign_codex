@@ -222,9 +222,20 @@ p  { color: var(--text-parchment); margin-bottom: 0.75em; }
 }
 .wiki-link:hover { border-color: var(--accent-gold); }
 
-/* ── Mobile Bottom Nav ───────────────────────────────────────── */
+/* ── Mobile Bottom Nav + drawer sidebar ──────────────────────── */
 @media (max-width: 768px) {
-  .sidebar { display: none; }
+  /* Turn the desktop sidebar into a slide-in drawer. Hidden by
+     default off-screen; .mobile-nav-open on <body> reveals it. */
+  .sidebar {
+    display: flex;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    width: min(320px, 86vw);
+    z-index: 200;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.55);
+  }
+  body.mobile-nav-open .sidebar { transform: translateX(0); }
+  body.mobile-nav-open .sidebar-backdrop { opacity: 1; pointer-events: auto; }
   .main-content {
     margin-left: 0;
     padding: 1rem;
@@ -259,6 +270,19 @@ p  { color: var(--text-parchment); margin-bottom: 0.75em; }
     font-size: 0.6rem;
     letter-spacing: 0.03em;
   }
+}
+
+/* Mobile sidebar drawer backdrop (declared outside the 768px block
+   so its layout is stable — opacity transitions when .mobile-nav-
+   open is applied). */
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 150;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
 }
 
 /* ── Map Sheet (mobile) ──────────────────────────────────────── */

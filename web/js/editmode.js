@@ -10,6 +10,7 @@ import { EditTemplates } from './edit_templates.js';
 import { Widgets } from './widgets/widgets.js';
 import { PIN_TYPES } from './map.js';
 import { renderMarkdown } from './utils.js';
+import { PARTY_FACTION_ID } from './constants.js';
 
 export const EditMode = (() => {
 
@@ -49,18 +50,35 @@ export const EditMode = (() => {
   }
 
   // ── Toast ──────────────────────────────────────────────────────
-  function _toast(msg, ok = true) {
+  // Supports an optional `opts.action = { label, onClick }` for undo-
+  // style buttons. When an action is present the toast stays up for
+  // `opts.timeout` ms (default 8s) so the user has time to react.
+  function _toast(msg, ok = true, opts = {}) {
     let t = document.getElementById("edit-toast");
     if (!t) {
       t = document.createElement("div");
       t.id = "edit-toast";
-      t.className = "edit-toast";
       document.body.appendChild(t);
     }
-    t.textContent = msg;
+    const timeout = opts.timeout ?? (opts.action ? 8000 : 2500);
+    t.innerHTML = '';
+    const textEl = document.createElement('span');
+    textEl.className = 'edit-toast-msg';
+    textEl.textContent = msg;
+    t.appendChild(textEl);
+    if (opts.action && typeof opts.action.onClick === 'function') {
+      const btn = document.createElement('button');
+      btn.className = 'edit-toast-action';
+      btn.type = 'button';
+      btn.textContent = opts.action.label || '↶ Vrátit';
+      btn.addEventListener('click', () => {
+        try { opts.action.onClick(); } finally { t.classList.remove('show'); }
+      });
+      t.appendChild(btn);
+    }
     t.className = "edit-toast show " + (ok ? "ok" : "err");
     clearTimeout(t._tid);
-    t._tid = setTimeout(() => t.classList.remove("show"), 2500);
+    t._tid = setTimeout(() => t.classList.remove("show"), timeout);
   }
 
   // ── Navigate helper (forces re-render even if hash unchanged) ──
@@ -255,9 +273,13 @@ export const EditMode = (() => {
   }
 
   function deleteCharacter(id) {
-    if (!confirm("Opravdu smazat postavu? Vazby budou také odstraněny.")) return;
-    Store.deleteCharacter(id); // store also clears relationships
-    _toast("Postava smazána");
+    Store.deleteCharacter(id); // store also clears relationships + snapshots for undo
+    _toast("Postava smazána", true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('characters', id);
+        _toast('Postava obnovena');
+      }},
+    });
     window.location.hash = "#/postavy";
   }
 
@@ -483,9 +505,13 @@ export const EditMode = (() => {
   });
 
   function deleteLocation(id) {
-    if (!confirm("Opravdu smazat místo?")) return;
     Store.deleteLocation(id);
-    _toast("Místo smazáno");
+    _toast("Místo smazáno", true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('locations', id);
+        _toast('Místo obnoveno');
+      }},
+    });
     window.location.hash = "#/mista";
   }
 
@@ -543,9 +569,13 @@ export const EditMode = (() => {
   }
 
   function deleteEvent(id) {
-    if (!confirm("Opravdu smazat událost?")) return;
     Store.deleteEvent(id);
-    _toast("Událost smazána");
+    _toast("Událost smazána", true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('events', id);
+        _toast('Událost obnovena');
+      }},
+    });
     window.location.hash = "#/casova-osa";
   }
 
@@ -554,9 +584,9 @@ export const EditMode = (() => {
     const el = document.getElementById(mountId);
     if (!el || !el._multiselect) { _toast("Widget nepřipraven", false); return; }
     const partyIds = Store.getCharacters()
-      .filter(c => c.faction === 'party')
+      .filter(c => c.faction === PARTY_FACTION_ID)
       .map(c => c.id);
-    if (!partyIds.length) { _toast("Frakce 'party' je prázdná", false); return; }
+    if (!partyIds.length) { _toast("Parta je prázdná", false); return; }
     const current = el._multiselect.getValue();
     const merged  = Array.from(new Set([...current, ...partyIds]));
     const added   = merged.length - current.length;
@@ -592,9 +622,13 @@ export const EditMode = (() => {
   }
 
   function deleteMystery(id) {
-    if (!confirm("Opravdu smazat záhadu?")) return;
     Store.deleteMystery(id);
-    _toast("Záhada smazána");
+    _toast("Záhada smazána", true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('mysteries', id);
+        _toast('Záhada obnovena');
+      }},
+    });
     window.location.hash = "#/zahady";
   }
 
@@ -651,9 +685,13 @@ export const EditMode = (() => {
   }
 
   function deleteFaction(id) {
-    if (!confirm("Opravdu smazat frakci? Postavy ji budou mít stále přiřazenou dokud ji ručně nezměníte.")) return;
     Store.deleteFaction(id);
-    _toast("Frakce smazána");
+    _toast("Frakce smazána (postavy mají id zachované)", true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('factions', id);
+        _toast('Frakce obnovena');
+      }},
+    });
     window.location.hash = "#/frakce";
   }
 
@@ -749,9 +787,13 @@ export const EditMode = (() => {
     _navigateOrRefresh(`#/druh/${newId}`);
   }
   function deleteSpecies(id) {
-    if (!confirm('Opravdu smazat druh?')) return;
     Store.deleteSpecies(id);
-    _toast('Druh smazán');
+    _toast('Druh smazán', true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('species', id);
+        _toast('Druh obnoven');
+      }},
+    });
     window.location.hash = '#/druhy';
   }
 
@@ -784,9 +826,13 @@ export const EditMode = (() => {
     _navigateOrRefresh(`#/buh/${newId}`);
   }
   function deleteBuh(id) {
-    if (!confirm('Opravdu smazat božstvo?')) return;
     Store.deleteBuh(id);
-    _toast('Božstvo smazáno');
+    _toast('Božstvo smazáno', true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('pantheon', id);
+        _toast('Božstvo obnoveno');
+      }},
+    });
     window.location.hash = '#/panteon';
   }
 
@@ -819,9 +865,13 @@ export const EditMode = (() => {
     _navigateOrRefresh(`#/artefakt/${newId}`);
   }
   function deleteArtifact(id) {
-    if (!confirm('Opravdu smazat artefakt?')) return;
     Store.deleteArtifact(id);
-    _toast('Artefakt smazán');
+    _toast('Artefakt smazán', true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('artifacts', id);
+        _toast('Artefakt obnoven');
+      }},
+    });
     window.location.hash = '#/artefakty';
   }
 
@@ -840,6 +890,7 @@ export const EditMode = (() => {
     saveBuh, deleteBuh,
     saveArtifact, deleteArtifact,
     mountEasyMDE,
+    toast: _toast,
     renderCharacterEditor,
     renderLocationEditor,
     renderEventEditor,
