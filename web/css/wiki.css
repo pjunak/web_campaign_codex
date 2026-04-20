@@ -325,116 +325,114 @@
   font-size: 3.5rem;
 }
 
-/* ── Wiki two-column article layout ───────────────────────────
-   Shared shell used by Postavy / Místa / Události / Frakce /
-   Záhady / Druhy / Panteon / Artefakty articles. Main body on
-   the left, sticky infobox aside on the right (à la Wikipedia).
-   Collapses to single column below 960 px.                      */
+/* ── Wiki single-column article layout ────────────────────────
+   Head panel (visual + meta) at the top, then structured data
+   sections (chips, facts, open questions, links), then the
+   markdown article body at the bottom. Keeps the "article-as-
+   article" feeling — data first, narrative last.                */
 .wiki-article {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 2rem;
-  max-width: 1320px;
+  max-width: 1100px;
   margin: 0 auto;
-  align-items: start;
 }
-.wiki-main  { min-width: 0; }
-.wiki-main > p:first-child,
-.wiki-main > .md-view:first-child > p:first-child { margin-top: 0; }
-.wiki-aside { position: sticky; top: 1rem; align-self: start; }
-@media (max-width: 960px) {
-  .wiki-article { grid-template-columns: 1fr; }
-  .wiki-aside   { position: static; order: -1; }
-}
+.wiki-article > :first-child { margin-top: 0; }
 
-/* Infobox card (right column) */
-.wiki-infobox {
-  background: var(--bg-card);
-  border: 1px solid rgba(212,184,122,0.18);
+/* ── Article head panel: visual (portrait/icon) + identity ──── */
+.article-head {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding: 1.25rem;
+  background: var(--bg-raised);
+  border: 1px solid rgba(212,184,122,0.15);
   border-radius: 10px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 }
-.wiki-infobox-title {
-  font-family: var(--font-title);
-  font-size: 1.05rem;
-  color: var(--accent-gold);
-  padding: 0.7rem 1rem;
-  background: rgba(212,184,122,0.08);
-  border-bottom: 1px solid rgba(212,184,122,0.18);
-  line-height: 1.25;
+.article-head.no-visual { grid-template-columns: 1fr; }
+@media (max-width: 700px) {
+  .article-head { grid-template-columns: 1fr; }
 }
-.wiki-infobox-subtitle {
-  font-family: var(--font-body);
-  font-style: italic;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  padding: 0 1rem 0.6rem;
-  background: rgba(212,184,122,0.08);
-  border-bottom: 1px solid rgba(212,184,122,0.18);
-}
-.wiki-infobox-portrait {
-  display: flex;
-  justify-content: center;
-  padding: 0.75rem 1rem;
-  background: rgba(0,0,0,0.2);
-}
-.wiki-infobox-portrait .portrait-wrap {
-  width: 100%;
-  max-width: 240px;
-  aspect-ratio: 1 / 1;
-  border-radius: 8px;
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-}
-.wiki-infobox-section {
-  padding: 0.6rem 1rem;
-  border-top: 1px solid rgba(212,184,122,0.08);
-}
-.wiki-infobox-section:first-child { border-top: none; }
-.wiki-infobox-label {
-  font-family: var(--font-title);
-  font-size: 0.68rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--accent-gold-dim);
-  margin-bottom: 0.35rem;
-}
-.wiki-infobox-body {
-  font-size: 0.88rem;
-  color: var(--text-parchment);
-  line-height: 1.45;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-.wiki-infobox-body.stack { flex-direction: column; gap: 0.3rem; }
-.wiki-infobox-body a { color: var(--text-parchment); text-decoration: none; }
-.wiki-infobox-body a:hover { color: var(--accent-gold); }
 
-/* Article heading block — sits at top of main column */
-.wiki-article-head {
-  margin-bottom: 1rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid rgba(212,184,122,0.18);
+/* Visual column — portrait or big icon */
+.ah-visual {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
 }
-.wiki-article-head h1 {
+.ah-visual .portrait-wrap {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+.ah-visual .portrait-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+.ah-icon {
+  font-size: 4rem;
+  line-height: 1;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.25);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+/* Meta column — name, subtitle, badges, profile chips, facts */
+.ah-meta { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
+.ah-meta h1 {
   font-family: var(--font-title);
   font-size: 2.2rem;
   color: var(--accent-gold);
-  margin: 0 0 0.3rem;
+  margin: 0;
   line-height: 1.15;
 }
-.wiki-article-head .wiki-article-subtitle {
+.ah-subtitle {
   font-family: var(--font-body);
   font-style: italic;
   color: var(--text-muted);
   font-size: 1rem;
+  margin-top: -0.35rem;
 }
+.ah-chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+.ah-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.4rem 1.25rem;
+  margin-top: 0.25rem;
+}
+.ah-fact { font-size: 0.88rem; color: var(--text-parchment); min-width: 0; }
+.ah-fact-label {
+  font-family: var(--font-title);
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-gold-dim);
+  display: block;
+  margin-bottom: 0.15rem;
+}
+.ah-fact a { color: var(--text-parchment); text-decoration: none; }
+.ah-fact a:hover { color: var(--accent-gold); }
+.ah-fact .relation-chip { font-size: 0.8rem; }
 
-/* Small helper chip for mini badges inside infobox */
-.wiki-infobox .badge { font-size: 0.75rem; }
-.wiki-infobox .profile-chip { font-size: 0.75rem; }
+/* The actual markdown article body — comes at the end */
+.article-body {
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(212,184,122,0.18);
+  font-size: 0.95rem;
+  color: var(--text-parchment);
+  line-height: 1.7;
+}
+.article-body h1,
+.article-body h2 { color: var(--accent-gold); }
 
 /* ── Character Article ──────────────────────────────────────── */
 .char-article { /* legacy — no longer constrains width; kept for back-compat */ }
@@ -569,98 +567,6 @@
   line-height: 1.5;
 }
 
-/* ── Party (Parta) grid ──────────────────────────────────────── */
-.party-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 1rem;
-  margin-top: 1rem;
-}
-.party-card {
-  background: var(--bg-raised);
-  border: 1px solid rgba(200,160,64,0.2);
-  border-radius: 10px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  color: var(--text-parchment);
-  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
-  cursor: pointer;
-}
-.party-card:hover {
-  border-color: var(--accent-gold);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0,0,0,0.4);
-}
-.party-card-portrait {
-  aspect-ratio: 4 / 3;
-  background: rgba(0,0,0,0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.party-card-portrait .portrait-wrap {
-  width: 100%;
-  height: 100%;
-  border-radius: 0;
-}
-.party-card-portrait .portrait-img { object-position: top center; }
-.party-card-body {
-  padding: 0.75rem 1rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.party-card-name {
-  font-family: var(--font-title);
-  font-size: 1.15rem;
-  color: var(--accent-gold);
-}
-.party-card-title {
-  font-family: var(--font-body);
-  font-style: italic;
-  font-size: 0.85rem;
-  color: var(--text-light);
-}
-.party-card-profile {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-}
-.party-card-badges { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.2rem; }
-.party-card-circ {
-  font-size: 0.82rem;
-  color: #ce93d8;
-  font-style: italic;
-  padding: 0.35rem 0.55rem;
-  background: rgba(106,27,154,0.15);
-  border-left: 2px solid rgba(156,77,204,0.55);
-  border-radius: 3px;
-}
-.party-card-loc { margin-top: 0.1rem; }
-.party-card-new {
-  border: 2px dashed rgba(200,160,64,0.35);
-  background: transparent;
-  min-height: 220px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  color: var(--text-muted);
-}
-.party-card-new:hover {
-  border-color: var(--accent-gold);
-  color: var(--accent-gold);
-  transform: none;
-  box-shadow: none;
-}
-.party-card-new-icon { font-size: 2.5rem; }
-.party-card-new-label {
-  font-family: var(--font-ui);
-  font-size: 0.85rem;
-  letter-spacing: 0.05em;
-}
-
 /* ── Location Article (legacy — width owned by .wiki-article) ── */
 .location-article { /* kept as hook for specific styling needs */ }
 .location-note {
@@ -747,7 +653,7 @@
 .list-search-input:focus {
   outline: none;
   border-color: rgba(212,184,122,0.55);
-  background: var(--bg-card);
+  background: rgba(0,0,0,0.25);
 }
 .list-search-input::placeholder { color: var(--text-muted); }
 /* Wiki list toolbar uses the shared TagFilter widget. Give it the same

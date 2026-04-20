@@ -140,33 +140,57 @@ export const Wiki = (() => {
     return `<span class="edit-card-overlay" title="Upravit">✏</span>`;
   }
 
-  // ── Infobox helpers (right-column wiki aside) ────────────────
-  function _infoboxSection(label, body, { stack = false } = {}) {
-    if (!body) return '';
-    return `
-      <div class="wiki-infobox-section">
-        <div class="wiki-infobox-label">${esc(label)}</div>
-        <div class="wiki-infobox-body${stack ? ' stack' : ''}">${body}</div>
-      </div>`;
-  }
-  function _wikiArticle({ title, subtitle, infobox, body, backHref = null }) {
-    const back = backHref !== false
-      ? `<button class="back-btn" onclick="history.back()">← Zpět</button>` : '';
-    const head = title ? `
-      <div class="wiki-article-head">
-        <h1>${title}</h1>
-        ${subtitle ? `<div class="wiki-article-subtitle">${subtitle}</div>` : ''}
-      </div>` : '';
-    return `
-      ${back}
-      <div class="wiki-article">
-        <div class="wiki-main">
-          ${head}
-          ${body}
+  // ── Article shell helper ─────────────────────────────────────
+  // Single-column wiki layout: head panel (visual + identity +
+  // badges + facts) at the top, then freeform `sections` (chips,
+  // fact lists, link rows) above the markdown `body` article.
+  //
+  //   _articleShell({
+  //     visual:   '<div class="portrait-wrap">…</div>' | '<div class="ah-icon">🛕</div>' | null,
+  //     title:    'Frulam Mondath',
+  //     subtitle: 'Velitelka — Fialový Háv',
+  //     chips:    [factionBadgeHtml, statusBadgeHtml, ...],
+  //     facts:    [{ label: 'Místo', value: '<a …>' }, …],
+  //     sections: [{ title: 'Vazby', html: '<chips>' }, …],
+  //     body:     '<div class="md-view">…</div>',   // narrative markdown
+  //   })
+  //
+  // The body comes last, after the structured data, matching
+  // wiki convention: facts up front, prose at the bottom.
+  function _articleShell({
+    visual = null, title = '', subtitle = '',
+    chips = [], facts = [], sections = [], body = '', back = true,
+  }) {
+    const chipsHtml = (chips || []).filter(Boolean).join('');
+    const factsHtml = (facts || []).filter(f => f && f.value).map(f =>
+      `<div class="ah-fact"><span class="ah-fact-label">${esc(f.label)}</span>${f.value}</div>`
+    ).join('');
+    const sectionsHtml = (sections || []).filter(Boolean).map(s => {
+      if (!s.html || !s.html.trim()) return '';
+      return `
+        <div class="char-section">
+          <div class="char-section-title">${esc(s.title)}</div>
+          ${s.html}
+        </div>`;
+    }).join('');
+
+    const head = `
+      <div class="article-head${visual ? '' : ' no-visual'}">
+        ${visual ? `<div class="ah-visual">${visual}</div>` : ''}
+        <div class="ah-meta">
+          <h1>${title}</h1>
+          ${subtitle ? `<div class="ah-subtitle">${subtitle}</div>` : ''}
+          ${chipsHtml ? `<div class="ah-chips">${chipsHtml}</div>` : ''}
+          ${factsHtml ? `<div class="ah-facts">${factsHtml}</div>` : ''}
         </div>
-        <aside class="wiki-aside">
-          <div class="wiki-infobox">${infobox}</div>
-        </aside>
+      </div>`;
+
+    return `
+      ${back ? `<button class="back-btn" onclick="history.back()">← Zpět</button>` : ''}
+      <div class="wiki-article">
+        ${head}
+        ${sectionsHtml}
+        ${body ? `<div class="article-body">${body}</div>` : ''}
       </div>`;
   }
 
@@ -411,49 +435,7 @@ export const Wiki = (() => {
     const chars  = Store.getCharacters();
     const events = Store.getEvents();
 
-    const knownFacts = c.knowledge >= 2 && (c.known||[]).length ? `
-      <div class="char-section">
-        <div class="char-section-title">Co víme</div>
-        <div class="fact-list">
-          ${c.known.map(f => `<div class="fact-item">${f}</div>`).join("")}
-        </div>
-      </div>` : "";
-
-    const unknownFacts = (c.unknown||[]).length ? `
-      <div class="char-section">
-        <div class="char-section-title">Otevřené Otázky</div>
-        <div class="fact-list">
-          ${c.unknown.map(f => `<div class="unknown-item">${f}</div>`).join("")}
-        </div>
-      </div>` : "";
-
-    const relChips = rels.length ? `
-      <div class="char-section">
-        <div class="char-section-title">Vazby</div>
-        <div class="relation-chips">
-          ${rels.map(r => {
-            const otherId = r.source === id ? r.target : r.source;
-            const other   = chars.find(ch => ch.id === otherId);
-            if (!other) return "";
-            const dir = r.source === id ? "→" : "←";
-            return `<a class="relation-chip" href="#/postava/${otherId}">
-              <span>${other.name}</span>
-              <span class="chip-label">${dir} ${r.label || relationLabel(r.type)}</span>
-            </a>`;
-          }).join("")}
-        </div>
-      </div>` : "";
-
     const eventsInvolved = events.filter(e => (e.characters||[]).includes(id));
-    const eventList = eventsInvolved.length ? `
-      <div class="char-section">
-        <div class="char-section-title">Zmínky v Událostech</div>
-        <div class="fact-list">
-          ${eventsInvolved.map(e =>
-            `<div class="fact-item"><a class="wiki-link" href="#/udalost/${e.id}">${e.name}</a> — ${e.short}</div>`
-          ).join("")}
-        </div>
-      </div>` : "";
 
     // Profile chips: species/gender/age — only render if present and the
     // viewer knows enough about the character to see physical details.
@@ -463,49 +445,78 @@ export const Wiki = (() => {
       const label = sp ? sp.name : c.species;
       profileBits.push(`<span class="profile-chip">🧬 ${esc(label)}</span>`);
     }
-    if (c.knowledge >= 2 && c.gender)  profileBits.push(`<span class="profile-chip">⚥ ${esc(c.gender)}</span>`);
-    if (c.knowledge >= 2 && c.age)     profileBits.push(`<span class="profile-chip">⌛ ${esc(c.age)}</span>`);
+    if (c.knowledge >= 2 && c.gender) profileBits.push(`<span class="profile-chip">⚥ ${esc(c.gender)}</span>`);
+    if (c.knowledge >= 2 && c.age)    profileBits.push(`<span class="profile-chip">⌛ ${esc(c.age)}</span>`);
 
     const locationLink = c.location ? (() => {
       const loc = Store.getLocation(c.location);
       return loc ? `<a href="#/misto/${loc.id}">📍 ${esc(loc.name)}</a>` : '';
     })() : '';
 
-    const circumstancesBlock = (c.knowledge >= 2 && c.circumstances)
-      ? _infoboxSection('Okolnosti', esc(c.circumstances), { stack: true }) : '';
-
-    const rankChainBlock = (() => {
+    const rankInfo = (() => {
       if (!c.rankChain || !c.rank) return '';
       const f = Store.getFaction(c.faction);
       const chain = (f?.rankChains || []).find(ch => ch.id === c.rankChain);
       if (!chain) return '';
       const idx = chain.ranks.indexOf(c.rank);
-      const label = `${chain.name} — ${c.rank}${idx >= 0 ? ` (${idx + 1}/${chain.ranks.length})` : ''}`;
-      return _infoboxSection('Hodnost', esc(label), { stack: true });
+      return `${esc(chain.name)} — ${esc(c.rank)}${idx >= 0 ? ` (${idx + 1}/${chain.ranks.length})` : ''}`;
     })();
 
-    const infobox = `
-      <div class="wiki-infobox-title">${c.knowledge >= 1 ? esc(c.name) : 'Neznámá Postava'}</div>
-      ${c.knowledge >= 2 && c.title ? `<div class="wiki-infobox-subtitle">${esc(c.title)}</div>` : ''}
-      <div class="wiki-infobox-portrait">${portraitWrap(c)}</div>
-      ${_infoboxSection('Status', `${factionBadge(c.faction)}${statusBadge(c.status)}${knowledgeBadge(c.knowledge)}`)}
-      ${profileBits.length ? _infoboxSection('Profil', profileBits.join('')) : ''}
-      ${circumstancesBlock}
-      ${locationLink ? _infoboxSection('Místo', locationLink, { stack: true }) : ''}
-      ${rankChainBlock}
-    `;
+    const facts = [
+      { label: 'Místo',    value: locationLink || '' },
+      { label: 'Okolnosti',value: (c.knowledge >= 2 && c.circumstances) ? esc(c.circumstances) : '' },
+      { label: 'Hodnost',  value: rankInfo },
+    ];
 
-    const body = `
-      <div class="md-view char-article-desc">${c.knowledge >= 2 ? renderMarkdown(c.description) : "<em>O této postavě toho víme jen velmi málo.</em>"}</div>
-      ${knownFacts}${unknownFacts}${relChips}${eventList}
-    `;
+    const body = c.knowledge >= 2
+      ? `<div class="md-view">${renderMarkdown(c.description)}</div>`
+      : `<em>O této postavě toho víme jen velmi málo.</em>`;
 
-    return _wikiArticle({
-      title: c.knowledge >= 1 ? esc(c.name) : 'Neznámá Postava',
+    return _articleShell({
+      visual:   portraitWrap(c),
+      title:    c.knowledge >= 1 ? esc(c.name) : 'Neznámá Postava',
       subtitle: c.knowledge >= 2 && c.title ? esc(c.title) : '',
-      infobox,
+      chips:    [
+        factionBadge(c.faction),
+        statusBadge(c.status),
+        knowledgeBadge(c.knowledge),
+        ...profileBits,
+      ],
+      facts,
+      sections: [
+        { title: 'Vazby',               html: rels.length          ? _relChipsHtml(rels, id, chars) : '' },
+        { title: 'Zmínky v Událostech', html: eventsInvolved.length ? _eventListHtml(eventsInvolved) : '' },
+        { title: 'Co víme',             html: (c.knowledge >= 2 && (c.known||[]).length)
+                                                ? _factListHtml(c.known, 'fact-item')   : '' },
+        { title: 'Otevřené Otázky',     html: (c.unknown||[]).length
+                                                ? _factListHtml(c.unknown, 'unknown-item') : '' },
+      ],
       body,
     });
+  }
+
+  // Tiny formatter helpers used by the article shell above.
+  function _relChipsHtml(rels, selfId, chars) {
+    return `<div class="relation-chips">${rels.map(r => {
+      const otherId = r.source === selfId ? r.target : r.source;
+      const other   = chars.find(ch => ch.id === otherId);
+      if (!other) return '';
+      const dir = r.source === selfId ? '→' : '←';
+      return `<a class="relation-chip" href="#/postava/${otherId}">
+        <span>${esc(other.name)}</span>
+        <span class="chip-label">${dir} ${esc(r.label || relationLabel(r.type))}</span>
+      </a>`;
+    }).join('')}</div>`;
+  }
+  function _eventListHtml(events) {
+    return `<div class="fact-list">${events.map(e =>
+      `<div class="fact-item"><a class="wiki-link" href="#/udalost/${e.id}">${esc(e.name)}</a>${e.short ? ` — ${esc(e.short)}` : ''}</div>`
+    ).join('')}</div>`;
+  }
+  function _factListHtml(items, rowClass) {
+    return `<div class="fact-list">${items.map(it =>
+      `<div class="${rowClass}">${esc(it)}</div>`
+    ).join('')}</div>`;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -633,17 +644,11 @@ export const Wiki = (() => {
       </div>` : '';
 
     const subs = Store.getSubLocations(id);
-    const subList = subs.length ? `
-      <div class="char-section">
-        <div class="char-section-title">Dílčí místa</div>
-        <div class="relation-chips">
-          ${subs.map(s => {
-            const onMap = (typeof s.x === 'number' && typeof s.y === 'number');
-            const dot = onMap ? '📍' : '·';
-            return `<a class="relation-chip" href="#/misto/${s.id}">${dot} ${esc(s.name)}</a>`;
-          }).join('')}
-        </div>
-      </div>` : '';
+    const subChips = subs.length ? `<div class="relation-chips">${subs.map(s => {
+      const onMap = (typeof s.x === 'number' && typeof s.y === 'number');
+      const dot = onMap ? '📍' : '·';
+      return `<a class="relation-chip" href="#/misto/${s.id}">${dot} ${esc(s.name)}</a>`;
+    }).join('')}</div>` : '';
 
     // World-map / local-map entry points.
     const placed = (typeof l.x === 'number' && typeof l.y === 'number');
@@ -673,52 +678,40 @@ export const Wiki = (() => {
       </div>` : "";
 
     const pt = PIN_TYPES[l.pinType] || PIN_TYPES.custom || { icon: '📍', label: l.type || '' };
-    const placedBadge = placed
-      ? `<span class="profile-chip">📍 Na mapě</span>` : '';
-    const localMapBadge = l.localMap
-      ? `<span class="profile-chip">🗺 Místní mapa</span>` : '';
+    const chips = [];
+    if (placed)     chips.push(`<span class="profile-chip">📍 Na mapě</span>`);
+    if (l.localMap) chips.push(`<span class="profile-chip">🗺 Místní mapa</span>`);
+    if (typeof l.knowledge === 'number') chips.push(knowledgeBadge(l.knowledge));
 
     const events = Store.getEventsAtLocation(l.id) || [];
-    const eventList = events.length ? `
-      <div class="char-section">
-        <div class="char-section-title">Události zde</div>
-        <div class="fact-list">
-          ${events.map(e =>
-            `<div class="fact-item"><a class="wiki-link" href="#/udalost/${e.id}">${esc(e.name)}</a>${e.short ? ` — ${esc(e.short)}` : ''}</div>`
-          ).join('')}
-        </div>
-      </div>` : '';
 
-    const infobox = `
-      <div class="wiki-infobox-title">${pt.icon} ${esc(l.name)}</div>
-      ${(l.type || l.status) ? `<div class="wiki-infobox-subtitle">${esc(l.type || '')}${l.type && l.status ? ' · ' : ''}${esc(l.status || '')}</div>` : ''}
-      ${l.region ? _infoboxSection('Region', esc(l.region), { stack: true }) : ''}
-      ${(placedBadge || localMapBadge) ? _infoboxSection('Mapa', `${placedBadge}${localMapBadge}`) : ''}
-      ${typeof l.knowledge === 'number' ? _infoboxSection('Znalost', knowledgeBadge(l.knowledge)) : ''}
-      ${ancestors.length ? _infoboxSection('Nadřazené místo',
-        ancestors.map(a => `<a href="#/misto/${a.id}">📍 ${esc(a.name)}</a>`).join(' › '),
-        { stack: true }) : ''}
-      ${mapRow ? `<div class="wiki-infobox-section">${mapRow}</div>` : ''}
-    `;
-
-    const body = `
-      ${breadcrumb}
-      <div class="md-view">${renderMarkdown(l.description)}</div>
-      ${l.notes ? `<div class="location-note md-view">${renderMarkdown(l.notes)}</div>` : ""}
-      ${subList}
-      ${chars ? `<div class="char-section">
-        <div class="char-section-title">Přítomné Postavy</div>
-        <div class="relation-chips">${chars}</div>
-      </div>` : ""}
-      ${eventList}
-      ${inlineCreate}
-    `;
-
-    return _wikiArticle({
-      title: `${pt.icon} ${esc(l.name)}`,
+    return _articleShell({
+      visual:   `<div class="ah-icon">${pt.icon}</div>`,
+      title:    esc(l.name),
       subtitle: `${esc(l.type || '')}${l.type && l.status ? ' · ' : ''}${esc(l.status || '')}`,
-      infobox,
-      body,
+      chips,
+      facts: [
+        { label: 'Region',          value: l.region ? esc(l.region) : '' },
+        { label: 'Nadřazené místo', value: ancestors.length
+                                           ? ancestors.map(a => `<a href="#/misto/${a.id}">📍 ${esc(a.name)}</a>`).join(' › ')
+                                           : '' },
+      ],
+      sections: [
+        { title: 'Mapa',             html: mapRow },
+        { title: 'Dílčí místa',      html: subChips },
+        { title: 'Přítomné Postavy', html: chars ? `<div class="relation-chips">${chars}</div>` : '' },
+        { title: 'Události zde',     html: events.length
+          ? `<div class="fact-list">${events.map(e =>
+              `<div class="fact-item"><a class="wiki-link" href="#/udalost/${e.id}">${esc(e.name)}</a>${e.short ? ` — ${esc(e.short)}` : ''}</div>`
+            ).join('')}</div>`
+          : '' },
+        { title: '',                 html: inlineCreate },
+      ],
+      body: `
+        ${breadcrumb}
+        <div class="md-view">${renderMarkdown(l.description)}</div>
+        ${l.notes ? `<div class="location-note md-view">${renderMarkdown(l.notes)}</div>` : ''}
+      `,
     });
   }
 
@@ -742,32 +735,28 @@ export const Wiki = (() => {
     }).join("");
 
     const sittingLabel = e.sitting ? `Sezení ${e.sitting}` : 'Dávná minulost';
-    const priorityChip = e.priority
-      ? `<span class="mystery-priority priority-${e.priority}">${e.priority.toUpperCase()}</span>` : '';
-    const tagChips = (e.tags || []).length
-      ? (e.tags || []).map(t => `<span class="profile-chip">${esc(t)}</span>`).join('')
-      : '';
+    const chips = [];
+    if (e.priority) chips.push(`<span class="mystery-priority priority-${e.priority}">${e.priority.toUpperCase()}</span>`);
+    if ((e.tags || []).length) {
+      e.tags.forEach(t => chips.push(`<span class="profile-chip">${esc(t)}</span>`));
+    }
 
-    const infobox = `
-      <div class="wiki-infobox-title">${esc(e.name)}</div>
-      <div class="wiki-infobox-subtitle">${sittingLabel}</div>
-      ${e.date ? _infoboxSection('Datum', esc(e.date), { stack: true }) : ''}
-      ${priorityChip ? _infoboxSection('Priorita', priorityChip) : ''}
-      ${tagChips ? _infoboxSection('Tagy', tagChips) : ''}
-      ${chars ? _infoboxSection('Zúčastněné postavy', chars) : ''}
-      ${locs  ? _infoboxSection('Místa', locs) : ''}
-    `;
-
-    const body = `
-      ${e.short ? `<div class="location-note md-view">${esc(e.short)}</div>` : ''}
-      <div class="md-view">${renderMarkdown(e.description)}</div>
-    `;
-
-    return _wikiArticle({
+    return _articleShell({
+      visual: null,
       title: esc(e.name),
       subtitle: sittingLabel,
-      infobox,
-      body,
+      chips,
+      facts: [
+        { label: 'Datum', value: e.date ? esc(e.date) : '' },
+      ],
+      sections: [
+        { title: 'Zúčastněné postavy', html: chars ? `<div class="relation-chips">${chars}</div>` : '' },
+        { title: 'Místa',              html: locs  ? `<div class="relation-chips">${locs}</div>`  : '' },
+      ],
+      body: `
+        ${e.short ? `<div class="location-note md-view">${esc(e.short)}</div>` : ''}
+        <div class="md-view">${renderMarkdown(e.description)}</div>
+      `,
     });
   }
 
@@ -832,41 +821,31 @@ export const Wiki = (() => {
       const c = Store.getCharacter(cid);
       return c ? `<a class="relation-chip" href="#/postava/${cid}">${esc(c.name)}</a>` : '';
     }).join('');
-    const questions = (m.questions || []).length ? `
-      <div class="char-section">
-        <div class="char-section-title">Otázky</div>
-        <div class="fact-list">
-          ${m.questions.map(q => `<div class="unknown-item">${esc(q)}</div>`).join('')}
-        </div>
-      </div>` : '';
-    const clues = (m.clues || []).length ? `
-      <div class="char-section">
-        <div class="char-section-title">Stopy</div>
-        <div class="fact-list">
-          ${m.clues.map(c => `<div class="fact-item">${esc(c)}</div>`).join('')}
-        </div>
-      </div>` : '';
 
-    const infobox = `
-      <div class="wiki-infobox-title">❓ ${esc(m.name)}</div>
-      <div class="wiki-infobox-subtitle mystery-priority priority-${m.priority}">PRIORITA: ${m.priority.toUpperCase()}</div>
-      ${m.solved ? _infoboxSection('Stav', '<span class="profile-chip">✓ Vyřešeno</span>') : _infoboxSection('Stav', '<span class="profile-chip">⧗ Otevřená</span>')}
-      ${charChips ? _infoboxSection('Spojené postavy', charChips) : ''}
-    `;
-
-    const body = `
-      <div class="md-view">${renderMarkdown(m.description)}</div>
-      ${questions}${clues}
-      <div style="margin-top:1.5rem">
-        <a href="#/zahady" class="wiki-link">← Zpět na seznam záhad</a>
-      </div>
-    `;
-
-    return _wikiArticle({
-      title: `❓ ${esc(m.name)}`,
+    return _articleShell({
+      visual: `<div class="ah-icon">❓</div>`,
+      title: esc(m.name),
       subtitle: `Priorita: ${m.priority}`,
-      infobox,
-      body,
+      chips: [
+        `<span class="mystery-priority priority-${m.priority}">${m.priority.toUpperCase()}</span>`,
+        m.solved
+          ? `<span class="profile-chip">✓ Vyřešeno</span>`
+          : `<span class="profile-chip">⧗ Otevřená</span>`,
+      ],
+      facts: [],
+      sections: [
+        { title: 'Otázky', html: (m.questions||[]).length
+          ? `<div class="fact-list">${m.questions.map(q => `<div class="unknown-item">${esc(q)}</div>`).join('')}</div>` : '' },
+        { title: 'Stopy',  html: (m.clues||[]).length
+          ? `<div class="fact-list">${m.clues.map(c => `<div class="fact-item">${esc(c)}</div>`).join('')}</div>` : '' },
+        { title: 'Spojené postavy', html: charChips ? `<div class="relation-chips">${charChips}</div>` : '' },
+      ],
+      body: `
+        <div class="md-view">${renderMarkdown(m.description)}</div>
+        <div style="margin-top:1.5rem">
+          <a href="#/zahady" class="wiki-link">← Zpět na seznam záhad</a>
+        </div>
+      `,
     });
   }
 
@@ -1014,45 +993,32 @@ export const Wiki = (() => {
       </div>` : "";
 
     const rankCount = (f.rankChains || []).reduce((s, ch) => s + ch.ranks.length, 0);
+    const chips = [
+      `<span class="profile-chip">👤 ${chars.length} postav</span>`,
+      ...(rankCount ? [`<span class="profile-chip">⚔ ${rankCount} hodností</span>`] : []),
+    ];
 
-    const infobox = `
-      <div class="wiki-infobox-title" style="color:${f.textColor}">${f.badge} ${esc(f.name)}</div>
-      <div class="wiki-infobox-portrait" style="background:${f.color}22">
-        <div style="font-size:5rem;line-height:1">${f.badge}</div>
-      </div>
-      ${_infoboxSection('Barva', `<span class="profile-chip" style="background:${f.color}33;border-color:${f.color}66;color:${f.textColor}">${esc(f.color)}</span>`)}
-      ${_infoboxSection('Postav', `<span class="profile-chip">👤 ${chars.length}</span>`)}
-      ${rankCount ? _infoboxSection('Hodností', `<span class="profile-chip">⚔ ${rankCount}</span>`) : ''}
-      ${(f.rankChains || []).length ? _infoboxSection('Řetězce',
-        (f.rankChains || []).map(ch => esc(ch.name)).join(', '),
-        { stack: true }) : ''}
-    `;
-
-    const body = `
-      ${inlineCreate}
-      ${f.description ? `<div class="md-view">${renderMarkdown(f.description)}</div>` : ''}
-      ${(f.rankChains || []).length ? `
-        <div class="char-section">
-          <div class="char-section-title">Hodnostní Řetězce</div>
-          ${chainSections}
-        </div>` : ''}
-      ${unchained.length ? `
-        <div class="char-section">
-          <div class="char-section-title">Členové</div>
-          <div class="relation-chips">
-            ${unchained.map(c => `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`).join('')}
-          </div>
-        </div>` : ''}
-      <div style="margin-top:1.5rem">
-        <a href="#/frakce" class="wiki-link">← Zpět na frakce</a>
-      </div>
-    `;
-
-    return _wikiArticle({
+    return _articleShell({
+      visual: `<div class="ah-icon" style="background:${f.color}33;color:${f.textColor}">${f.badge}</div>`,
       title: `<span style="color:${f.textColor}">${f.badge} ${esc(f.name)}</span>`,
-      subtitle: `${chars.length} postav`,
-      infobox,
-      body,
+      subtitle: '',
+      chips,
+      facts: (f.rankChains || []).length
+        ? [{ label: 'Řetězce', value: (f.rankChains || []).map(ch => esc(ch.name)).join(', ') }]
+        : [],
+      sections: [
+        { title: '',                  html: inlineCreate },
+        { title: 'Hodnostní Řetězce', html: (f.rankChains || []).length ? chainSections : '' },
+        { title: 'Členové',           html: unchained.length
+          ? `<div class="relation-chips">${unchained.map(c => `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`).join('')}</div>`
+          : '' },
+      ],
+      body: `
+        ${f.description ? `<div class="md-view">${renderMarkdown(f.description)}</div>` : ''}
+        <div style="margin-top:1.5rem">
+          <a href="#/frakce" class="wiki-link">← Zpět na frakce</a>
+        </div>
+      `,
     });
   }
 
@@ -1068,46 +1034,30 @@ export const Wiki = (() => {
       .sort((a, b) => _czCompare(a.name, b.name));
 
     const newCard = EditMode.isActive() ? `
-      <a class="party-card party-card-new"
+      <a class="char-card char-card-new"
          href="#/postava/new"
          onclick="EditMode.startNewCharacter({faction:'party',knowledge:4,status:'alive'});event.preventDefault();return false;"
          style="text-decoration:none">
-        <div class="party-card-new-icon">＋</div>
-        <div class="party-card-new-label">Nový člen party</div>
+        <div class="char-card-new-icon">＋</div>
+        <div class="char-card-new-label">Nový člen party</div>
       </a>` : '';
-
-    const cards = party.map(c => {
-      const sp = Store.getSpeciesItem(c.species);
-      const specLabel = sp ? sp.name : c.species;
-      const bits = [specLabel, c.gender, c.age].filter(Boolean).map(esc).join(' · ');
-      const loc = c.location ? Store.getLocation(c.location) : null;
-      const circ = c.circumstances && c.circumstances.trim()
-        ? `<div class="party-card-circ">⧗ ${esc(c.circumstances)}</div>` : '';
-      const locChip = loc
-        ? `<a class="relation-chip" href="#/misto/${loc.id}">📍 ${esc(loc.name)}</a>` : '';
-      return `
-        <a class="party-card" href="#/postava/${c.id}" style="text-decoration:none">
-          <div class="party-card-portrait">${portraitWrap(c)}</div>
-          <div class="party-card-body">
-            <div class="party-card-name">${esc(c.name)}</div>
-            ${c.title ? `<div class="party-card-title">${esc(c.title)}</div>` : ''}
-            ${bits ? `<div class="party-card-profile">${bits}</div>` : ''}
-            <div class="party-card-badges">${statusBadge(c.status)}</div>
-            ${circ}
-            ${locChip ? `<div class="party-card-loc">${locChip}</div>` : ''}
-          </div>
-        </a>`;
-    }).join('');
 
     const empty = party.length === 0
       ? `<div class="list-empty">Parta je zatím prázdná. Přidej prvního člena.</div>` : '';
 
+    const count = party.length;
+    const countLabel = count === 1 ? 'člen' : (count >= 2 && count <= 4 ? 'členové' : 'členů');
+
     return `
       <div class="page-header">
         <h1>🛡 Parta</h1>
-        <div class="subtitle">${party.length} ${party.length === 1 ? 'člen' : (party.length >= 2 && party.length <= 4 ? 'členové' : 'členů')}</div>
+        <div class="subtitle">${count} ${countLabel}</div>
       </div>
-      <div class="party-grid">${cards}${empty}${newCard}</div>
+      <div class="char-grid">
+        ${party.map(renderCharacterCard).join('')}
+        ${empty}
+        ${newCard}
+      </div>
     `;
   }
 
@@ -1217,27 +1167,19 @@ export const Wiki = (() => {
     const chars = Store.getCharacters().filter(c =>
       c.species === id || c.species === s.name
     );
-    const charChips = chars.length ? `
-      <div class="char-section">
-        <div class="char-section-title">Postavy tohoto druhu</div>
-        <div class="relation-chips">
-          ${chars.map(c => `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`).join('')}
-        </div>
-      </div>` : '';
+    const charChips = chars.length
+      ? `<div class="relation-chips">${chars.map(c =>
+          `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`
+        ).join('')}</div>` : '';
 
-    const infobox = `
-      <div class="wiki-infobox-title">🧬 ${esc(s.name)}</div>
-      ${_infoboxSection('Postav tohoto druhu', `<span class="profile-chip">👤 ${chars.length}</span>`)}
-    `;
-    const body = `
-      <div class="md-view">${renderMarkdown(s.description)}</div>
-      ${charChips}
-    `;
-    return _wikiArticle({
-      title: `🧬 ${esc(s.name)}`,
-      subtitle: '',
-      infobox,
-      body,
+    return _articleShell({
+      visual: `<div class="ah-icon">🧬</div>`,
+      title: esc(s.name),
+      chips: [`<span class="profile-chip">👤 ${chars.length}</span>`],
+      sections: [
+        { title: 'Postavy tohoto druhu', html: charChips },
+      ],
+      body: `<div class="md-view">${renderMarkdown(s.description)}</div>`,
     });
   }
 
@@ -1272,20 +1214,16 @@ export const Wiki = (() => {
     if (!g) return `<p>Božstvo '${id}' nenalezeno.</p>`;
     if (EditMode.isActive()) return EditMode.renderBuhEditor(g);
 
-    const infobox = `
-      <div class="wiki-infobox-title">${esc(g.symbol || '✨')} ${esc(g.name)}</div>
-      <div class="wiki-infobox-portrait">
-        <div style="font-size:5rem;line-height:1">${esc(g.symbol || '✨')}</div>
-      </div>
-      ${g.domain    ? _infoboxSection('Doména', esc(g.domain), { stack: true }) : ''}
-      ${g.alignment ? _infoboxSection('Zaměření', esc(g.alignment), { stack: true }) : ''}
-    `;
-    const body = `<div class="md-view">${renderMarkdown(g.description)}</div>`;
-    return _wikiArticle({
-      title: `${esc(g.symbol || '✨')} ${esc(g.name)}`,
+    return _articleShell({
+      visual: `<div class="ah-icon">${esc(g.symbol || '✨')}</div>`,
+      title: esc(g.name),
       subtitle: [g.domain, g.alignment].filter(Boolean).map(esc).join(' · '),
-      infobox,
-      body,
+      chips: [],
+      facts: [
+        { label: 'Doména',   value: g.domain    ? esc(g.domain)    : '' },
+        { label: 'Zaměření', value: g.alignment ? esc(g.alignment) : '' },
+      ],
+      body: `<div class="md-view">${renderMarkdown(g.description)}</div>`,
     });
   }
 
@@ -1328,23 +1266,16 @@ export const Wiki = (() => {
     const owner = a.ownerCharacterId ? Store.getCharacter(a.ownerCharacterId) : null;
     const loc   = a.locationId       ? Store.getLocation(a.locationId)        : null;
 
-    const infobox = `
-      <div class="wiki-infobox-title">🗝 ${esc(a.name)}</div>
-      <div class="wiki-infobox-portrait">
-        <div style="font-size:5rem;line-height:1">🗝</div>
-      </div>
-      ${_infoboxSection('Stav', _artifactStateChip(a.state))}
-      ${owner ? _infoboxSection('Držitel',
-        `<a class="relation-chip" href="#/postava/${owner.id}">🎒 ${esc(owner.name)}</a>`) : ''}
-      ${loc ? _infoboxSection('Umístění',
-        `<a class="relation-chip" href="#/misto/${loc.id}">📍 ${esc(loc.name)}</a>`) : ''}
-    `;
-    const body = `<div class="md-view">${renderMarkdown(a.description)}</div>`;
-    return _wikiArticle({
-      title: `🗝 ${esc(a.name)}`,
+    return _articleShell({
+      visual: `<div class="ah-icon">🗝</div>`,
+      title: esc(a.name),
       subtitle: Store.getArtifactStateMap()[a.state]?.label || '',
-      infobox,
-      body,
+      chips: [_artifactStateChip(a.state)],
+      facts: [
+        { label: 'Držitel',   value: owner ? `<a class="relation-chip" href="#/postava/${owner.id}">🎒 ${esc(owner.name)}</a>` : '' },
+        { label: 'Umístění',  value: loc   ? `<a class="relation-chip" href="#/misto/${loc.id}">📍 ${esc(loc.name)}</a>` : '' },
+      ],
+      body: `<div class="md-view">${renderMarkdown(a.description)}</div>`,
     });
   }
 

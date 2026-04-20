@@ -72,7 +72,7 @@
 .rank-chain {
   --chain-color: #C9A14B;
   --chain-text:  var(--chain-color);
-  background: color-mix(in srgb, var(--chain-color) 7%, var(--bg-card));
+  background: color-mix(in srgb, var(--chain-color) 8%, var(--bg-raised));
   border: 1px solid color-mix(in srgb, var(--chain-color) 30%, transparent);
   border-radius: 8px;
   margin-bottom: 1rem;
@@ -142,19 +142,35 @@
   font-style: italic;
 }
 
-/* ── Rank chain editor (EditMode / Admin) ───────────────────── */
+/* ── Rank chain editor (EditMode / Admin) ─────────────────────
+   Dark panel themed to the accent-gold palette instead of the
+   bright parchment `--bg-card`. Matches the view-mode rank chain
+   so switching between read/edit isn't a visual jolt.              */
 .rank-chain-edit {
-  background: var(--bg-card);
-  border: 1px solid rgba(212,184,122,0.15);
-  border-radius: 6px;
-  padding: 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid rgba(200,160,64,0.22);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
   margin-bottom: 0.75rem;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
 }
 .rank-chain-edit-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(200,160,64,0.18);
+}
+.rank-chain-edit-header input,
+.rank-chain-edit input {
+  background: rgba(0,0,0,0.25);
+  color: var(--text-parchment);
+  border: 1px solid rgba(200,160,64,0.2);
+}
+.rank-chain-edit input:focus {
+  border-color: var(--accent-gold);
+  outline: none;
 }
 
 /* ── Mobile ─────────────────────────────────────────────────── */

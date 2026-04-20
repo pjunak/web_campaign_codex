@@ -190,103 +190,107 @@ export const EditTemplates = (() => {
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
-      <div class="edit-form" style="max-width:860px">
-        <div class="edit-form-header">
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová postava" : "✏ " + _esc(c.name)}</h2>
           <div class="edit-hdr-actions">
             <button class="edit-save-btn" onclick="EditMode.saveCharacter('${c.id}')">💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteCharacter('${c.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-main-grid">
-          <div class="edit-portrait-col">
-            <div class="edit-portrait-preview" id="ep-preview-${uid}">
-              ${c.portrait
-                ? `<img src="${c.portrait}" style="width:100%;height:100%;object-fit:cover;object-position:top">`
-                : `<span style="font-size:2.5rem">${badge}</span>`}
+        <div class="edit-form-split-fields">
+          <div class="edit-main-grid">
+            <div class="edit-portrait-col">
+              <div class="edit-portrait-preview" id="ep-preview-${uid}">
+                ${c.portrait
+                  ? `<img src="${c.portrait}" style="width:100%;height:100%;object-fit:cover;object-position:top">`
+                  : `<span style="font-size:2.5rem">${badge}</span>`}
+              </div>
+              <label class="edit-upload-btn">
+                📷 Nahrát portrét
+                <input type="file" accept="image/*" style="display:none"
+                  onchange="EditMode.handlePortraitUpload(this,'${uid}')">
+              </label>
+              ${c.portrait ? `<button class="edit-remove-portrait-btn"
+                onclick="document.getElementById('ep-preview-${uid}').innerHTML='<span style=\\'font-size:2.5rem\\'>${badge}</span>';document.getElementById('ep-data-${uid}').value=''">
+                × Odebrat
+              </button>` : ""}
+              <input type="hidden" id="ep-data-${uid}" value="${_esc(c.portrait)}">
             </div>
-            <label class="edit-upload-btn">
-              📷 Nahrát portrét
-              <input type="file" accept="image/*" style="display:none"
-                onchange="EditMode.handlePortraitUpload(this,'${uid}')">
-            </label>
-            ${c.portrait ? `<button class="edit-remove-portrait-btn"
-              onclick="document.getElementById('ep-preview-${uid}').innerHTML='<span style=\\'font-size:2.5rem\\'>${badge}</span>';document.getElementById('ep-data-${uid}').value=''">
-              × Odebrat
-            </button>` : ""}
-            <input type="hidden" id="ep-data-${uid}" value="${_esc(c.portrait)}">
-          </div>
-          <div class="edit-fields-col">
-            <div class="edit-row-2">
-              <div class="edit-field">
-                <label class="edit-label">Jméno *</label>
-                <input class="edit-input" id="ef-name-${uid}" value="${_esc(c.name)}" placeholder="Jméno postavy">
+            <div class="edit-fields-col">
+              <div class="edit-row-2">
+                <div class="edit-field">
+                  <label class="edit-label">Jméno *</label>
+                  <input class="edit-input" id="ef-name-${uid}" value="${_esc(c.name)}" placeholder="Jméno postavy">
+                </div>
+                <div class="edit-field">
+                  <label class="edit-label">Titul / Krátký popis</label>
+                  <input class="edit-input" id="ef-title-${uid}" value="${_esc(c.title)}" placeholder="Titul nebo profese">
+                </div>
+              </div>
+              <div class="edit-row-2">
+                <div class="edit-field">
+                  <label class="edit-label">Frakce</label>
+                  <select class="edit-select" id="ef-faction-${uid}">${fOpts}</select>
+                </div>
+                <div class="edit-field">
+                  <label class="edit-label">Status</label>
+                  <select class="edit-select" id="ef-status-${uid}">${sOpts}</select>
+                </div>
+              </div>
+              <div class="edit-row-3">
+                <div class="edit-field">
+                  <label class="edit-label">Druh</label>
+                  ${speciesMount}
+                </div>
+                <div class="edit-field">
+                  <label class="edit-label">Pohlaví</label>
+                  <select class="edit-select" id="ef-gender-${uid}"
+                    onchange="EditMode.onGenderChange('${uid}')">${genderOpts}</select>
+                  <input class="edit-input" id="ef-gender-other-${uid}" type="text"
+                    placeholder="Specifikuj…"
+                    value="${isOtherGender ? _esc(c.gender) : ''}"
+                    style="margin-top:0.4rem;display:${isOtherGender ? '' : 'none'}">
+                </div>
+                <div class="edit-field">
+                  <label class="edit-label">Věk</label>
+                  <input class="edit-input" id="ef-age-${uid}" value="${_esc(c.age)}" placeholder="neznámý">
+                </div>
               </div>
               <div class="edit-field">
-                <label class="edit-label">Titul / Krátký popis</label>
-                <input class="edit-input" id="ef-title-${uid}" value="${_esc(c.title)}" placeholder="Titul nebo profese">
-              </div>
-            </div>
-            <div class="edit-row-2">
-              <div class="edit-field">
-                <label class="edit-label">Frakce</label>
-                <select class="edit-select" id="ef-faction-${uid}">${fOpts}</select>
+                <label class="edit-label">Okolnosti (např. zajat, na útěku, v kómatu…)</label>
+                <input class="edit-input" id="ef-circumstances-${uid}" value="${_esc(c.circumstances || '')}" placeholder="Volný text — zvláštní situace postavy">
               </div>
               <div class="edit-field">
-                <label class="edit-label">Status</label>
-                <select class="edit-select" id="ef-status-${uid}">${sOpts}</select>
+                <label class="edit-label" id="ef-kl-${uid}">Znalost (${c.knowledge}/4) — ${KNAMES[c.knowledge]}</label>
+                <input type="range" class="edit-range" id="ef-knowledge-${uid}" min="0" max="4" value="${c.knowledge}"
+                  oninput="document.getElementById('ef-kl-${uid}').textContent='Znalost ('+this.value+'/4) — '+['Neznámý','Tušený','Základní','Dobře znám','Plně zmapován'][this.value]">
+                <div class="edit-range-labels"><span>Neznámý</span><span>Plně zmapován</span></div>
               </div>
-            </div>
-            <div class="edit-row-3">
-              <div class="edit-field">
-                <label class="edit-label">Druh</label>
-                ${speciesMount}
-              </div>
-              <div class="edit-field">
-                <label class="edit-label">Pohlaví</label>
-                <select class="edit-select" id="ef-gender-${uid}"
-                  onchange="EditMode.onGenderChange('${uid}')">${genderOpts}</select>
-                <input class="edit-input" id="ef-gender-other-${uid}" type="text"
-                  placeholder="Specifikuj…"
-                  value="${isOtherGender ? _esc(c.gender) : ''}"
-                  style="margin-top:0.4rem;display:${isOtherGender ? '' : 'none'}">
-              </div>
-              <div class="edit-field">
-                <label class="edit-label">Věk</label>
-                <input class="edit-input" id="ef-age-${uid}" value="${_esc(c.age)}" placeholder="neznámý">
-              </div>
-            </div>
-            <div class="edit-field">
-              <label class="edit-label">Okolnosti (např. zajat, na útěku, v kómatu…)</label>
-              <input class="edit-input" id="ef-circumstances-${uid}" value="${_esc(c.circumstances || '')}" placeholder="Volný text — zvláštní situace postavy">
-            </div>
-            <div class="edit-field">
-              <label class="edit-label" id="ef-kl-${uid}">Znalost (${c.knowledge}/4) — ${KNAMES[c.knowledge]}</label>
-              <input type="range" class="edit-range" id="ef-knowledge-${uid}" min="0" max="4" value="${c.knowledge}"
-                oninput="document.getElementById('ef-kl-${uid}').textContent='Znalost ('+this.value+'/4) — '+['Neznámý','Tušený','Základní','Dobře znám','Plně zmapován'][this.value]">
-              <div class="edit-range-labels"><span>Neznámý</span><span>Plně zmapován</span></div>
-            </div>
-            <div class="edit-field">
-              <label class="edit-label">Popis</label>
-              ${_mdTextarea(`ef-desc-${uid}`, c.description, 6, 'Detailní popis postavy — podporuje Markdown')}
             </div>
           </div>
-        </div>
-        <div class="edit-section">
-          <div class="edit-section-title">Co víme</div>
-          <div class="dyn-list" id="dyn-known-${uid}">${knownRows}</div>
-          <button class="dyn-add-btn" onclick="EditMode.addDynRow('dyn-known-${uid}')">+ Přidat</button>
-        </div>
-        <div class="edit-section">
-          <div class="edit-section-title">Otevřené otázky</div>
-          <div class="dyn-list" id="dyn-unknown-${uid}">${unknownRows}</div>
-          <button class="dyn-add-btn" onclick="EditMode.addDynRow('dyn-unknown-${uid}')">+ Přidat</button>
-        </div>
-        ${!isNew ? _relSection(c.id) : `
           <div class="edit-section">
-            <div class="edit-section-title">Vazby</div>
-            <p class="edit-hint">Uložte postavu nejprve, pak přidejte vazby.</p>
-          </div>`}
+            <div class="edit-section-title">Co víme</div>
+            <div class="dyn-list" id="dyn-known-${uid}">${knownRows}</div>
+            <button class="dyn-add-btn" onclick="EditMode.addDynRow('dyn-known-${uid}')">+ Přidat</button>
+          </div>
+          <div class="edit-section">
+            <div class="edit-section-title">Otevřené otázky</div>
+            <div class="dyn-list" id="dyn-unknown-${uid}">${unknownRows}</div>
+            <button class="dyn-add-btn" onclick="EditMode.addDynRow('dyn-unknown-${uid}')">+ Přidat</button>
+          </div>
+          ${!isNew ? _relSection(c.id) : `
+            <div class="edit-section">
+              <div class="edit-section-title">Vazby</div>
+              <p class="edit-hint">Uložte postavu nejprve, pak přidejte vazby.</p>
+            </div>`}
+        </div>
+        <div class="edit-form-split-article">
+          <div class="edit-field edit-field-full">
+            <label class="edit-label">Popis — článek o postavě</label>
+            ${_mdTextarea(`ef-desc-${uid}`, c.description, 30, 'Detailní popis postavy — podporuje Markdown')}
+          </div>
+        </div>
       </div>
     `;
   }

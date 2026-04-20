@@ -571,6 +571,50 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
 .md-view a,
 .md-edit-preview a { color: var(--accent-gold); }
 
+/* ── Split editor layout ─────────────────────────────────────
+   Character (and any other "article-style") editor splits into
+   two columns: compact structured fields on the left, a tall
+   markdown textarea on the right that gets full column height
+   so the GM can write long-form wiki prose without a narrow,
+   cramped box. Collapses to single column below 1100 px.       */
+.edit-form-split {
+  max-width: 1500px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 1.5rem 2rem;
+}
+.edit-form-split-header {
+  grid-column: 1 / -1;
+}
+.edit-form-split-fields { min-width: 0; }
+.edit-form-split-article {
+  min-width: 0;
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+}
+.edit-form-split-article .md-edit {
+  height: calc(100vh - 6rem);
+  min-height: 420px;
+}
+.edit-form-split-article .md-edit-ta {
+  flex: 1;
+  min-height: 200px;
+  resize: vertical;
+}
+.edit-form-split-article .md-edit-preview {
+  max-height: none;
+  overflow-y: auto;
+  flex: 1;
+}
+.edit-field-full { height: 100%; display: flex; flex-direction: column; }
+.edit-field-full .md-edit { flex: 1; }
+@media (max-width: 1100px) {
+  .edit-form-split { grid-template-columns: 1fr; }
+  .edit-form-split-article { position: static; }
+  .edit-form-split-article .md-edit { height: auto; }
+}
+
 /* ── Markdown editor: toolbar + Zápis/Náhled tabs ─────────────── */
 .md-edit { display: flex; flex-direction: column; }
 .md-edit-toolbar {
