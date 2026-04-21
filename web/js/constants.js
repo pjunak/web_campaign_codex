@@ -29,6 +29,8 @@ export const ROUTE = Object.freeze({
   BUH:         '/buh',
   ARTEFAKTY:   '/artefakty',
   ARTEFAKT:    '/artefakt',
+  HISTORIE:            '/historie',
+  HISTORICKA_UDALOST:  '/historicka-udalost',
   MAPA_SVET:   '/mapa/svet',
   MAPA_PALAC:  '/mapa/palac',
   MAPA_FRAKCE: '/mapa/frakce',

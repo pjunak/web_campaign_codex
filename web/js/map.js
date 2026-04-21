@@ -1,5 +1,6 @@
 import { Store } from './store.js';
 import { Widgets } from './widgets/widgets.js';
+import { esc as _esc } from './utils.js';
 
 export const PIN_TYPES = {
   major_city:  { icon: '🏙',  label: 'Velké město',  color: '#D4A017' },
@@ -215,6 +216,14 @@ export const WorldMap = (() => {
     _renderLegend();
   }
 
+  // Identifier of the currently-displayed map. Used to build the
+  // tile-pyramid manifest URL `/maps/tiles/<mapId>/tiles.json`.
+  //   world map          → "world"
+  //   local map of loc X → "local-<locId>"
+  function _currentMapId() {
+    return _currentParentId ? `local-${_currentParentId}` : 'world';
+  }
+
   function _initLeaflet() {
     _clearEventPaths();
     if (_modeObserver)   { _modeObserver.disconnect();   _modeObserver   = null; }
@@ -223,11 +232,56 @@ export const WorldMap = (() => {
 
     const imgUrl    = _currentImgUrl();
     const container = document.getElementById('sc-map-container');
+    const mapId     = _currentMapId();
 
-    const img = new Image();
-    img.onload  = () => _doInit(img, imgUrl, container);
-    img.onerror = () => _showMapError(container);
-    img.src = imgUrl;
+    // Try the tile-pyramid manifest first. Server computes tiles on
+    // demand via sharp and exposes a `tiles.json` with dimensions +
+    // zoom bounds. If the manifest is absent (404 / network error /
+    // bad JSON) we fall back to the single-image overlay path that
+    // has always worked.
+    fetch(`/maps/tiles/${encodeURIComponent(mapId)}/tiles.json`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('no manifest')))
+      .then(m => _doInitTiled(mapId, m, container))
+      .catch(() => {
+        const img = new Image();
+        img.onload  = () => _doInit(img, imgUrl, container);
+        img.onerror = () => _showMapError(container);
+        img.src = imgUrl;
+      });
+  }
+
+  // Initialise the map using a sharp-generated tile pyramid. `manifest`
+  // shape: { width, height, tileSize, minZoom, maxZoom, ext? }. The
+  // ext defaults to "jpg". Tile URLs follow Leaflet's {z}/{x}/{y} scheme.
+  function _doInitTiled(mapId, manifest, container) {
+    _imgW   = Number(manifest.width)  || 2048;
+    _imgH   = Number(manifest.height) || 1340;
+    _bounds = [[-_imgH, 0], [0, _imgW]];
+
+    const tileSize = Number(manifest.tileSize) || 256;
+    const ext      = String(manifest.ext || 'jpg');
+    const minZoom  = Number.isFinite(manifest.minZoom) ? manifest.minZoom : -8;
+    const maxZoom  = Number.isFinite(manifest.maxZoom) ? manifest.maxZoom : 2;
+
+    _map = L.map(container, {
+      crs:                 L.CRS.Simple,
+      minZoom,
+      maxZoom,
+      zoomSnap:            0.25,
+      zoomDelta:           0.5,
+      wheelPxPerZoomLevel: 120,
+      attributionControl:  false,
+    });
+
+    L.tileLayer(
+      `/maps/tiles/${encodeURIComponent(mapId)}/{z}/{x}/{y}.${ext}`,
+      { tileSize, noWrap: true, bounds: _bounds, minZoom, maxZoom },
+    ).addTo(_map);
+
+    _map.fitBounds(_bounds);
+    requestAnimationFrame(() => _enforceFitZoom());
+
+    _wirePostInit();
   }
 
   function _fitZoom() {
@@ -264,6 +318,13 @@ export const WorldMap = (() => {
 
     requestAnimationFrame(() => _enforceFitZoom());
 
+    _wirePostInit(container);
+  }
+
+  // Shared post-init wiring: marker placement, zoomend/click/edit-mode
+  // observers, resize handling, pending-pin flush. Used by both the
+  // tile-pyramid init path and the legacy imageOverlay fallback.
+  function _wirePostInit(container) {
     _markers = {};
     _pinsForCurrent().forEach(_placePin);
     _applyPinVisibility();
@@ -917,10 +978,6 @@ export const WorldMap = (() => {
           <div class="sc-event-marker-tiny" style="background:#5A3A5A">✦</div> Minulost
         </div>` : ''}
     `;
-  }
-
-  function _esc(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   // ── Toolbar search — pan/zoom to a pin by name ──────────────

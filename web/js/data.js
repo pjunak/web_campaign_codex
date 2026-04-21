@@ -1,27 +1,16 @@
 export const FACTIONS = {};
 
-export const STATUS = {
-  alive:   { label: "Naživu",   color: "#2E7D32", icon: "●" },
-  dead:    { label: "Mrtvý/á", color: "#8B0000", icon: "✦" },
-  unknown: { label: "Neznámo", color: "#6A1B9A", icon: "?" },
-};
+// STATUS and ARTIFACT_STATES previously lived here but are now owned by
+// SETTINGS_DEFAULTS (characterStatuses / artifactStates below). Consumers
+// should use Store.getStatusMap() / Store.getArtifactStateMap() which read
+// from user-editable settings with a defaults fallback.
 
-// Artifact state enum — shown as a chip in artifact cards/editors.
-export const ARTIFACT_STATES = {
-  nalezen:    { label: "Nalezen",      color: "#2E7D32", icon: "✨" },
-  u_postavy:  { label: "U postavy",    color: "#C9A14B", icon: "🎒" },
-  strezeny:   { label: "Střežený",     color: "#1565C0", icon: "🛡" },
-  skryty:     { label: "Skrytý",       color: "#6A1B9A", icon: "🕵" },
-  ztraceny:   { label: "Ztracený",     color: "#795548", icon: "❓" },
-  zniceny:    { label: "Zničený",      color: "#8B0000", icon: "💥" },
-};
-
-export const CHARACTERS    = [];
-export const LOCATIONS     = [];
-export const EVENTS        = [];
-export const RELATIONSHIPS = [];
-export const MYSTERIES     = [];
-export const MAP_PINS      = [];
+export const CHARACTERS        = [];
+export const LOCATIONS         = [];
+export const EVENTS            = [];
+export const RELATIONSHIPS     = [];
+export const MYSTERIES         = [];
+export const HISTORICAL_EVENTS = [];
 
 // Seeded D&D races. Users can delete any of these; deletion tombstones
 // in `deletedDefaults` prevent re-seeding on restart.

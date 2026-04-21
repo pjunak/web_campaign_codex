@@ -97,14 +97,6 @@
   border-color: rgba(200,160,64,0.28);
 }
 
-.tl-col-past {
-  background: rgba(40,22,52,0.45);
-  border-color: rgba(160,100,200,0.22);
-}
-.tl-col-past:hover {
-  border-color: rgba(160,100,200,0.4);
-}
-
 .tl-col-phantom {
   background: repeating-linear-gradient(
     135deg,
@@ -131,7 +123,6 @@
   text-transform: uppercase;
   color: var(--accent-gold);
 }
-.tl-col-past .tl-col-title { color: #C280FF; }
 .tl-col-phantom .tl-col-title { color: var(--text-muted); font-style: italic; }
 .tl-col-count {
   font-family: var(--font-ui);

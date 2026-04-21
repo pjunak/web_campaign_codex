@@ -607,6 +607,8 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr);
   gap: 1.5rem 2rem;
+  margin: 0 auto;           /* centre the whole split form */
+  justify-content: center;  /* symmetric empty space L/R of column pair */
 }
 .edit-form-split-header {
   grid-column: 1 / -1;

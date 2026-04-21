@@ -1,9 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
 //  TIMELINE — Kanban board (column per sezení)
-//  Events live in columns. "Dávná minulost" is the leftmost
-//  column, then Sezení 1..N. In edit mode, an extra phantom
-//  column at the end accepts drops to create a new sezení, and
-//  each column exposes "+ Nová událost" + per-card drag-drop.
+//  Events live in columns Sezení 1..N. In edit mode, an extra
+//  phantom column at the end accepts drops to create a new
+//  sezení, and each column exposes "+ Nová událost" + per-card
+//  drag-drop. Ancient/historical events live in their own
+//  `historicalEvents` collection — not in the timeline.
 //
 //  Stacking: columns with more than STACK_THRESHOLD cards fan
 //  out on hover/tap. Collapsed, cards peek with a vertical
@@ -12,6 +13,7 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
+import { esc as _esc } from './utils.js';
 
 const STACK_THRESHOLD = 4;
 
@@ -21,16 +23,17 @@ let _draggingId = null;
 
 export const Timeline = (() => {
 
-  function _esc(s) {
-    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
+  // Per-render caches. Built once at the top of render() so
+  // _cardHTML / _eventAccentColor do O(1) id→entity lookups
+  // instead of .find() each time (was O(n·m) across the board).
+  let _charMap = new Map();
+  let _locMap  = new Map();
 
   function _factionColor(id) { return Store.getFactions()[id]?.color || '#8B6914'; }
 
   function _eventAccentColor(e) {
-    const chars = Store.getCharacters();
     for (const cid of (e.characters || [])) {
-      const c = chars.find(x => x.id === cid);
+      const c = _charMap.get(cid);
       if (c && c.faction && c.faction !== 'neutral') return _factionColor(c.faction);
     }
     return '#8B6914';
@@ -57,18 +60,15 @@ export const Timeline = (() => {
 
   // ── Card HTML ─────────────────────────────────────────────────
   function _cardHTML(e) {
-    const chars = Store.getCharacters();
-    const locs  = Store.getLocations();
-
     const charNames = (e.characters || []).slice(0, 4).map(id => {
-      const c = chars.find(x => x.id === id);
+      const c = _charMap.get(id);
       return c ? _esc(c.name) : _esc(id);
     });
     const charMore = (e.characters || []).length > 4
       ? ` <span class="tl-more">+${(e.characters||[]).length - 4}</span>` : '';
 
     const locNames = (e.locations || []).map(id => {
-      const l = locs.find(x => x.id === id);
+      const l = _locMap.get(id);
       return l ? _esc(l.name) : _esc(id);
     });
 
@@ -153,8 +153,8 @@ export const Timeline = (() => {
     else                     bodyEl.insertBefore(line, cards[idx]);
   }
 
-  // Wire dragover + drop on a column. sittingKey is a number or null
-  // (null = "Dávná minulost" column).
+  // Wire dragover + drop on a column. sittingKey is the column's
+  // sezení number (1..N, or N+1 for the phantom "new sezení" slot).
   function _wireColumnDrop(colEl, bodyEl, sittingKey) {
     colEl.addEventListener('dragover', ev => {
       if (_draggingId == null) return;
@@ -208,14 +208,15 @@ export const Timeline = (() => {
     if (_commitReorder(columns)) render();
   }
 
-  // Map sitting-key → ordered list of events. Past events (no sitting)
-  // live under key `null`. Orders within each sitting come from current
-  // `order` so rebuilds are stable.
+  // Map sitting-number → ordered list of events. Events without a
+  // sitting are coerced to sitting 1 so they're visible somewhere
+  // instead of vanishing. Orders within each sitting come from the
+  // current `order` so rebuilds are stable.
   function _groupBySitting(events) {
     const out = new Map();
     const sorted = [...events].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     sorted.forEach(e => {
-      const k = e.sitting ?? null;
+      const k = (typeof e.sitting === 'number' && e.sitting >= 1) ? e.sitting : 1;
       if (!out.has(k)) out.set(k, []);
       out.get(k).push(e);
     });
@@ -225,8 +226,17 @@ export const Timeline = (() => {
   // ── Main render ───────────────────────────────────────────────
   function render() {
     const events = Store.getEvents();
+
+    // Build id→entity Maps once per render so card HTML is O(1) per
+    // lookup. Was O(n) .find() per character/location/event.
+    _charMap = new Map(Store.getCharacters().map(c => [c.id, c]));
+    _locMap  = new Map(Store.getLocations().map(l => [l.id, l]));
+
     const byCol  = _groupBySitting(events);
-    const maxSitting = events.reduce((m, e) => Math.max(m, e.sitting ?? 0), 0);
+    const maxSitting = Math.max(
+      1,
+      events.reduce((m, e) => Math.max(m, e.sitting ?? 0), 0),
+    );
     const editing = EditMode.isActive();
 
     document.getElementById('main-content').style.display = '';
@@ -243,15 +253,6 @@ export const Timeline = (() => {
       </div>`;
 
     const board = document.getElementById('tl-board');
-
-    // Past column
-    _renderColumn(board, {
-      sitting: null,
-      label:   'Dávná minulost',
-      events:  byCol.get(null) || [],
-      editing,
-      variant: 'past',
-    });
 
     // One column per sezení in 1..maxSitting (including empty ones so
     // you can drop into a skipped session).
@@ -282,7 +283,7 @@ export const Timeline = (() => {
     const { sitting, label, events, editing, variant } = opts;
     const col = document.createElement('div');
     col.className = `tl-col tl-col-${variant}`;
-    col.dataset.sitting = sitting == null ? '__past__' : String(sitting);
+    col.dataset.sitting = String(sitting);
     if (events.length > STACK_THRESHOLD) col.classList.add('tl-col-stacked');
 
     // Header
@@ -292,7 +293,7 @@ export const Timeline = (() => {
         <div class="tl-col-count">${events.length || ''}</div>
       </div>
       <div class="tl-col-body"></div>
-      ${editing ? `<button class="tl-col-add" data-sitting="${sitting == null ? '' : sitting}">＋ Nová událost</button>` : ''}
+      ${editing ? `<button class="tl-col-add" data-sitting="${sitting}">＋ Nová událost</button>` : ''}
     `;
 
     const body = col.querySelector('.tl-col-body');
@@ -313,8 +314,7 @@ export const Timeline = (() => {
       if (btn) {
         btn.addEventListener('click', ev => {
           ev.stopPropagation();
-          const prefill = sitting == null ? {} : { sitting };
-          EditMode.startNewEvent(prefill);
+          EditMode.startNewEvent({ sitting });
         });
       }
       _wireColumnDrop(col, body, sitting);

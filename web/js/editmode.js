@@ -22,7 +22,8 @@ export const EditMode = (() => {
   // "+ Nová postava ve frakci" (and similar) pre-fill context fields
   // instead of sending the user to a blank form.
   let _prefill = { character: null, location: null, event: null,
-                   species: null, buh: null, artifact: null };
+                   species: null, buh: null, artifact: null,
+                   historicalEvent: null };
   function _consumePrefill(kind) {
     const p = _prefill[kind];
     _prefill[kind] = null;
@@ -39,14 +40,6 @@ export const EditMode = (() => {
     if (typeof fn === 'function') {
       try { fn(id); } catch (e) { console.warn(e); }
     }
-  }
-
-  function _genId(name) {
-    return name.toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .substring(0, 40) || ("id_" + Date.now());
   }
 
   // ── Toast ──────────────────────────────────────────────────────
@@ -214,7 +207,7 @@ export const EditMode = (() => {
     const name = document.getElementById(`ef-name-${uid}`)?.value.trim();
     if (!name) { _toast("Jméno je povinné", false); return; }
 
-    const newId   = originalId || _genId(name);
+    const newId   = originalId || Store.generateId(name);
     // Preserve fields that the inline editor doesn't expose
     const existing = originalId
       ? (Store.getCharacters().find(c => c.id === originalId) || {})
@@ -257,7 +250,10 @@ export const EditMode = (() => {
       gender,
       age:         document.getElementById(`ef-age-${uid}`)?.value.trim()          || "",
       circumstances: document.getElementById(`ef-circumstances-${uid}`)?.value.trim() || "",
-      knowledge:   parseInt(document.getElementById(`ef-knowledge-${uid}`)?.value) || 3,
+      knowledge:   (() => {
+        const n = parseInt(document.getElementById(`ef-knowledge-${uid}`)?.value, 10);
+        return Number.isNaN(n) ? 3 : n;
+      })(),
       description: document.getElementById(`ef-desc-${uid}`)?.value.trim()         || "",
       portrait,
       known:       _dynVals(`dyn-known-${uid}`),
@@ -405,7 +401,7 @@ export const EditMode = (() => {
     const uid  = originalId || "new_loc";
     const name = document.getElementById(`lf-name-${uid}`)?.value.trim();
     if (!name) { _toast("Název je povinný", false); return; }
-    const newId = originalId || _genId(name);
+    const newId = originalId || Store.generateId(name);
     // Preserve map-only fields (x, y, pinType, mapStatus, priority, mapNotes)
     // that this form doesn't expose. Only the wiki form would clobber them
     // otherwise; the map's own pin form remains the place to edit them.
@@ -535,7 +531,7 @@ export const EditMode = (() => {
     const uid  = originalId || "new_ev";
     const name = document.getElementById(`evf-name-${uid}`)?.value.trim();
     if (!name) { _toast("Název je povinný", false); return; }
-    const newId = originalId || _genId(name);
+    const newId = originalId || Store.generateId(name);
     const sittingRaw = document.getElementById(`evf-sitting-${uid}`)?.value.trim();
     const sitting    = sittingRaw ? (parseInt(sittingRaw) || null) : null;
     // Preserve fields not exposed in the editor
@@ -605,7 +601,7 @@ export const EditMode = (() => {
     const uid  = originalId || "new_mys";
     const name = document.getElementById(`mf-name-${uid}`)?.value.trim();
     if (!name) { _toast("Název je povinný", false); return; }
-    const newId = originalId || _genId(name);
+    const newId = originalId || Store.generateId(name);
     // Preserve fields that the inline editor doesn't expose (questions, clues, etc.)
     const existing = originalId
       ? (Store.getMysteries().find(m => m.id === originalId) || {})
@@ -662,7 +658,7 @@ export const EditMode = (() => {
     const uid  = (originalId || "new_fac").replace(/[^a-z0-9_]/gi, "_");
     const name = document.getElementById(`ff-name-${uid}`)?.value.trim();
     if (!name) { _toast("Název je povinný", false); return; }
-    const newId     = originalId || _genId(name);
+    const newId     = originalId || Store.generateId(name);
     const color     = document.getElementById(`ff-color-text-${uid}`)?.value.trim() || "#555555";
     const textColor = document.getElementById(`ff-textcolor-text-${uid}`)?.value.trim() || "#E0E0E0";
     const badge     = document.getElementById(`ff-badge-${uid}`)?.value.trim() || "⚐";
@@ -671,7 +667,7 @@ export const EditMode = (() => {
     const chainEls  = document.querySelectorAll(`#chains-${uid} .rank-chain-edit`);
     const rankChains = Array.from(chainEls).map(el => {
       const chainName = el.querySelector('input[placeholder="Název řetězce"]')?.value.trim() || "";
-      const chainId   = el.dataset.chainId || _genId(chainName) || ("chain_" + Date.now());
+      const chainId   = el.dataset.chainId || Store.generateId(chainName) || ("chain_" + Date.now());
       const rankInputs = el.querySelectorAll('.rank-ranks-list .edit-input');
       const ranks = Array.from(rankInputs).map(i => i.value.trim()).filter(Boolean);
       return { id: chainId, name: chainName, ranks };
@@ -776,7 +772,7 @@ export const EditMode = (() => {
     const uid  = originalId || 'new_sp';
     const name = document.getElementById(`sf-name-${uid}`)?.value.trim();
     if (!name) { _toast('Název je povinný', false); return; }
-    const newId = originalId || _genId(name);
+    const newId = originalId || Store.generateId(name);
     const existing = originalId ? (Store.getSpeciesItem(originalId) || {}) : {};
     Store.saveSpecies({
       ...existing,
@@ -812,7 +808,7 @@ export const EditMode = (() => {
     const uid  = originalId || 'new_god';
     const name = document.getElementById(`gf-name-${uid}`)?.value.trim();
     if (!name) { _toast('Jméno je povinné', false); return; }
-    const newId = originalId || _genId(name);
+    const newId = originalId || Store.generateId(name);
     const existing = originalId ? (Store.getBuh(originalId) || {}) : {};
     Store.saveBuh({
       ...existing,
@@ -851,7 +847,7 @@ export const EditMode = (() => {
     const uid  = originalId || 'new_art';
     const name = document.getElementById(`af-name-${uid}`)?.value.trim();
     if (!name) { _toast('Název je povinný', false); return; }
-    const newId = originalId || _genId(name);
+    const newId = originalId || Store.generateId(name);
     const existing = originalId ? (Store.getArtifact(originalId) || {}) : {};
     Store.saveArtifact({
       ...existing,
@@ -875,6 +871,51 @@ export const EditMode = (() => {
     window.location.hash = '#/artefakty';
   }
 
+  // ── Historical events ──────────────────────────────────────────
+  function renderHistoricalEventEditor(h) {
+    if (!h || !h.id) {
+      const pf = _consumePrefill('historicalEvent');
+      if (pf) return EditTemplates.renderHistoricalEventEditor(pf);
+    }
+    return EditTemplates.renderHistoricalEventEditor(h);
+  }
+  function startNewHistoricalEvent(prefill) {
+    _prefill.historicalEvent = prefill || {};
+    _navigateOrRefresh('#/historicka-udalost/new');
+  }
+  function saveHistoricalEvent(originalId) {
+    const uid  = originalId || 'new_hist';
+    const name = document.getElementById(`he-name-${uid}`)?.value.trim();
+    if (!name) { _toast('Název je povinný', false); return; }
+    const newId    = originalId || Store.generateId(name);
+    const existing = originalId ? (Store.getHistoricalEvent(originalId) || {}) : {};
+    const tags = (document.getElementById(`he-tags-${uid}`)?.value || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    Store.saveHistoricalEvent({
+      ...existing,
+      id: newId, name,
+      start:      document.getElementById(`he-start-${uid}`)?.value.trim()   || '',
+      end:        document.getElementById(`he-end-${uid}`)?.value.trim()     || '',
+      summary:    document.getElementById(`he-summary-${uid}`)?.value.trim() || '',
+      body:       document.getElementById(`he-body-${uid}`)?.value.trim()    || '',
+      characters: _checkVals(`he-chars-${uid}`),
+      locations:  _checkVals(`he-locs-${uid}`),
+      tags,
+    });
+    _toast('✓ Historická událost uložena');
+    _navigateOrRefresh(`#/historicka-udalost/${newId}`);
+  }
+  function deleteHistoricalEvent(id) {
+    Store.deleteHistoricalEvent(id);
+    _toast('Historická událost smazána', true, {
+      action: { label: '↶ Vrátit', onClick: () => {
+        Store.undelete('historicalEvents', id);
+        _toast('Historická událost obnovena');
+      }},
+    });
+    window.location.hash = '#/historie';
+  }
+
   // ── Public API ─────────────────────────────────────────────────
   return {
     isActive, toggle,
@@ -889,6 +930,7 @@ export const EditMode = (() => {
     saveSpecies, deleteSpecies,
     saveBuh, deleteBuh,
     saveArtifact, deleteArtifact,
+    saveHistoricalEvent, deleteHistoricalEvent,
     mountEasyMDE,
     toast: _toast,
     renderCharacterEditor,
@@ -899,8 +941,10 @@ export const EditMode = (() => {
     renderSpeciesEditor,
     renderBuhEditor,
     renderArtifactEditor,
+    renderHistoricalEventEditor,
     startNewCharacter, startNewLocation, startNewEvent,
     startNewSpecies, startNewBuh, startNewArtifact,
+    startNewHistoricalEvent,
     startNewCharacterInLocation,
   };
 

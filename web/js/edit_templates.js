@@ -1,13 +1,9 @@
 import { Store } from './store.js';
 import { PIN_TYPES } from './map.js';
 import { REL_TYPES } from './data.js';
+import { esc as _esc } from './utils.js';
 
 export const EditTemplates = (() => {
-
-  function _esc(s) {
-    return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;")
-                          .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-  }
 
   function _dynRow(value) {
     return `<div class="dyn-item">
@@ -368,69 +364,73 @@ export const EditTemplates = (() => {
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
-      <div class="edit-form" style="max-width:760px">
-        <div class="edit-form-header">
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nové místo" : "✏ " + _esc(l.name)}</h2>
           <div class="edit-hdr-actions">
             <button class="edit-save-btn" onclick="EditMode.saveLocation('${l.id}')">💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteLocation('${l.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-row-2">
-          <div class="edit-field">
-            <label class="edit-label">Název *</label>
-            <input class="edit-input" id="lf-name-${uid}" value="${_esc(l.name)}" placeholder="Název místa">
-          </div>
-          <div class="edit-field">
-            <label class="edit-label">Typ</label>
-            <select class="edit-input" id="lf-type-${uid}">${typeOpts}</select>
-          </div>
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Status</label>
-          <select class="edit-input" id="lf-status-${uid}"
-            onchange="EditMode.onLocationStatusChange('${uid}')">${statusOpts}</select>
-          <input class="edit-input" id="lf-status-custom-${uid}" type="text"
-            placeholder="Zadej vlastní status…" style="margin-top:0.4rem;display:none">
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Popis</label>
-          ${_mdTextarea(`lf-desc-${uid}`, l.description, 6, 'Popis místa — podporuje Markdown')}
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Záhadné poznámky</label>
-          ${_mdTextarea(`lf-notes-${uid}`, l.notes || '', 3, 'Poznámky pro GM')}
-        </div>
-
-        <div class="edit-section">
-          <div class="edit-section-title">Hierarchie a mapa <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">${mapBadge}</span></div>
-          <div class="edit-field">
-            <label class="edit-label">Pin na mapě</label>
-            ${mapControls}
-          </div>
-          <div class="edit-field">
-            <label class="edit-label">Rodičovské místo (volitelné — pro dílčí mapy)</label>
-            ${parentMount}
-            <div class="edit-hint" style="margin-top:0.25rem">Např. dungeon uvnitř města. Toto místo se objeví na mapě rodiče.</div>
-          </div>
-          <div class="edit-field">
-            <label class="edit-label">Vlastní mapa (volitelné — pro dílčí mapu tohoto místa)</label>
-            <div class="lf-localmap-row">
-              <input class="edit-input" id="lf-localmap-${uid}" value="${_esc(l.localMap||'')}" placeholder="/maps/local/... nebo nahraj obrázek →">
-              ${!isNew ? `<label class="edit-upload-btn" title="Nahrát obrázek">
-                📤 Nahrát
-                <input type="file" accept="image/*" style="display:none"
-                  onchange="EditMode.uploadLocalMap('${l.id}', this.files[0], 'lf-localmap-${uid}')">
-              </label>` : `<span class="edit-hint" style="align-self:center">(uložte místo, pak nahrajte)</span>`}
+        <div class="edit-form-split-fields">
+          <div class="edit-row-2">
+            <div class="edit-field">
+              <label class="edit-label">Název *</label>
+              <input class="edit-input" id="lf-name-${uid}" value="${_esc(l.name)}" placeholder="Název místa">
             </div>
-            ${localMapPreview}
-            <div class="edit-hint" style="margin-top:0.25rem">Když je vyplněno, na stránce místa se objeví tlačítko 🗺 Místní mapa, kde se zobrazí podřízená místa.</div>
+            <div class="edit-field">
+              <label class="edit-label">Typ</label>
+              <select class="edit-input" id="lf-type-${uid}">${typeOpts}</select>
+            </div>
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Status</label>
+            <select class="edit-input" id="lf-status-${uid}"
+              onchange="EditMode.onLocationStatusChange('${uid}')">${statusOpts}</select>
+            <input class="edit-input" id="lf-status-custom-${uid}" type="text"
+              placeholder="Zadej vlastní status…" style="margin-top:0.4rem;display:none">
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Záhadné poznámky</label>
+            ${_mdTextarea(`lf-notes-${uid}`, l.notes || '', 3, 'Poznámky pro GM')}
+          </div>
+
+          <div class="edit-section">
+            <div class="edit-section-title">Hierarchie a mapa <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">${mapBadge}</span></div>
+            <div class="edit-field">
+              <label class="edit-label">Pin na mapě</label>
+              ${mapControls}
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Rodičovské místo (volitelné — pro dílčí mapy)</label>
+              ${parentMount}
+              <div class="edit-hint" style="margin-top:0.25rem">Např. dungeon uvnitř města. Toto místo se objeví na mapě rodiče.</div>
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Vlastní mapa (volitelné — pro dílčí mapu tohoto místa)</label>
+              <div class="lf-localmap-row">
+                <input class="edit-input" id="lf-localmap-${uid}" value="${_esc(l.localMap||'')}" placeholder="/maps/local/... nebo nahraj obrázek →">
+                ${!isNew ? `<label class="edit-upload-btn" title="Nahrát obrázek">
+                  📤 Nahrát
+                  <input type="file" accept="image/*" style="display:none"
+                    onchange="EditMode.uploadLocalMap('${l.id}', this.files[0], 'lf-localmap-${uid}')">
+                </label>` : `<span class="edit-hint" style="align-self:center">(uložte místo, pak nahrajte)</span>`}
+              </div>
+              ${localMapPreview}
+              <div class="edit-hint" style="margin-top:0.25rem">Když je vyplněno, na stránce místa se objeví tlačítko 🗺 Místní mapa, kde se zobrazí podřízená místa.</div>
+            </div>
+          </div>
+
+          <div class="edit-section">
+            <div class="edit-section-title">Přítomné postavy</div>
+            ${charsPicker}
           </div>
         </div>
-
-        <div class="edit-section">
-          <div class="edit-section-title">Přítomné postavy</div>
-          ${charsPicker}
+        <div class="edit-form-split-article">
+          <div class="edit-field edit-field-full">
+            <label class="edit-label">Popis</label>
+            ${_mdTextarea(`lf-desc-${uid}`, l.description, 20, 'Popis místa — podporuje Markdown')}
+          </div>
         </div>
       </div>
     `;
@@ -459,29 +459,25 @@ export const EditTemplates = (() => {
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
-      <div class="edit-form" style="max-width:760px">
-        <div class="edit-form-header">
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová událost" : "✏ " + _esc(e.name)}</h2>
           <div class="edit-hdr-actions">
             <button class="edit-save-btn" onclick="EditMode.saveEvent('${e.id}')">💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteEvent('${e.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-field">
-          <label class="edit-label">Název *</label>
-          <input class="edit-input" id="evf-name-${uid}" value="${_esc(e.name)}" placeholder="Název události">
-          <div class="edit-hint" style="margin-top:0.25rem">Zařazení do sezení a pořadí se nastavuje přetažením kartičky na Časové ose.</div>
-        </div>
-        <input type="hidden" id="evf-sitting-${uid}" value="${e.sitting ?? ''}">
-        <div class="edit-field">
-          <label class="edit-label">Krátký popis</label>
-          <input class="edit-input" id="evf-short-${uid}" value="${_esc(e.short)}" placeholder="Jedna věta">
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Podrobný popis</label>
-          ${_mdTextarea(`evf-desc-${uid}`, e.description, 6, 'Co se přesně stalo — podporuje Markdown')}
-        </div>
-        <div class="edit-row-2">
+        <div class="edit-form-split-fields">
+          <div class="edit-field">
+            <label class="edit-label">Název *</label>
+            <input class="edit-input" id="evf-name-${uid}" value="${_esc(e.name)}" placeholder="Název události">
+            <div class="edit-hint" style="margin-top:0.25rem">Zařazení do sezení a pořadí se nastavuje přetažením kartičky na Časové ose.</div>
+          </div>
+          <input type="hidden" id="evf-sitting-${uid}" value="${e.sitting ?? ''}">
+          <div class="edit-field">
+            <label class="edit-label">Krátký popis</label>
+            <input class="edit-input" id="evf-short-${uid}" value="${_esc(e.short)}" placeholder="Jedna věta">
+          </div>
           <div class="edit-section" style="margin-top:0">
             <div class="edit-section-title">Zúčastněné postavy
               <button type="button" class="inline-create-btn" style="margin-left:.5rem"
@@ -489,22 +485,28 @@ export const EditTemplates = (() => {
             </div>
             ${charPicker}
           </div>
-          <div class="edit-section" style="margin-top:0">
+          <div class="edit-section">
             <div class="edit-section-title">Místa</div>
             ${locPicker}
           </div>
+          <div class="edit-field">
+            <label class="edit-label">Pin události na mapě</label>
+            ${isNew
+              ? `<div class="edit-hint">Pin lze umístit po prvním uložení události.</div>`
+              : (typeof e.mapX === 'number' && typeof e.mapY === 'number')
+                ? `<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+                    <button type="button" class="inline-create-btn" onclick="WorldMap.showEventPin('${e.id}')">🧭 Zobrazit pin</button>
+                    <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Přemístit</button>
+                    <button type="button" class="edit-delete-btn" onclick="WorldMap.clearEventPin('${e.id}')">🗑 Odebrat pin</button>
+                  </div>`
+                : `<button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Umístit pin na mapu</button>`}
+          </div>
         </div>
-        <div class="edit-field">
-          <label class="edit-label">Pin události na mapě</label>
-          ${isNew
-            ? `<div class="edit-hint">Pin lze umístit po prvním uložení události.</div>`
-            : (typeof e.mapX === 'number' && typeof e.mapY === 'number')
-              ? `<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
-                  <button type="button" class="inline-create-btn" onclick="WorldMap.showEventPin('${e.id}')">🧭 Zobrazit pin</button>
-                  <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Přemístit</button>
-                  <button type="button" class="edit-delete-btn" onclick="WorldMap.clearEventPin('${e.id}')">🗑 Odebrat pin</button>
-                </div>`
-              : `<button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Umístit pin na mapu</button>`}
+        <div class="edit-form-split-article">
+          <div class="edit-field edit-field-full">
+            <label class="edit-label">Podrobný popis</label>
+            ${_mdTextarea(`evf-desc-${uid}`, e.description, 20, 'Co se přesně stalo — podporuje Markdown')}
+          </div>
         </div>
       </div>
     `;
@@ -525,31 +527,35 @@ export const EditTemplates = (() => {
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
-      <div class="edit-form" style="max-width:640px">
-        <div class="edit-form-header">
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová záhada" : "✏ " + _esc(m.name)}</h2>
           <div class="edit-hdr-actions">
             <button class="edit-save-btn" onclick="EditMode.saveMystery('${m.id}')">💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteMystery('${m.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-row-2">
-          <div class="edit-field">
-            <label class="edit-label">Název záhady *</label>
-            <input class="edit-input" id="mf-name-${uid}" value="${_esc(m.name)}" placeholder="Co je záhadou?">
+        <div class="edit-form-split-fields">
+          <div class="edit-row-2">
+            <div class="edit-field">
+              <label class="edit-label">Název záhady *</label>
+              <input class="edit-input" id="mf-name-${uid}" value="${_esc(m.name)}" placeholder="Co je záhadou?">
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Priorita</label>
+              <select class="edit-select" id="mf-pri-${uid}">${priOpts}</select>
+            </div>
           </div>
-          <div class="edit-field">
-            <label class="edit-label">Priorita</label>
-            <select class="edit-select" id="mf-pri-${uid}">${priOpts}</select>
+          <div class="edit-section">
+            <div class="edit-section-title">Spojené postavy</div>
+            ${charPicker}
           </div>
         </div>
-        <div class="edit-field">
-          <label class="edit-label">Popis / Co víme</label>
-          ${_mdTextarea(`mf-desc-${uid}`, m.description, 6, 'Co o záhadě víme a co tušíme — Markdown')}
-        </div>
-        <div class="edit-section">
-          <div class="edit-section-title">Spojené postavy</div>
-          ${charPicker}
+        <div class="edit-form-split-article">
+          <div class="edit-field edit-field-full">
+            <label class="edit-label">Popis / Co víme</label>
+            ${_mdTextarea(`mf-desc-${uid}`, m.description, 20, 'Co o záhadě víme a co tušíme — Markdown')}
+          </div>
         </div>
       </div>
     `;
@@ -666,21 +672,25 @@ export const EditTemplates = (() => {
     const uid = s.id || 'new_sp';
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
-      <div class="edit-form" style="max-width:760px">
-        <div class="edit-form-header">
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nový druh" : "✏ " + _esc(s.name)}</h2>
           <div class="edit-hdr-actions">
             <button class="edit-save-btn" onclick="EditMode.saveSpecies('${s.id}')">💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteSpecies('${s.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-field">
-          <label class="edit-label">Název *</label>
-          <input class="edit-input" id="sf-name-${uid}" value="${_esc(s.name)}" placeholder="Člověk, Elf, Dračizeň…">
+        <div class="edit-form-split-fields">
+          <div class="edit-field">
+            <label class="edit-label">Název *</label>
+            <input class="edit-input" id="sf-name-${uid}" value="${_esc(s.name)}" placeholder="Člověk, Elf, Dračizeň…">
+          </div>
         </div>
-        <div class="edit-field">
-          <label class="edit-label">Popis</label>
-          ${_mdTextarea(`sf-desc-${uid}`, s.description, 10, 'Charakteristika druhu, schopnosti, kultura…')}
+        <div class="edit-form-split-article">
+          <div class="edit-field edit-field-full">
+            <label class="edit-label">Popis</label>
+            ${_mdTextarea(`sf-desc-${uid}`, s.description, 20, 'Charakteristika druhu, schopnosti, kultura…')}
+          </div>
         </div>
       </div>`;
   }
@@ -692,37 +702,41 @@ export const EditTemplates = (() => {
     const uid = g.id || 'new_god';
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
-      <div class="edit-form" style="max-width:760px">
-        <div class="edit-form-header">
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nový bůh / bohyně" : "✏ " + _esc(g.name)}</h2>
           <div class="edit-hdr-actions">
             <button class="edit-save-btn" onclick="EditMode.saveBuh('${g.id}')">💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteBuh('${g.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-row-2">
-          <div class="edit-field">
-            <label class="edit-label">Jméno *</label>
-            <input class="edit-input" id="gf-name-${uid}" value="${_esc(g.name)}" placeholder="Jméno božstva">
+        <div class="edit-form-split-fields">
+          <div class="edit-row-2">
+            <div class="edit-field">
+              <label class="edit-label">Jméno *</label>
+              <input class="edit-input" id="gf-name-${uid}" value="${_esc(g.name)}" placeholder="Jméno božstva">
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Symbol</label>
+              <input class="edit-input" id="gf-symbol-${uid}" value="${_esc(g.symbol)}" placeholder="☀ / 🌙 / ⚔">
+            </div>
           </div>
-          <div class="edit-field">
-            <label class="edit-label">Symbol</label>
-            <input class="edit-input" id="gf-symbol-${uid}" value="${_esc(g.symbol)}" placeholder="☀ / 🌙 / ⚔">
+          <div class="edit-row-2">
+            <div class="edit-field">
+              <label class="edit-label">Doména</label>
+              <input class="edit-input" id="gf-domain-${uid}" value="${_esc(g.domain)}" placeholder="Světlo, Smrt, Moře…">
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Zaměření</label>
+              <input class="edit-input" id="gf-alignment-${uid}" value="${_esc(g.alignment)}" placeholder="např. LG / CN / …">
+            </div>
           </div>
         </div>
-        <div class="edit-row-2">
-          <div class="edit-field">
-            <label class="edit-label">Doména</label>
-            <input class="edit-input" id="gf-domain-${uid}" value="${_esc(g.domain)}" placeholder="Světlo, Smrt, Moře…">
+        <div class="edit-form-split-article">
+          <div class="edit-field edit-field-full">
+            <label class="edit-label">Popis</label>
+            ${_mdTextarea(`gf-desc-${uid}`, g.description, 20, 'Mýty, kult, rituály, kněží…')}
           </div>
-          <div class="edit-field">
-            <label class="edit-label">Zaměření</label>
-            <input class="edit-input" id="gf-alignment-${uid}" value="${_esc(g.alignment)}" placeholder="např. LG / CN / …">
-          </div>
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Popis</label>
-          ${_mdTextarea(`gf-desc-${uid}`, g.description, 10, 'Mýty, kult, rituály, kněží…')}
         </div>
       </div>`;
   }
@@ -757,37 +771,115 @@ export const EditTemplates = (() => {
 
     return `
       <button class="back-btn" onclick="history.back()">← Zpět</button>
-      <div class="edit-form" style="max-width:760px">
-        <div class="edit-form-header">
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nový artefakt" : "✏ " + _esc(a.name)}</h2>
           <div class="edit-hdr-actions">
             <button class="edit-save-btn" onclick="EditMode.saveArtifact('${a.id}')">💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteArtifact('${a.id}')">🗑 Smazat</button>` : ""}
           </div>
         </div>
-        <div class="edit-row-2">
+        <div class="edit-form-split-fields">
+          <div class="edit-row-2">
+            <div class="edit-field">
+              <label class="edit-label">Název *</label>
+              <input class="edit-input" id="af-name-${uid}" value="${_esc(a.name)}" placeholder="Název artefaktu">
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Stav</label>
+              <select class="edit-select" id="af-state-${uid}">${stateOpts}</select>
+            </div>
+          </div>
+          <div class="edit-row-2">
+            <div class="edit-field">
+              <label class="edit-label">Držitel (postava)</label>
+              ${ownerMount}
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Umístění (místo)</label>
+              ${locMount}
+            </div>
+          </div>
+        </div>
+        <div class="edit-form-split-article">
+          <div class="edit-field edit-field-full">
+            <label class="edit-label">Popis</label>
+            ${_mdTextarea(`af-desc-${uid}`, a.description, 20, 'Původ, schopnosti, prokletí, historie…')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ── Historical event editor ────────────────────────────────────
+  function renderHistoricalEventEditor(h) {
+    const isNew = !h || !h.id;
+    if (isNew) h = {
+      id:'', name:'', start:'', end:'', summary:'', body:'',
+      characters:[], locations:[], tags:[],
+    };
+    const uid = h.id || 'new_hist';
+
+    const charsMount = `<div class="ms-mount"
+      id="he-chars-${uid}"
+      data-ms-source="character"
+      data-ms-value="${_esc((h.characters || []).join(','))}"
+      data-ms-placeholder="Vyber postavy…"
+      data-ms-on-create="character"></div>`;
+
+    const locsMount = `<div class="ms-mount"
+      id="he-locs-${uid}"
+      data-ms-source="location"
+      data-ms-value="${_esc((h.locations || []).join(','))}"
+      data-ms-placeholder="Vyber místa…"
+      data-ms-on-create="location"></div>`;
+
+    return `
+      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <div class="edit-form edit-form-split">
+        <div class="edit-form-header edit-form-split-header">
+          <h2 class="edit-form-title">${isNew ? "✦ Nová historická událost" : "✏ " + _esc(h.name)}</h2>
+          <div class="edit-hdr-actions">
+            <button class="edit-save-btn" onclick="EditMode.saveHistoricalEvent('${h.id}')">💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteHistoricalEvent('${h.id}')">🗑 Smazat</button>` : ""}
+          </div>
+        </div>
+        <div class="edit-form-split-fields">
           <div class="edit-field">
             <label class="edit-label">Název *</label>
-            <input class="edit-input" id="af-name-${uid}" value="${_esc(a.name)}" placeholder="Název artefaktu">
+            <input class="edit-input" id="he-name-${uid}" value="${_esc(h.name)}" placeholder="Např. Pád Netheril">
+          </div>
+          <div class="edit-row-2">
+            <div class="edit-field">
+              <label class="edit-label">Začátek</label>
+              <input class="edit-input" id="he-start-${uid}" value="${_esc(h.start)}" placeholder="−339 DR">
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Konec</label>
+              <input class="edit-input" id="he-end-${uid}" value="${_esc(h.end)}" placeholder="−180 DR">
+            </div>
           </div>
           <div class="edit-field">
-            <label class="edit-label">Stav</label>
-            <select class="edit-select" id="af-state-${uid}">${stateOpts}</select>
+            <label class="edit-label">Shrnutí</label>
+            <textarea class="edit-textarea" id="he-summary-${uid}" rows="4" placeholder="Krátký výtah — jedna věta nebo odstavec.">${_esc(h.summary)}</textarea>
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Postavy</label>
+            ${charsMount}
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Místa</label>
+            ${locsMount}
+          </div>
+          <div class="edit-field">
+            <label class="edit-label">Štítky</label>
+            <input class="edit-input" id="he-tags-${uid}" value="${_esc((h.tags || []).join(', '))}" placeholder="válka, magie, říše">
           </div>
         </div>
-        <div class="edit-row-2">
+        <div class="edit-form-split-article">
           <div class="edit-field">
-            <label class="edit-label">Držitel (postava)</label>
-            ${ownerMount}
+            <label class="edit-label">Text</label>
+            ${_mdTextarea(`he-body-${uid}`, h.body, 20, 'Podrobný popis události, příčiny, dopady…')}
           </div>
-          <div class="edit-field">
-            <label class="edit-label">Umístění (místo)</label>
-            ${locMount}
-          </div>
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Popis</label>
-          ${_mdTextarea(`af-desc-${uid}`, a.description, 10, 'Původ, schopnosti, prokletí, historie…')}
         </div>
       </div>`;
   }
@@ -801,6 +893,7 @@ export const EditTemplates = (() => {
     renderSpeciesEditor,
     renderBuhEditor,
     renderArtifactEditor,
+    renderHistoricalEventEditor,
     getDynRowHtml: _dynRow,
     getRelSectionHtml: _relSection,
     getDirOptsHtml: _dirOpts,

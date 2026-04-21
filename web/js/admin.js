@@ -6,6 +6,7 @@
 
 import { Store } from './store.js';
 import { REL_TYPES as REL_TYPES_CANON } from './data.js';
+import { esc as _esc } from './utils.js';
 
 export const Admin = (() => {
 
@@ -156,10 +157,6 @@ export const Admin = (() => {
       <input class="admin-input dyn-item-input" type="text" value="${_esc(value)}">
       <button type="button" class="admin-icon-btn" onclick="this.parentElement.remove()">✕</button>
     </div>`;
-  }
-
-  function _esc(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   function addDynRow(wrapperId) {

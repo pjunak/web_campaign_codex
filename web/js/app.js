@@ -39,9 +39,9 @@ window.GlobalSearch = GlobalSearch;
   //     [[Frulam|postava:frulam_a7b3c9]]       (explicit id)
   //     [[Frulam|postava]]                     (scope search)
   const KIND_ROUTE = {
-    characters:'postava', locations:'misto',   events:'udalost',
-    mysteries: 'zahada',  species:'druh',      pantheon:'buh',
-    artifacts:'artefakt',
+    characters:'postava', locations:'misto',      events:'udalost',
+    mysteries: 'zahada',  species:'druh',         pantheon:'buh',
+    artifacts:'artefakt', historicalEvents:'historicka-udalost',
   };
   setWikiLinkResolver((label, hint) => {
     if (!label) return null;
@@ -55,7 +55,7 @@ window.GlobalSearch = GlobalSearch;
     const all = Store.searchAll ? Store.searchAll(label) : null;
     if (!all) return null;
     const targetN = norm(label);
-    const order = ['characters','locations','events','mysteries','species','pantheon','artifacts'];
+    const order = ['characters','locations','events','mysteries','species','pantheon','artifacts','historicalEvents'];
     for (const k of order) {
       const route = KIND_ROUTE[k];
       if (scopeRoute && route !== scopeRoute) continue;
@@ -178,6 +178,10 @@ window.GlobalSearch = GlobalSearch;
         Wiki.renderPage("artefakty"); break;
       case "artefakt":
         Wiki.renderPage("artefakt", sub); break;
+      case "historie":
+        Wiki.renderPage("historie"); break;
+      case "historicka-udalost":
+        Wiki.renderPage("historicka-udalost", sub); break;
       case "admin":
         Admin.render(); break;
       case "nastaveni":

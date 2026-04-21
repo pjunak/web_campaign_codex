@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
-import { norm, debounce } from './utils.js';
+import { norm, debounce, esc as _esc } from './utils.js';
 import { REL_TYPES, getRelType } from './data.js';
 
 export const CloudMap = (() => {
@@ -279,10 +279,6 @@ export const CloudMap = (() => {
       <div class="cm-divider"></div>
       <div class="cm-fact cm-dim">${_esc(snippet)}</div>
     </div>`;
-  }
-
-  function _esc(str) {
-    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   // ── Edge definitions ────────────────────────────────────────

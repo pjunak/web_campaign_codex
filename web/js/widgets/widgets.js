@@ -21,6 +21,26 @@ import { Store } from '../store.js';
 import { esc, norm, debounce } from '../utils.js';
 import { TagFilter } from './tagfilter.js';
 
+// ── Outside-click tracking ──────────────────────────────────────
+// Every Combobox/MultiSelect needs to close when the user clicks
+// outside of it. Originally each mount added its own
+// `document.addEventListener('mousedown', …)` — that never got
+// removed, so navigating between pages leaked hundreds of listeners.
+// One module-level listener dispatches to every open widget via a
+// Set-tracked registry instead.
+const _openWidgets = new Set();
+function _registerOpen(el)   { _openWidgets.add(el); }
+function _unregisterOpen(el) { _openWidgets.delete(el); }
+document.addEventListener('mousedown', (e) => {
+  if (_openWidgets.size === 0) return;
+  for (const el of [..._openWidgets]) {
+    if (!el.isConnected) { _openWidgets.delete(el); continue; }
+    if (!el.contains(e.target) && typeof el._closePop === 'function') {
+      el._closePop();
+    }
+  }
+});
+
 // ── Source resolvers ────────────────────────────────────────────
 // Each returns an array of {value, label, badge?, color?, sublabel?}.
 // Sorting matches the existing UX (faction badge prefix, faction order,
@@ -205,6 +225,7 @@ function _mountCombobox(el) {
     highlight = Math.max(0, _filtered().findIndex(o => o.value === value));
     pop.hidden = false;
     el.classList.add('is-open');
+    _registerOpen(el);
     _renderList();
     setTimeout(() => search.focus(), 0);
   }
@@ -215,7 +236,9 @@ function _mountCombobox(el) {
     el.classList.remove('is-open');
     filterText = '';
     search.value = '';
+    _unregisterOpen(el);
   }
+  el._closePop = _closePop;
   function _select(v) {
     value = v;
     hidden.value = v;
@@ -259,10 +282,6 @@ function _mountCombobox(el) {
     if (!item) return;
     e.preventDefault();
     _select(item.dataset.val);
-  });
-  document.addEventListener('mousedown', (e) => {
-    if (!open) return;
-    if (!el.contains(e.target)) _closePop();
   });
 
   // Public API attached to the element so callers can re-source / re-set value
@@ -399,6 +418,7 @@ function _mountMultiSelect(el) {
     pop.hidden = false;
     el.classList.add('is-open');
     highlight = 0;
+    _registerOpen(el);
     _renderList();
   }
   function _closePop() {
@@ -406,7 +426,9 @@ function _mountMultiSelect(el) {
     open = false;
     pop.hidden = true;
     el.classList.remove('is-open');
+    _unregisterOpen(el);
   }
+  el._closePop = _closePop;
   function _toggle(v) {
     if (selected.has(v)) selected.delete(v); else selected.add(v);
     _renderChips();
@@ -457,10 +479,6 @@ function _mountMultiSelect(el) {
     if (!x) return;
     const chip = x.closest('.w-ms-chip');
     if (chip) _toggle(chip.dataset.val);
-  });
-  document.addEventListener('mousedown', (e) => {
-    if (!open) return;
-    if (!el.contains(e.target)) _closePop();
   });
 
   el._multiselect = {

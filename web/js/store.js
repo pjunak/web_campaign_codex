@@ -1,6 +1,6 @@
 import {
-  FACTIONS, STATUS, CHARACTERS, LOCATIONS, EVENTS, RELATIONSHIPS, MYSTERIES, MAP_PINS,
-  SPECIES, PANTHEON, ARTIFACTS, ARTIFACT_STATES,
+  FACTIONS, CHARACTERS, LOCATIONS, EVENTS, RELATIONSHIPS, MYSTERIES,
+  SPECIES, PANTHEON, ARTIFACTS, HISTORICAL_EVENTS,
   SETTINGS_DEFAULTS, SETTINGS_USAGE_MAP,
 } from './data.js';
 import { norm } from './utils.js';
@@ -58,64 +58,20 @@ export const Store = (() => {
     }
   }
 
-  // ── One-shot pin→location migration ──────────────────────────
-  // Folds legacy `mapPins[]` into `locations[]` as new fields:
-  //   x, y, priority, mapStatus, pinType, notes→mapNotes
-  // A pin with `locationId` updates that location in place. A pin
-  // without a linked location spawns a new Location. After migration
-  // the mapPins array is emptied; re-runs become no-ops.
-  function _migrateMapPins() {
-    if (!_data || !Array.isArray(_data.mapPins) || _data.mapPins.length === 0) return false;
-    const locs = _data.locations = _data.locations || [];
-    let changed = false;
-    for (const pin of _data.mapPins) {
-      if (!pin || typeof pin.x !== 'number' || typeof pin.y !== 'number') continue;
-      let loc = null;
-      if (pin.locationId) loc = locs.find(l => l.id === pin.locationId);
-      if (!loc) {
-        // Create a new Location from the pin
-        const newId = pin.locationId
-          ? pin.locationId
-          : 'loc_' + generateId(pin.name || 'misto') + '_' + (pin.id || Date.now());
-        loc = {
-          id:          newId,
-          name:        pin.name || 'Neznámé místo',
-          type:        '',
-          status:      '',
-          description: '',
-          notes:       '',
-          characters:  [],
-        };
-        locs.push(loc);
-      }
-      // Merge map fields. Do not clobber an existing location's name/desc.
-      loc.x         = pin.x;
-      loc.y         = pin.y;
-      if (typeof pin.priority === 'number') loc.priority = pin.priority;
-      if (pin.status) loc.mapStatus = pin.status;   // affiliation: known/visited/enemy/fog
-      if (pin.type)   loc.pinType   = pin.type;     // icon type: city/fortress/...
-      if (pin.notes && !loc.mapNotes) loc.mapNotes = pin.notes;
-      changed = true;
-    }
-    // Empty the legacy collection — keep the key so server writes an
-    // empty file and doesn't re-hydrate from disk on the next load.
-    _data.mapPins = [];
-    return changed;
-  }
-
   function _defaults() {
     return {
-      characters:    JSON.parse(JSON.stringify(CHARACTERS)),
-      relationships: JSON.parse(JSON.stringify(RELATIONSHIPS)),
-      locations:     JSON.parse(JSON.stringify(LOCATIONS)),
-      events:        JSON.parse(JSON.stringify(EVENTS)),
-      mysteries:     JSON.parse(JSON.stringify(MYSTERIES)),
-      mapPins:       JSON.parse(JSON.stringify(MAP_PINS)),
-      factions:      JSON.parse(JSON.stringify(FACTIONS)),
-      species:       JSON.parse(JSON.stringify(SPECIES)),
-      pantheon:      JSON.parse(JSON.stringify(PANTHEON)),
-      artifacts:     JSON.parse(JSON.stringify(ARTIFACTS)),
-      settings:      JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)),
+      characters:       JSON.parse(JSON.stringify(CHARACTERS)),
+      relationships:    JSON.parse(JSON.stringify(RELATIONSHIPS)),
+      locations:        JSON.parse(JSON.stringify(LOCATIONS)),
+      events:           JSON.parse(JSON.stringify(EVENTS)),
+      mysteries:        JSON.parse(JSON.stringify(MYSTERIES)),
+      factions:         JSON.parse(JSON.stringify(FACTIONS)),
+      species:          JSON.parse(JSON.stringify(SPECIES)),
+      pantheon:         JSON.parse(JSON.stringify(PANTHEON)),
+      artifacts:        JSON.parse(JSON.stringify(ARTIFACTS)),
+      historicalEvents: JSON.parse(JSON.stringify(HISTORICAL_EVENTS)),
+      settings:         JSON.parse(JSON.stringify(SETTINGS_DEFAULTS)),
+      deletedDefaults:  [],
     };
   }
 
@@ -134,10 +90,11 @@ export const Store = (() => {
         if (!_data.factions[id]) _data.factions[id] = JSON.parse(JSON.stringify(fac));
       }
     }
-    // Seed species/pantheon/artifacts for fresh installs.
-    if (!Array.isArray(_data.species))   _data.species   = [];
-    if (!Array.isArray(_data.pantheon))  _data.pantheon  = [];
-    if (!Array.isArray(_data.artifacts)) _data.artifacts = [];
+    // Seed species/pantheon/artifacts/historicalEvents for fresh installs.
+    if (!Array.isArray(_data.species))          _data.species          = [];
+    if (!Array.isArray(_data.pantheon))         _data.pantheon         = [];
+    if (!Array.isArray(_data.artifacts))        _data.artifacts        = [];
+    if (!Array.isArray(_data.historicalEvents)) _data.historicalEvents = [];
     const seedIds = new Set(_data.species.map(s => s.id));
     for (const s of SPECIES) {
       if (!seedIds.has(s.id) && !deleted.has(s.id)) {
@@ -187,9 +144,8 @@ export const Store = (() => {
         if (serverData && serverData.characters) {
           _data = serverData;
           _mergeDefaults();
-          // One-shot legacy pins → locations migration. Re-saves if it did work.
+          // Idempotent data migrations. Re-saves if anything changed.
           let mutated = false;
-          if (_migrateMapPins())        mutated = true;
           if (_migrateCapturedStatus()) mutated = true;
           if (mutated) _persist();
           _reindex();
@@ -287,7 +243,7 @@ export const Store = (() => {
   function getFactions()      { init(); return _data.factions; }
   function getFaction(id)     { return getFactions()[id] || null; }
   // Pull status map live from user-editable settings, falling back
-  // to the hardcoded STATUS (data.js) if settings haven't loaded yet.
+  // to SETTINGS_DEFAULTS.characterStatuses if settings haven't loaded yet.
   function getStatusMap() {
     const arr = (_data?.settings?.characterStatuses) || SETTINGS_DEFAULTS.characterStatuses;
     return Object.fromEntries(arr.map(s => [s.id, s]));
@@ -375,8 +331,9 @@ export const Store = (() => {
       case 'factions':      saveFaction(snap.id, snap.entity); break;
       case 'species':       saveSpecies(snap.entity);        break;
       case 'pantheon':      saveBuh(snap.entity);            break;
-      case 'artifacts':     saveArtifact(snap.entity);       break;
-      case 'relationships': saveRelationship(snap.entity);   break;
+      case 'artifacts':         saveArtifact(snap.entity);         break;
+      case 'historicalEvents':  saveHistoricalEvent(snap.entity);  break;
+      case 'relationships':     saveRelationship(snap.entity);     break;
     }
     // Character delete cascade-stripped relationships — restore those.
     for (const r of snap.relationships || []) saveRelationship(r);
@@ -450,10 +407,48 @@ export const Store = (() => {
   function saveLocation(loc) {
     init();
     _stamp(loc);
-    const idx = _data.locations.findIndex(l => l.id === loc.id);
+    const idx    = _data.locations.findIndex(l => l.id === loc.id);
+    const before = idx >= 0 ? _data.locations[idx] : null;
     if (idx >= 0) _data.locations[idx] = loc; else _data.locations.push(loc);
+
+    // Connection symmetry. `connections[]` is undirected — if A lists B,
+    // B should list A. Diff old vs new and mirror every add/remove onto
+    // the touched peer. Touched peers get their own _sync call so the
+    // server sees both ends of the change.
+    const oldSet   = new Set((before?.connections) || []);
+    const newSet   = new Set(loc.connections      || []);
+    const added    = [...newSet].filter(x => !oldSet.has(x));
+    const removed  = [...oldSet].filter(x => !newSet.has(x));
+    const touched  = new Set();
+    for (const peerId of added) {
+      if (peerId === loc.id) continue;
+      const peer = _data.locations.find(l => l.id === peerId);
+      if (!peer) continue;
+      if (!Array.isArray(peer.connections)) peer.connections = [];
+      if (!peer.connections.includes(loc.id)) {
+        peer.connections.push(loc.id);
+        _stamp(peer);
+        touched.add(peer.id);
+      }
+    }
+    for (const peerId of removed) {
+      const peer = _data.locations.find(l => l.id === peerId);
+      if (!peer || !Array.isArray(peer.connections)) continue;
+      const next = peer.connections.filter(x => x !== loc.id);
+      if (next.length !== peer.connections.length) {
+        peer.connections = next;
+        _stamp(peer);
+        touched.add(peer.id);
+      }
+    }
+
     _reindex();
-    return _sync('locations', 'save', loc);
+    const ok = _sync('locations', 'save', loc);
+    for (const pid of touched) {
+      const peer = _data.locations.find(l => l.id === pid);
+      if (peer) _sync('locations', 'save', peer);
+    }
+    return ok;
   }
 
   function deleteLocation(id) {
@@ -461,8 +456,28 @@ export const Store = (() => {
     const loc = _data.locations.find(l => l.id === id);
     if (loc) _trash.set(_trashKey('locations', id), { kind:'locations', entity: JSON.parse(JSON.stringify(loc)) });
     _data.locations = _data.locations.filter(l => l.id !== id);
+
+    // Cascade: strip the deleted id from every peer's connections[],
+    // and clear parentId on any child that pointed at it. Touched peers
+    // get their own _sync so the server persists both sides.
+    const touched = [];
+    for (const l of _data.locations) {
+      let changed = false;
+      if (Array.isArray(l.connections) && l.connections.includes(id)) {
+        l.connections = l.connections.filter(x => x !== id);
+        changed = true;
+      }
+      if (l.parentId === id) {
+        l.parentId = '';
+        changed = true;
+      }
+      if (changed) { _stamp(l); touched.push(l); }
+    }
+
     _reindex();
-    return _sync('locations', 'delete', { id });
+    const ok = _sync('locations', 'delete', { id });
+    for (const peer of touched) _sync('locations', 'save', peer);
+    return ok;
   }
 
   function saveEvent(evt) {
@@ -692,12 +707,33 @@ export const Store = (() => {
     return _sync('factions', 'delete', { id });
   }
 
-  // Legacy shims — kept so any straggling caller throws loudly instead of
-  // silently writing to a removed collection. All map writes now go
-  // through saveLocation with x/y/priority/mapStatus/pinType set.
-  function saveMapPin(_pin)   { throw new Error('Store.saveMapPin removed — use saveLocation with x/y/mapStatus/pinType.'); }
-  function deleteMapPin(_id)  { throw new Error('Store.deleteMapPin removed — clear x/y on the location via saveLocation.'); }
-  function getMapPins()       { throw new Error('Store.getMapPins removed — use getLocationsOnMap(parentId).'); }
+  // ── Historical events (Svět → Historie) ──────────────────────
+  // Separate collection from campaign `events` so the timeline stays
+  // campaign-only. Each record has `{id, name, start, end, summary,
+  // body (markdown), tags[], characters[], locations[]}` plus the
+  // usual `updatedAt`. `start`/`end` are free-text year strings so
+  // the DM can use D&D calendar years, vague ranges, etc.
+  function getHistoricalEvents()   { init(); return _data.historicalEvents || []; }
+  function getHistoricalEvent(id)  {
+    return getHistoricalEvents().find(h => h.id === id) || null;
+  }
+  function saveHistoricalEvent(h) {
+    init();
+    _stamp(h);
+    if (!Array.isArray(_data.historicalEvents)) _data.historicalEvents = [];
+    const idx = _data.historicalEvents.findIndex(x => x.id === h.id);
+    if (idx >= 0) _data.historicalEvents[idx] = h; else _data.historicalEvents.push(h);
+    return _sync('historicalEvents', 'save', h);
+  }
+  function deleteHistoricalEvent(id) {
+    init();
+    const h = (_data.historicalEvents || []).find(x => x.id === id);
+    if (h) _trash.set(_trashKey('historicalEvents', id), {
+      kind:'historicalEvents', entity: JSON.parse(JSON.stringify(h))
+    });
+    _data.historicalEvents = (_data.historicalEvents || []).filter(x => x.id !== id);
+    return _sync('historicalEvents', 'delete', { id });
+  }
 
   // ── Indexed lookups ─────────────────────────────────────────
   function getCharactersByFaction(factionId) {
@@ -793,15 +829,25 @@ export const Store = (() => {
       _match(a.name, q) || _match(a.description, q) || _match((a.tags || []).join(' '), q)
     );
   }
+  function searchHistoricalEvents(query) {
+    init();
+    const q = norm(query);
+    if (!q) return (_data.historicalEvents || []).slice();
+    return (_data.historicalEvents || []).filter(h =>
+      _match(h.name, q) || _match(h.summary, q) || _match(h.body, q) ||
+      _match((h.tags || []).join(' '), q)
+    );
+  }
   function searchAll(query) {
     return {
-      characters: searchCharacters(query),
-      locations:  searchLocations(query),
-      events:     searchEvents(query),
-      mysteries:  searchMysteries(query),
-      species:    searchSpecies(query),
-      pantheon:   searchPantheon(query),
-      artifacts:  searchArtifacts(query),
+      characters:       searchCharacters(query),
+      locations:        searchLocations(query),
+      events:           searchEvents(query),
+      mysteries:        searchMysteries(query),
+      species:          searchSpecies(query),
+      pantheon:         searchPantheon(query),
+      artifacts:        searchArtifacts(query),
+      historicalEvents: searchHistoricalEvents(query),
     };
   }
 
@@ -829,13 +875,14 @@ export const Store = (() => {
         });
       }
     };
-    collect('postava',  '#/postava',  _data.characters, e => e.name);
-    collect('misto',    '#/misto',    _data.locations,  e => e.name);
-    collect('udalost',  '#/udalost',  _data.events,     e => e.name);
-    collect('zahada',   '#/zahada',   _data.mysteries,  e => e.name);
-    collect('druh',     '#/druh',     _data.species,    e => e.name);
-    collect('buh',      '#/buh',      _data.pantheon,   e => e.name);
-    collect('artefakt', '#/artefakt', _data.artifacts,  e => e.name);
+    collect('postava',            '#/postava',            _data.characters,       e => e.name);
+    collect('misto',              '#/misto',              _data.locations,        e => e.name);
+    collect('udalost',            '#/udalost',            _data.events,           e => e.name);
+    collect('zahada',             '#/zahada',             _data.mysteries,        e => e.name);
+    collect('druh',               '#/druh',               _data.species,          e => e.name);
+    collect('buh',                '#/buh',                _data.pantheon,         e => e.name);
+    collect('artefakt',           '#/artefakt',           _data.artifacts,        e => e.name);
+    collect('historicka-udalost', '#/historicka-udalost', _data.historicalEvents, e => e.name);
     // Factions are a keyed object rather than an array.
     for (const [id, f] of Object.entries(_data.factions || {})) {
       entries.push({
@@ -884,6 +931,18 @@ export const Store = (() => {
       `const EVENTS = ${JSON.stringify(_data.events, null, 2)};`,
       ``,
       `const MYSTERIES = ${JSON.stringify(_data.mysteries, null, 2)};`,
+      ``,
+      `const SPECIES = ${JSON.stringify(_data.species || [], null, 2)};`,
+      ``,
+      `const PANTHEON = ${JSON.stringify(_data.pantheon || [], null, 2)};`,
+      ``,
+      `const ARTIFACTS = ${JSON.stringify(_data.artifacts || [], null, 2)};`,
+      ``,
+      `const HISTORICAL_EVENTS = ${JSON.stringify(_data.historicalEvents || [], null, 2)};`,
+      ``,
+      `const SETTINGS = ${JSON.stringify(_data.settings || {}, null, 2)};`,
+      ``,
+      `const DELETED_DEFAULTS = ${JSON.stringify(_data.deletedDefaults || [], null, 2)};`,
     ].join('\n');
   }
 
@@ -904,14 +963,20 @@ export const Store = (() => {
     init();
     const ts = new Date().toLocaleString('cs-CZ');
     return JSON.stringify({
-      _version:      4,
-      _exported:     ts,
-      factions:      _data.factions,
-      characters:    _data.characters,
-      relationships: _data.relationships,
-      locations:     _data.locations,
-      events:        _data.events,
-      mysteries:     _data.mysteries,
+      _version:         5,
+      _exported:        ts,
+      factions:         _data.factions,
+      characters:       _data.characters,
+      relationships:    _data.relationships,
+      locations:        _data.locations,
+      events:           _data.events,
+      mysteries:        _data.mysteries,
+      species:          _data.species          || [],
+      pantheon:         _data.pantheon         || [],
+      artifacts:        _data.artifacts        || [],
+      historicalEvents: _data.historicalEvents || [],
+      settings:         _data.settings         || {},
+      deletedDefaults:  _data.deletedDefaults  || [],
     }, null, 2);
   }
 
@@ -919,27 +984,29 @@ export const Store = (() => {
     load, init,
     uploadPortrait, deletePortrait, uploadLocalMap,
     getCharacters, getRelationships, getLocations, getEvents, getMysteries,
-    getMapPins, getFactions, getFaction, getStatusMap,
+    getFactions, getFaction, getStatusMap,
     getCharacter, getLocation, getEvent, getMystery,
     getSpecies, getPantheon, getArtifacts,
     getSpeciesItem, getBuh, getArtifact, getArtifactStateMap,
+    getHistoricalEvents, getHistoricalEvent,
     getLocationsOnMap, getSubLocations, getAncestorLocations,
     getCharactersByFaction, getCharactersInLocation, getRelationshipsFor,
     getEventsWithCharacter, getEventsAtLocation, getMysteriesWithCharacter,
     getPinForLocation,
     searchCharacters, searchLocations, searchEvents, searchMysteries,
-    searchSpecies, searchPantheon, searchArtifacts, searchAll,
+    searchSpecies, searchPantheon, searchArtifacts, searchHistoricalEvents,
+    searchAll,
     getRecentActivity,
     saveCharacter, deleteCharacter,
     saveRelationship, deleteRelationship,
     saveLocation, deleteLocation,
     saveEvent, deleteEvent,
     saveMystery, deleteMystery,
-    saveMapPin, deleteMapPin,
     saveFaction, deleteFaction,
     saveSpecies, deleteSpecies,
     saveBuh, deleteBuh,
     saveArtifact, deleteArtifact,
+    saveHistoricalEvent, deleteHistoricalEvent,
     undelete,
     getSettings, getEnum, getEnumValue,
     saveEnumItem, deleteEnumItem, findEnumUsages, resetEnumCategory,

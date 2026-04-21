@@ -1431,6 +1431,91 @@ export const Wiki = (() => {
     });
   }
 
+  // ── Historical events (Historie) ────────────────────────────────
+  // Separate from campaign `events` — this is worldbuilding background
+  // that can span years or epochs. Each record has start/end year
+  // strings, a short summary, and a long markdown body.
+  function _historyRange(h) {
+    const s = (h.start || '').trim();
+    const e = (h.end   || '').trim();
+    if (s && e && s !== e) return `${esc(s)} – ${esc(e)}`;
+    return esc(s || e || '');
+  }
+
+  function renderHistoryList() {
+    const items = Store.getHistoricalEvents().slice();
+    // Sort by start (then name) — numeric-aware so "1347 DR" beats "980 DR".
+    items.sort((a, b) => {
+      const sa = String(a.start || '');
+      const sb = String(b.start || '');
+      const cmp = sa.localeCompare(sb, 'cs', { numeric: true, sensitivity: 'base' });
+      return cmp !== 0 ? cmp : _czCompare(a.name, b.name);
+    });
+    if (items.length === 0) {
+      return `
+        <div class="page-header"><h1>📜 Historie</h1></div>
+        ${_renderEmptyState({
+          icon: '📜',
+          title: 'Žádné historické události',
+          description: 'Události dávných věků — války, pády říší, probuzení draků. Doplňují svět nezávisle na časové ose kampaně.',
+          ctaLabel: 'Nová událost', ctaHref: '#/historicka-udalost/new',
+        })}`;
+    }
+    const grid = items.map(h => {
+      const editBtn = EditMode.isActive()
+        ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
+      const range = _historyRange(h);
+      const sub = [range, _firstParagraph(h.summary)].filter(Boolean).join(' · ');
+      return `<a class="loc-card" href="#/historicka-udalost/${h.id}" style="text-decoration:none;position:relative">
+        ${editBtn}
+        <div class="loc-card-icon">📜</div>
+        <div class="loc-card-body">
+          <div class="loc-card-name">${esc(h.name)}</div>
+          <div class="loc-card-type">${sub}</div>
+        </div>
+      </a>`;
+    }).join('');
+    return `
+      ${_simpleListHeader('📜 Historie', `${items.length} událostí`, '#/historicka-udalost/new', 'Nová událost')}
+      <div class="loc-grid">${grid}</div>
+    `;
+  }
+
+  function renderHistoryArticle(id) {
+    if (id === 'new') return EditMode.renderHistoricalEventEditor(null);
+    const h = Store.getHistoricalEvent(id);
+    if (!h) return `<p>Historická událost '${id}' nenalezena.</p>`;
+    if (EditMode.isActive()) return EditMode.renderHistoricalEventEditor(h);
+
+    const chars = (h.characters || []).map(cid => Store.getCharacter(cid)).filter(Boolean);
+    const locs  = (h.locations  || []).map(lid => Store.getLocation(lid)).filter(Boolean);
+    const charChips = chars.length
+      ? `<div class="relation-chips">${chars.map(c =>
+          `<a class="relation-chip" href="#/postava/${c.id}">${esc(c.name)}</a>`
+        ).join('')}</div>` : '';
+    const locChips = locs.length
+      ? `<div class="relation-chips">${locs.map(l =>
+          `<a class="relation-chip" href="#/misto/${l.id}">📍 ${esc(l.name)}</a>`
+        ).join('')}</div>` : '';
+
+    return _articleShell({
+      visual: `<div class="ah-icon">📜</div>`,
+      title:  esc(h.name),
+      subtitle: _historyRange(h),
+      facts: [
+        { label: 'Začátek', value: esc(h.start || '') },
+        { label: 'Konec',   value: esc(h.end   || '') },
+      ],
+      sections: [
+        h.summary ? { title: 'Shrnutí', html: `<div class="md-view">${renderMarkdown(h.summary)}</div>` } : null,
+        charChips ? { title: 'Postavy', html: charChips } : null,
+        locChips  ? { title: 'Místa',   html: locChips  } : null,
+      ].filter(Boolean),
+      body: `<div class="md-view">${renderMarkdown(h.body)}</div>`,
+      outlineSource: h.body || '',
+    });
+  }
+
   // ── Public API ─────────────────────────────────────────────────
   function renderPage(page, param) {
     const el = document.getElementById("main-content");
@@ -1455,6 +1540,8 @@ export const Wiki = (() => {
       case "buh":        html = renderBuhArticle(param); break;
       case "artefakty":  html = renderArtifactList(); break;
       case "artefakt":   html = renderArtifactArticle(param); break;
+      case "historie":           html = renderHistoryList(); break;
+      case "historicka-udalost": html = renderHistoryArticle(param); break;
       default:           html = renderDashboard();
     }
     el.innerHTML = html;
