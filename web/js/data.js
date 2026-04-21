@@ -150,6 +150,14 @@ export const SETTINGS_DEFAULTS = {
     { id: 'fog',     label: 'Neznámé',     bg: '#37474F', fg: '#E8E0C4', labelColor: '#90A4AE' },
     { id: 'known',   label: 'Neutrální',   bg: '#F5F0E4', fg: '#1a1410', labelColor: '#F0E6C8' },
   ],
+
+  // User-defined map view presets. Each entry captures the bounds
+  // of a Leaflet view as fractions (0-1) of the image so the preset
+  // stays valid across resizes. Shape:
+  //   { id, label, icon, parentId, bounds: {x1,y1,x2,y2} }
+  // parentId=null → world map; location id → that location's local map.
+  // Captured from the live map via the ✚ toolbar button (edit mode).
+  mapViews: [],
 };
 
 /** Which collection+field each settings category is referenced from.

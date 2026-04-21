@@ -32,10 +32,12 @@ export const Settings = (() => {
   ];
 
   // Non-enum tabs live alongside the category tabs. They render custom
-  // panels (world-map upload, backup tools) instead of the enum editor.
+  // panels (world-map upload, map-view presets, backup tools) instead
+  // of the enum editor.
   const SPECIAL_TABS = [
-    { id: 'worldmap', label: 'Mapa světa', icon: '🗺' },
-    { id: 'backup',   label: 'Záloha',     icon: '💾' },
+    { id: 'worldmap',  label: 'Mapa světa',     icon: '🗺' },
+    { id: 'mapViews',  label: 'Pohledy na mapě', icon: '📍' },
+    { id: 'backup',    label: 'Záloha',         icon: '💾' },
   ];
 
   let _activeCat   = CATEGORIES[0].id;
@@ -83,6 +85,7 @@ export const Settings = (() => {
 
   function _editorHtml() {
     if (_activeCat === 'worldmap') return _worldmapHtml();
+    if (_activeCat === 'mapViews') return _mapViewsHtml();
     if (_activeCat === 'backup')   return _backupHtml();
     const cat = CATEGORIES.find(c => c.id === _activeCat);
     const items = Store.getEnum(_activeCat);
@@ -279,6 +282,108 @@ export const Settings = (() => {
     Store.resetEnumCategory(_activeCat);
     render();
     _flash('Výchozí položky doplněny');
+  }
+
+  // ── Map-view presets panel ───────────────────────────────────
+  // Presets are captured on the map itself via the ✚ toolbar button;
+  // this panel only lists them and lets the GM rename or delete.
+  // Entries are grouped by the map they belong to (world vs sub-map).
+  function _mapViewsHtml() {
+    const views = Store.getEnum('mapViews') || [];
+    if (!views.length) return `
+      <div class="settings-editor-head"><h2>📍 Pohledy na mapě</h2></div>
+      <div class="settings-panel">
+        ${_renderEmptyPresets()}
+      </div>`;
+
+    // Group by parentId (null = world). Label each group by the
+    // parent location's name, or "Mapa světa" for the world group.
+    const groups = new Map();
+    for (const v of views) {
+      const key = v.parentId || null;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(v);
+    }
+    const sections = [];
+    for (const [pid, list] of groups) {
+      const parent   = pid ? (Store.getLocation(pid) || { name: '— neznámé místo —' }) : null;
+      const title    = parent ? `🗺 ${esc(parent.name)}` : '🌐 Mapa světa';
+      const rowsHtml = list.map(_mapViewRow).join('');
+      sections.push(`
+        <div class="settings-mapviews-group">
+          <div class="settings-mapviews-group-title">${title}</div>
+          <div class="settings-rows">${rowsHtml}</div>
+        </div>`);
+    }
+
+    return `
+      <div class="settings-editor-head">
+        <h2>📍 Pohledy na mapě</h2>
+      </div>
+      <div class="settings-panel">
+        <p class="settings-hint" style="margin-bottom:0.8rem">
+          Nové pohledy vytvoř přímo na mapě: v režimu úprav přiblíž/oddalj
+          požadovaný výřez a klikni na ✚ Uložit pohled v nástrojové liště.
+        </p>
+        ${sections.join('')}
+      </div>`;
+  }
+
+  function _renderEmptyPresets() {
+    return `
+      <div class="settings-empty">
+        Zatím žádné pohledy. Na mapě světa přiblíž/oddalj výřez a klikni
+        na ✚ Uložit pohled (viditelné v režimu úprav).
+      </div>`;
+  }
+
+  function _mapViewRow(v) {
+    return `
+      <div class="settings-row">
+        <span class="settings-row-icon">${esc(v.icon || '📍')}</span>
+        <span class="settings-row-label">${esc(v.label || '—')}</span>
+        <code class="settings-row-id">${esc(v.id)}</code>
+        <span></span>
+        <span></span>
+        <div class="settings-row-actions">
+          <button type="button" class="settings-btn-edit"
+                  title="Přejmenovat nebo změnit ikonu"
+                  onclick="Settings.renameMapView('${esc(v.id)}')">✏</button>
+          <button type="button" class="settings-btn-del"
+                  title="Smazat pohled"
+                  onclick="Settings.deleteMapView('${esc(v.id)}')">🗑</button>
+        </div>
+      </div>`;
+  }
+
+  function renameMapView(id) {
+    const views = Store.getEnum('mapViews') || [];
+    const v = views.find(x => x.id === id);
+    if (!v) return;
+    const label = prompt('Nový název pohledu:', v.label || '');
+    if (label == null) return;
+    const icon = prompt('Ikona:', v.icon || '📍');
+    if (icon == null) return;
+    Store.saveEnumItem('mapViews', { ...v, label: label.trim() || v.label, icon: icon.trim() || v.icon });
+    render();
+    _flash('Pohled upraven');
+    // Mirror the change onto the live map toolbar if it's visible.
+    if (window.WorldMap && typeof window.WorldMap.refreshPresetButtons === 'function') {
+      try { window.WorldMap.refreshPresetButtons(); } catch (_) {}
+    }
+  }
+
+  function deleteMapView(id) {
+    const views = Store.getEnum('mapViews') || [];
+    const v = views.find(x => x.id === id);
+    if (!v) return;
+    if (!confirm(`Smazat pohled "${v.label || id}"?`)) return;
+    Store.deleteEnumItem('mapViews', id, { force: true });
+    render();
+    _flash('Pohled smazán');
+    if (window.WorldMap && typeof window.WorldMap.refreshPresetButtons === 'function') {
+      try { window.WorldMap.refreshPresetButtons(); } catch (_) {}
+    }
   }
 
   // ── World-map panel ──────────────────────────────────────────
@@ -558,6 +663,7 @@ export const Settings = (() => {
     commit, requestDelete, commitDelete, closeModal,
     resetDefaults,
     uploadWorldMap,
+    renameMapView, deleteMapView,
     refreshSnapshots, createSnapshot, restoreSnapshot,
     deleteSnapshot, revertLastN,
   };

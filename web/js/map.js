@@ -169,13 +169,13 @@ export const WorldMap = (() => {
           <button class="sc-btn edit-only-inline ${_addMode ? 'active' : ''}" id="sc-add-btn" onclick="WorldMap.toggleAddMode()">
             ${_addMode ? '✕ Zrušit' : '+ Přidat místo'}
           </button>
-          <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn" onclick="WorldMap.toggleEventPaths()" title="Zobraz polohy a trasy událostí z Časové Osy">
+          <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn" onclick="WorldMap.toggleEventPaths()" title="Zobraz trasy událostí a přiblíž k aktuálnímu dění">
             📜 Trasy událostí
           </button>
-          <span class="sc-zoom-presets">
+          <span class="sc-zoom-presets" id="sc-zoom-presets">
             <button class="sc-btn" onclick="WorldMap.zoomFitAll()" title="Oddálit na celou mapu">🌐 Celá</button>
-            <button class="sc-btn" onclick="WorldMap.zoomMajorCities()" title="Přiblížit k hlavním městům">🏙 Hlavní</button>
-            <button class="sc-btn" onclick="WorldMap.zoomCurrentSitting()" title="Přiblížit k místům posledního sezení">📍 Dění</button>
+            ${_presetButtonsHtml()}
+            <button class="sc-btn edit-only-inline" onclick="WorldMap.captureCurrentView()" title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
           </span>
           <button class="sc-btn edit-only-inline" onclick="WorldMap.showSettings()">⚙ Mapa</button>
           <span class="sc-hint">${_addMode
@@ -539,18 +539,12 @@ export const WorldMap = (() => {
   function zoomFitAll() {
     if (_map && _bounds) _map.fitBounds(_bounds, { animate: true });
   }
-  function zoomMajorCities() {
-    if (!_map) return;
-    const pts = _pinsForCurrent()
-      .filter(p => _priorityOf(p) === 1)
-      .map(p => _toLL(p.x, p.y));
-    if (!pts.length) { zoomFitAll(); return; }
-    _map.fitBounds(L.latLngBounds(pts).pad(0.25), { animate: true });
-  }
-  // Fit bounds around pins linked to EVERY event that has a `sitting` number,
-  // i.e. everything that has happened in play so far. `maxZoom` caps how close
-  // Leaflet may zoom when the bounds collapse to a single pin.
-  function zoomCurrentSitting() {
+
+  // Fit bounds around pins linked to EVERY event that has a `sitting`
+  // number, i.e. everything that has happened in play so far. `maxZoom`
+  // caps how close Leaflet may zoom when the bounds collapse to a
+  // single pin. Used internally by toggleEventPaths when activating.
+  function _zoomCurrentSitting() {
     if (!_map) return;
     const events = Store.getEvents();
     const locs = new Set();
@@ -568,6 +562,80 @@ export const WorldMap = (() => {
       animate: true,
       maxZoom: capZoom,
     });
+  }
+
+  // ── User-defined map view presets ──────────────────────────────
+  // Stored in settings as `mapViews`; each preset captures the
+  // fractional image bounds of a Leaflet view plus a parentId so
+  // world-map presets don't pollute sub-map toolbars.
+  function _mapViewsForCurrent() {
+    const all = (Store.getEnum && Store.getEnum('mapViews')) || [];
+    return all.filter(v => (v.parentId || null) === (_currentParentId || null));
+  }
+
+  function _presetButtonsHtml() {
+    const views = _mapViewsForCurrent();
+    return views.map(v => {
+      const icon  = _esc(v.icon || '📍');
+      const label = _esc(v.label || '—');
+      return `<button class="sc-btn" onclick="WorldMap.applyMapView('${_esc(v.id)}')"
+                 title="${_esc(v.label || '')}">${icon} ${label}</button>`;
+    }).join('');
+  }
+
+  function _refreshPresetButtons() {
+    const host = document.getElementById('sc-zoom-presets');
+    if (!host) return;
+    // Rebuild just the preset buttons between "Celá" and "Uložit pohled".
+    host.innerHTML = `
+      <button class="sc-btn" onclick="WorldMap.zoomFitAll()" title="Oddálit na celou mapu">🌐 Celá</button>
+      ${_presetButtonsHtml()}
+      <button class="sc-btn edit-only-inline" onclick="WorldMap.captureCurrentView()" title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
+    `;
+  }
+
+  function applyMapView(id) {
+    if (!_map) return;
+    const v = (Store.getEnum && Store.getEnum('mapViews') || []).find(x => x.id === id);
+    if (!v || !v.bounds) return;
+    const b = v.bounds;
+    const p1 = _toLL(b.x1, b.y1);
+    const p2 = _toLL(b.x2, b.y2);
+    _map.flyToBounds(L.latLngBounds(p1, p2), { animate: true });
+  }
+
+  function captureCurrentView() {
+    if (!_map) return;
+    const label = prompt('Název pohledu:');
+    if (!label || !label.trim()) return;
+    const icon = (prompt('Ikona (volitelně, např. 🏙 nebo 🏰):') || '📍').trim() || '📍';
+    const ll = _map.getBounds();
+    const sw = _toFrac(ll.getSouthWest());
+    const ne = _toFrac(ll.getNorthEast());
+    const bounds = {
+      x1: Math.max(0, Math.min(sw.x, ne.x)),
+      y1: Math.max(0, Math.min(sw.y, ne.y)),
+      x2: Math.min(1, Math.max(sw.x, ne.x)),
+      y2: Math.min(1, Math.max(sw.y, ne.y)),
+    };
+    const id = _slugify(label) + '_' + Math.random().toString(36).slice(2, 7);
+    const preset = {
+      id,
+      label: label.trim(),
+      icon,
+      parentId: _currentParentId || null,
+      bounds,
+    };
+    Store.saveEnumItem('mapViews', preset);
+    _refreshPresetButtons();
+  }
+
+  function _slugify(s) {
+    return String(s || '').toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_|_$/g, '')
+      .slice(0, 30) || 'view';
   }
 
   function _openPinPanel(pinId) {
@@ -811,8 +879,14 @@ export const WorldMap = (() => {
     _eventPathsVisible = !_eventPathsVisible;
     const btn = document.getElementById('sc-event-btn');
     if (btn) btn.classList.toggle('active', _eventPathsVisible);
-    if (_eventPathsVisible) _drawEventPaths();
-    else                    _clearEventPaths();
+    if (_eventPathsVisible) {
+      _drawEventPaths();
+      // Auto-zoom to the pins of every played session when activating,
+      // so turning paths on also flies the camera to the current action.
+      _zoomCurrentSitting();
+    } else {
+      _clearEventPaths();
+    }
     _renderLegend();
   }
 
@@ -1100,7 +1174,8 @@ export const WorldMap = (() => {
     toggleEventPaths,
     openPinPanel, savePin, deletePin,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
-    zoomFitAll, zoomMajorCities, zoomCurrentSitting,
+    zoomFitAll,
+    applyMapView, captureCurrentView, refreshPresetButtons: _refreshPresetButtons,
     onSearchInput, jumpToFirstMatch, zoomToPin, showPin,
     openLocalMap, startPlacingPin,
     startPlacingEventPin, clearEventPin, showEventPin,
