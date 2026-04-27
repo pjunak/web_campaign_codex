@@ -773,6 +773,27 @@ export const Store = (() => {
     return { ok: true, usages };
   }
 
+  // ── Sidebar visibility ───────────────────────────────────────
+  // Stored under `settings.hiddenSidebarPages` as a flat array of
+  // route strings (e.g. `['/druhy', '/historie']`). Round-trips
+  // through the same `settings` keyed-object collection used by
+  // every other settings category — server just does
+  // `container[payload.id] = payload.data`, so the value can be a
+  // plain array of strings instead of the usual `{id,label,…}`
+  // items.
+  function getHiddenSidebarPages() {
+    init();
+    const arr = (_data.settings && _data.settings.hiddenSidebarPages) || [];
+    return Array.isArray(arr) ? arr.slice() : [];
+  }
+  function setHiddenSidebarPages(arr) {
+    init();
+    if (!_data.settings) _data.settings = {};
+    const clean = Array.isArray(arr) ? [...new Set(arr.filter(Boolean))] : [];
+    _data.settings.hiddenSidebarPages = clean;
+    return _sync('settings', 'save', { id: 'hiddenSidebarPages', data: clean });
+  }
+
   /** Re-seed a category from defaults (adds missing, leaves edits). */
   function resetEnumCategory(cat) {
     init();
@@ -1103,6 +1124,7 @@ export const Store = (() => {
     undelete,
     getSettings, getEnum, getEnumValue,
     saveEnumItem, deleteEnumItem, findEnumUsages, resetEnumCategory,
+    getHiddenSidebarPages, setHiddenSidebarPages,
     getCampaign, setCampaign,
     generateId, reset, exportJS, exportJSON, importJSON,
   };

@@ -288,6 +288,91 @@
   padding-right: 0.2rem;
 }
 
+/* ── Sidebar pages (visibility toggle list) ──────────────────── */
+.settings-sidebar-row {
+  display: grid;
+  grid-template-columns: auto 1.6rem 1fr auto auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.5rem 0.7rem;
+  background: rgba(0,0,0,0.15);
+  border: 1px solid rgba(212,184,122,0.1);
+  border-radius: 6px;
+}
+.settings-sidebar-icon { font-size: 1.05rem; text-align: center; }
+.settings-sidebar-label {
+  font-size: 0.92rem;
+  color: var(--text-parchment);
+  transition: color 0.12s, opacity 0.12s;
+}
+.settings-sidebar-label.is-hidden {
+  color: var(--text-muted);
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+.settings-sidebar-open {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid rgba(200,160,64,0.25);
+  border-radius: 4px;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.settings-sidebar-open:hover {
+  color: var(--accent-gold);
+  border-color: var(--accent-gold);
+  background: rgba(200,160,64,0.08);
+}
+
+/* iOS-style switch built around a checkbox */
+.settings-sidebar-toggle {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.settings-sidebar-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+.settings-sidebar-toggle-track {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(212,184,122,0.2);
+  border-radius: 11px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.settings-sidebar-toggle-track::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s;
+}
+.settings-sidebar-toggle input:checked + .settings-sidebar-toggle-track {
+  background: rgba(200,160,64,0.35);
+  border-color: var(--accent-gold);
+}
+.settings-sidebar-toggle input:checked + .settings-sidebar-toggle-track::before {
+  transform: translateX(16px);
+  background: var(--accent-gold);
+}
+.settings-sidebar-toggle input:focus-visible + .settings-sidebar-toggle-track {
+  box-shadow: 0 0 0 2px rgba(200,160,64,0.35);
+}
+
 /* ── Map-view preset groups ─────────────────────────────────── */
 .settings-mapviews-group { margin-bottom: 1.1rem; }
 .settings-mapviews-group-title {

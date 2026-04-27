@@ -207,6 +207,7 @@ window.GlobalSearch = GlobalSearch;
     if (hash !== null && _lastHash !== null && hash === _lastHash) return;
     if (hash !== null) _lastHash = hash;
     await Store.load();
+    Settings.applySidebarVisibility();
     navigate(getRoute());
   }
 
@@ -289,6 +290,10 @@ window.GlobalSearch = GlobalSearch;
   window.addEventListener("DOMContentLoaded", async () => {
     // Load data from server before first render
     await Store.load();
+
+    // Apply user-configured sidebar visibility before first paint so
+    // hidden pages don't flash on screen during boot.
+    Settings.applySidebarVisibility();
 
     // Remove loading screen
     const loading = document.getElementById("loading");
