@@ -708,6 +708,110 @@ app.get('/api/backup', requireAuth, (_req, res) => {
   archive.finalize();
 });
 
+// ── Full data/ restore from upload ────────────────────────────
+// Accepts either:
+//   - a .zip produced by /api/backup (entries under `data/...`)
+//   - a single .json document in the shape Store.exportJSON() emits
+// Always takes a `pre-restore` snapshot first so the operation is
+// undoable from the Záloha tab. Path-traversal-safe: every entry
+// is resolved against DATA_DIR and rejected if it would escape.
+const AdmZip = require('adm-zip');
+const restoreUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 200 * 1024 * 1024 },  // 200 MB hard cap
+});
+
+function _safeJoinDataDir(rel) {
+  // Refuse traversal/absolute paths.
+  if (!rel || rel.startsWith('/') || rel.startsWith('\\') || /(^|[\\/])\.\.([\\/]|$)/.test(rel)) {
+    return null;
+  }
+  const target = path.join(DATA_DIR, rel);
+  // path.resolve normalizes; verify the result is still inside DATA_DIR.
+  const resolved = path.resolve(target);
+  const root     = path.resolve(DATA_DIR);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
+  return resolved;
+}
+
+app.post('/api/restore', requireAuth, restoreUpload.single('backup'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Žádný soubor nepřijat' });
+
+  const filename = String(req.file.originalname || '');
+  const buffer   = req.file.buffer;
+
+  // Detect format: ZIP starts with magic `PK\x03\x04`, JSON typically
+  // with `{` (after optional whitespace).
+  const isZipMagic  = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B
+                                         && buffer[2] === 0x03 && buffer[3] === 0x04;
+  const isZip       = /\.zip$/i.test(filename) || isZipMagic;
+  const looksJson   = !isZip && (/\.json$/i.test(filename)
+                       || /^\s*[\{\[]/.test(buffer.toString('utf8', 0, Math.min(64, buffer.length))));
+
+  // Pre-restore snapshot — bypass the coalesce window so we always
+  // capture the current state regardless of recent activity.
+  try { _createSnapshot('pre-restore'); }
+  catch (e) { console.warn('[restore] pre-restore snapshot failed:', e.message); }
+
+  if (isZip) {
+    let zip;
+    try { zip = new AdmZip(buffer); }
+    catch (e) { return res.status(400).json({ error: 'Neplatný ZIP soubor' }); }
+
+    const entries  = zip.getEntries();
+    const restored = [];
+    const skipped  = [];
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      // Normalize separators and strip the leading `data/` wrapper that
+      // /api/backup adds. Other zip producers may put files at the root.
+      let name = entry.entryName.replace(/\\/g, '/');
+      if (name.startsWith('data/')) name = name.slice(5);
+      if (!name) continue;
+
+      const target = _safeJoinDataDir(name);
+      if (!target) { skipped.push(name); continue; }
+      try {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, entry.getData());
+        restored.push(name);
+      } catch (e) {
+        console.warn('[restore] failed entry', name, e.message);
+        skipped.push(name);
+      }
+    }
+
+    // Rebuild tile pyramids in the background so map images uploaded
+    // along with the backup get fresh tiles.
+    try { _backgroundTileSweep(); } catch (_) {}
+
+    _broadcastDataChanged();
+    return res.json({ ok: true, format: 'zip', restored: restored.length, skipped: skipped.length });
+  }
+
+  if (looksJson) {
+    let parsed;
+    try { parsed = JSON.parse(buffer.toString('utf8')); }
+    catch (e) { return res.status(400).json({ error: 'Neplatný JSON soubor' }); }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return res.status(400).json({ error: 'Neplatný formát zálohy (očekávám objekt)' });
+    }
+    const restored = [];
+    for (const t of ALL_TYPES) {
+      if (parsed[t] === undefined) continue;
+      _atomicWrite(getFile(t), JSON.stringify(parsed[t], null, 2));
+      restored.push(`${t}.json`);
+    }
+    if (!restored.length) {
+      return res.status(400).json({ error: 'JSON neobsahuje žádnou známou kolekci' });
+    }
+    _broadcastDataChanged();
+    return res.json({ ok: true, format: 'json', restored: restored.length });
+  }
+
+  return res.status(400).json({ error: 'Nepodporovaný formát — očekávám .zip nebo .json' });
+});
+
 app.get('*', (_req, res) => {
   res.sendFile(path.join(WEB_DIR, 'index.html'));
 });

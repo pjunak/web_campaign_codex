@@ -444,6 +444,13 @@ export const Settings = (() => {
         <div class="settings-editor-actions">
           <a class="inline-create-btn" href="/api/backup"
              title="Stáhne ZIP celé složky data/">📥 Stáhnout ZIP</a>
+          <label class="inline-create-btn" style="cursor:pointer"
+             title="Nahraj ZIP ze Stáhnout ZIP nebo JSON exportu pro úplnou obnovu dat">
+            📤 Obnovit ze zálohy…
+            <input type="file" accept=".zip,.json,application/zip,application/json"
+                   style="display:none"
+                   onchange="Settings.uploadRestore(this)">
+          </label>
           <button type="button" class="inline-create-btn"
                   onclick="Settings.createSnapshot()">＋ Vytvořit bod zálohy</button>
           <button type="button" class="inline-create-btn"
@@ -454,7 +461,9 @@ export const Settings = (() => {
         <p class="settings-hint" style="margin-bottom:0.8rem">
           Server automaticky vytvoří bod zálohy při každé úpravě
           (sdružuje změny do 60 s). Udržuje posledních 50 bodů plus
-          jeden denní po dobu 14 dnů.
+          jeden denní po dobu 14 dnů. Obnovit můžeš libovolný bod níže
+          nebo nahrát celý ZIP / JSON přes <em>Obnovit ze zálohy…</em>
+          výše — před nahrazením se vždy vytvoří bezpečnostní bod.
         </p>
         <div class="settings-revert-row">
           <label class="settings-field" style="margin-right:0.6rem">
@@ -566,6 +575,32 @@ export const Settings = (() => {
       .catch(e => _flash(e?.error || 'Vrácení změn selhalo', false));
   }
 
+  // Restore from an uploaded ZIP (full data/ tree from /api/backup)
+  // or a JSON document in the shape Store.exportJSON() produces.
+  // The server takes a pre-restore snapshot internally so the user
+  // can roll back even if they pick the wrong file.
+  function uploadRestore(input) {
+    const file = input?.files?.[0];
+    if (!file) return;
+    if (!confirm(`Obnovit data ze souboru "${file.name}"?\n\nAktuální data budou přepsána. Před obnovou se automaticky vytvoří bezpečnostní bod zálohy, takže akci lze vrátit zpět.`)) {
+      input.value = '';
+      return;
+    }
+    const fd = new FormData();
+    fd.append('backup', file);
+    _flash('Nahrávám a obnovuji…');
+    fetch('/api/restore', { method: 'POST', body: fd, credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e)))
+      .then(j => {
+        const fmt = j.format === 'zip' ? 'ZIP' : 'JSON';
+        _flash(`Obnoveno z ${fmt} (${j.restored} souborů) ✓`);
+        // Refresh local store + snapshot list to reflect the new state.
+        Store.load().then(() => _loadSnapshots().then(render));
+      })
+      .catch(e => _flash(e?.error || 'Obnova selhala', false))
+      .finally(() => { if (input) input.value = ''; });
+  }
+
   // ── Delete-with-usage modal ──────────────────────────────────
   function _openDeleteModal(id, item, usages) {
     const cat = _activeCat;
@@ -665,6 +700,6 @@ export const Settings = (() => {
     uploadWorldMap,
     renameMapView, deleteMapView,
     refreshSnapshots, createSnapshot, restoreSnapshot,
-    deleteSnapshot, revertLastN,
+    deleteSnapshot, revertLastN, uploadRestore,
   };
 })();
