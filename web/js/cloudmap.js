@@ -722,7 +722,8 @@ export const CloudMap = (() => {
     COLLISION_KICK: 0.42,   // impulse magnitude on overlap (per overlap unit)
     PADDING:        14,     // collision bbox padding around each node
     MAX_VEL:        45,     // hard cap to keep things stable
-    GRAVITY:        0.0006, // weak pull toward viewport centre during autolayout
+    GRAVITY:        0.0040, // pull toward viewport centre during autolayout
+                            // (strong enough to keep disconnected components from drifting)
     ENERGY_SLEEP:   0.05,   // total KE per node to allow the loop to sleep
     AUTOLAYOUT_MS:  3500,   // how long the FR cooldown takes
   };
@@ -912,7 +913,13 @@ export const CloudMap = (() => {
         { selector: '.cm-filter-hidden', style: { opacity: 0, 'events': 'no' } },
       ],
       layout,
-      minZoom: 0.18,
+      // minZoom floor at 0.45 keeps card text from shrinking below
+      // ~6px effective on screen. Cards use HTML rendering scaled by
+      // a CSS transform, so further zoom-out doesn't re-render text
+      // at a smaller native size — it just down-samples it into mush.
+      // If you ever need to see "the whole graph" at once, use
+      // CloudMap.runAutoLayout() instead, which fits to viewport.
+      minZoom: 0.45,
       maxZoom: 3,
       userZoomingEnabled:  true,
       userPanningEnabled:  true,
@@ -1223,7 +1230,11 @@ export const CloudMap = (() => {
       const targetCPy = midY + ( udx) * perpAmt;
 
       // Stash the target on the CP record so the integrator springs
-      // toward it next frame. Initialize the CP if first sight.
+      // toward it next frame. Initialize lazily if first sight, and
+      // snap to target whenever the integrator is asleep — that way
+      // the at-rest curve always matches the freshly-computed target
+      // even when nothing has driven physics yet (initial render,
+      // mid-layout-animation Cytoscape redraws, after settle, etc.).
       let cp = _phys.edgeCP.get(eid);
       if (!cp) {
         cp = { x: targetCPx, y: targetCPy, vx: 0, vy: 0, tx: targetCPx, ty: targetCPy };
@@ -1231,12 +1242,12 @@ export const CloudMap = (() => {
       } else {
         cp.tx = targetCPx;
         cp.ty = targetCPy;
+        if (!_phys.raf) {
+          // Asleep → render the at-rest position, no rope lag
+          cp.x = targetCPx; cp.y = targetCPy;
+          cp.vx = 0; cp.vy = 0;
+        }
       }
-
-      // Curve midpoint (B(0.5) of quadratic Bézier through srcRaw/cp/tgtRaw)
-      // = ¼·P0 + ½·P1 + ¼·P2 = midStraight + (CP − midStraight) · 0.5
-      const labelX = midX + (cp.x - midX) * 0.5;
-      const labelY = midY + (cp.y - midY) * 0.5;
 
       // Mirror Cytoscape faded/highlighted opacity on SVG paths + label
       const isFaded = edge.hasClass('faded');
@@ -1247,14 +1258,28 @@ export const CloudMap = (() => {
       path1.setAttribute('visibility', 'visible');
       path2.setAttribute('visibility', 'visible');
 
-      // Per-segment CPs sit half-way between the segment's endpoints
-      // and get displaced toward the global edge CP so both segments
-      // share a single smooth bow.
-      const cpDx = cp.x - midX;
-      const cpDy = cp.y - midY;
+      // The full edge curve is one quadratic Bézier through (srcExit,
+      // cp, tgtEntry). We render the visible part as TWO sub-curves
+      // with a parametric gap around t=0.5 so the label can sit in
+      // the middle. Sub-curves are mathematically halves of the same
+      // parent curve (de Casteljau / blossom split) — no extra arc
+      // gets injected per segment, which is what was causing the
+      // "double-bow" overbend.
+      //
+      // For a quadratic with control polygon (P0, P1, P2), the
+      // sub-curve from t=u to t=v has control polygon
+      //   Q0 = B(u)
+      //   Q1 = (1-u)(1-v)·P0 + ((1-u)v + u(1-v))·P1 + uv·P2
+      //   Q2 = B(v)
+      // For sub1 (u=0, v=t1):  Q1 = (1-t1)·P0 + t1·P1 = src·(1-t1) + cp·t1
+      // For sub2 (u=t2, v=1):  Q1 = (1-t2)·P1 + t2·P2 = cp·(1-t2) + tgt·t2
+
+      // Curve midpoint (B(0.5)) is where the label sits along the curve.
+      const labelX = 0.25 * srcExit.x + 0.5 * cp.x + 0.25 * tgtEntry.x;
+      const labelY = 0.25 * srcExit.y + 0.5 * cp.y + 0.25 * tgtEntry.y;
 
       if (label && visLen > 50) {
-        // ── Labelled curve: two Bézier segments with gap at midpoint ──
+        // ── Labelled curve ──
         const labelW = Math.max(36, visLen - 20);
         div.style.width = labelW + 'px';
 
@@ -1265,29 +1290,32 @@ export const CloudMap = (() => {
           maxLineW = Math.max(maxLineW, _ctx.measureText(ln).width);
         }
         const gapHalfLen = Math.min(maxLineW / 2 + LABEL_GAP_PAD, visLen / 2 - 4);
+        // Convert visual gap (chord-length px) to a parameter offset
+        // around t=0.5. For shallow bows this is a near-perfect
+        // approximation since ds/dt ≈ chord length at t=0.5.
+        const halfT = Math.min(0.45, gapHalfLen / Math.max(1, visLen));
+        const t1 = 0.5 - halfT;
+        const t2 = 0.5 + halfT;
 
-        // Gap end-points along the chord, anchored at the curve's label
-        // midpoint so the label sits centred on the visible curve too.
-        const gapStart = { x: labelX - udx * gapHalfLen, y: labelY - udy * gapHalfLen };
-        const gapEnd   = { x: labelX + udx * gapHalfLen, y: labelY + udy * gapHalfLen };
-
-        // Segment 1: srcExit → gapStart, control at seg-mid + ½·CP-offset
-        const seg1MidX = (srcExit.x + gapStart.x) / 2;
-        const seg1MidY = (srcExit.y + gapStart.y) / 2;
-        const c1x = seg1MidX + cpDx * 0.5;
-        const c1y = seg1MidY + cpDy * 0.5;
+        // Sub-curve 1: t ∈ [0, t1]
+        const u1 = 1 - t1;
+        const sub1Q1x = u1 * srcExit.x + t1 * cp.x;
+        const sub1Q1y = u1 * srcExit.y + t1 * cp.y;
+        const sub1Q2x = u1 * u1 * srcExit.x + 2 * u1 * t1 * cp.x + t1 * t1 * tgtEntry.x;
+        const sub1Q2y = u1 * u1 * srcExit.y + 2 * u1 * t1 * cp.y + t1 * t1 * tgtEntry.y;
         path1.setAttribute('d',
-          `M ${srcExit.x} ${srcExit.y} Q ${c1x} ${c1y} ${gapStart.x} ${gapStart.y}`);
+          `M ${srcExit.x} ${srcExit.y} Q ${sub1Q1x} ${sub1Q1y} ${sub1Q2x} ${sub1Q2y}`);
         path1.setAttribute('marker-start', `url(#${markerId}-circ)`);
         path1.removeAttribute('marker-end');
 
-        // Segment 2: gapEnd → tgtEntry
-        const seg2MidX = (gapEnd.x + tgtEntry.x) / 2;
-        const seg2MidY = (gapEnd.y + tgtEntry.y) / 2;
-        const c2x = seg2MidX + cpDx * 0.5;
-        const c2y = seg2MidY + cpDy * 0.5;
+        // Sub-curve 2: t ∈ [t2, 1]
+        const u2 = 1 - t2;
+        const sub2Q0x = u2 * u2 * srcExit.x + 2 * u2 * t2 * cp.x + t2 * t2 * tgtEntry.x;
+        const sub2Q0y = u2 * u2 * srcExit.y + 2 * u2 * t2 * cp.y + t2 * t2 * tgtEntry.y;
+        const sub2Q1x = u2 * cp.x + t2 * tgtEntry.x;
+        const sub2Q1y = u2 * cp.y + t2 * tgtEntry.y;
         path2.setAttribute('d',
-          `M ${gapEnd.x} ${gapEnd.y} Q ${c2x} ${c2y} ${tgtEntry.x} ${tgtEntry.y}`);
+          `M ${sub2Q0x} ${sub2Q0y} Q ${sub2Q1x} ${sub2Q1y} ${tgtEntry.x} ${tgtEntry.y}`);
         path2.removeAttribute('marker-start');
         path2.setAttribute('marker-end', `url(#${markerId}-tri)`);
 
@@ -1665,10 +1693,22 @@ export const CloudMap = (() => {
 
     _physSnapshotForUndo();
 
-    const cont = _cy.container();
-    const area = (cont.clientWidth || 1200) * (cont.clientHeight || 800);
-    _phys.k = Math.max(60, Math.sqrt(area / N) * 0.85);
-    _phys.temp = _phys.k * 1.1;
+    // Derive the FR optimal distance `k` from the cards' actual sizes
+    // rather than the viewport area. With area-based k, large viewports
+    // pushed nodes very far apart and disconnected components flew off
+    // screen. Card-based k means edges settle at distances proportional
+    // to the things they connect — typical card is 168×~130, so k ≈ 210
+    // gives roughly one card-width of breathing room between connected
+    // cards.
+    let totalSize = 0;
+    nodes.forEach(n => { totalSize += (n.data('w') + n.data('h')) / 2; });
+    const avgNodeSize = totalSize / N;
+    _phys.k = Math.max(140, avgNodeSize * 1.4);
+
+    // Initial temperature: half of k, so each frame the largest possible
+    // displacement is ~k/2 (about a card-width). Plenty for FR to
+    // converge over 3.5 s without anything launching off-screen.
+    _phys.temp = _phys.k * 0.5;
     _phys.mode = 'autolayout';
     _phys.layoutEnd = performance.now() + PHYS_K.AUTOLAYOUT_MS;
     _phys.draggedId = null;
@@ -1695,6 +1735,10 @@ export const CloudMap = (() => {
     });
     _savePositions();
     _updateLayoutBtnStates();
+    // Re-fit the viewport so the freshly-arranged graph is centred
+    // and sized to fill the available area. Without this the user
+    // often had to manually pan/zoom to find their cards after a run.
+    if (_cy && _cy.nodes().nonempty()) _cy.animate({ fit: { padding: 80 } }, { duration: 450, easing: 'ease-out-cubic' });
   }
 
   function _physSnapshotForUndo() {
@@ -1990,21 +2034,17 @@ export const CloudMap = (() => {
         }
 
         // Seed the physics integrator: each node's saved position
-        // becomes its rest equilibrium, each edge gets a CP at the
-        // current geometric midpoint so the first elastic interaction
-        // doesn't snap from an arbitrary starting point.
+        // becomes its rest equilibrium. Edge CPs are NOT seeded here
+        // — _syncEdgeLabels creates them lazily at the correct
+        // parallel-fan target on first sync, and snaps them to that
+        // target whenever the integrator is asleep. Pre-seeding from
+        // an arbitrary mid-layout-animation position used to leave
+        // every line bowed out of place after refresh.
         _cy.nodes().forEach(node => {
           const id = node.id();
           const p  = node.position();
           _phys.nodeRest.set(id, { x: p.x, y: p.y });
           _phys.nodeVel.set(id, { vx: 0, vy: 0 });
-        });
-        _cy.edges().forEach(edge => {
-          const sp = edge.source().position(), tp = edge.target().position();
-          _phys.edgeCP.set(edge.id(), {
-            x: (sp.x + tp.x) / 2, y: (sp.y + tp.y) / 2,
-            vx: 0, vy: 0, tx: null, ty: null,
-          });
         });
         _updateLayoutBtnStates();
         // Positions are saved manually via the "Uložit pozice" button in edit mode
