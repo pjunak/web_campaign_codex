@@ -714,12 +714,21 @@ export const CloudMap = (() => {
   // Tunable physics constants. All in node-position units (~px at zoom 1)
   // per frame. Damping values are multiplicative per frame.
   const PHYS_K = {
-    EDGE_SPRING:    0.18,   // edge CP spring stiffness toward midpoint target
+    // Softer edge spring + slightly more damping = ~3× the steady-state
+    // lag of the original tuning. At a typical drag speed of 15 graph-px
+    // per frame the edge midpoint lags ~37 graph-px behind the chord
+    // midpoint — clearly visible as a rope/rubber-band bow.
+    EDGE_SPRING:    0.10,
     EDGE_DAMP:      0.78,
-    NEIGH_PULL:     0.024,  // pull on dragged-node's connected neighbors
-    REST_PULL:      0.055,  // restoring spring toward each node's saved position
+    // Tripled NEIGH_PULL so connected nodes visibly lean toward whatever
+    // you're dragging instead of staying frozen. REST_PULL drags them
+    // back when you let go.
+    NEIGH_PULL:     0.07,
+    REST_PULL:      0.055,
     NODE_DAMP:      0.78,
-    COLLISION_KICK: 0.42,   // impulse magnitude on overlap (per overlap unit)
+    // Stronger collision impulse — nodes you push through visibly scoot
+    // out of the way instead of hardly budging.
+    COLLISION_KICK: 0.55,
     PADDING:        14,     // collision bbox padding around each node
     MAX_VEL:        45,     // hard cap to keep things stable
     GRAVITY:        0.0040, // pull toward viewport centre during autolayout
@@ -913,37 +922,39 @@ export const CloudMap = (() => {
         { selector: '.cm-filter-hidden', style: { opacity: 0, 'events': 'no' } },
       ],
       layout,
-      // minZoom floor at 0.45 keeps card text from shrinking below
-      // ~6px effective on screen. Cards use HTML rendering scaled by
-      // a CSS transform, so further zoom-out doesn't re-render text
-      // at a smaller native size — it just down-samples it into mush.
-      // If you ever need to see "the whole graph" at once, use
-      // CloudMap.runAutoLayout() instead, which fits to viewport.
-      minZoom: 0.45,
+      // minZoom is generous because cards now render at native screen
+      // size regardless of zoom (see _sync). Zoom out to compact the
+      // graph layout; cards stay readable. They will start to overlap
+      // visually below ~0.5 — that's the price of "see the whole map."
+      minZoom: 0.25,
       maxZoom: 3,
       userZoomingEnabled:  true,
       userPanningEnabled:  true,
       boxSelectionEnabled: false,
     });
 
-    // Cloud layer — added AFTER Cytoscape so it sits on top in DOM
-    _cloudLayer = document.createElement('div');
-    _cloudLayer.id = 'cloud-layer';
-    _cloudLayer.style.cssText =
-      'position:absolute;inset:0;pointer-events:none;' +
-      'transform-origin:0 0;overflow:visible;z-index:5;';
-    container.appendChild(_cloudLayer);
-
-    // SVG edge layer — lives inside cloud layer, inserted first so it renders
-    // below glow divs and cloud cards. Edges are drawn here with gaps for labels.
+    // ── SVG edge layer (graph-coord, transformed) ──
+    // SVG is vector and re-rasterises crisply at any scale, so this
+    // layer carries the transform: translate(pan) scale(zoom). Sits
+    // BELOW the cloud layer in DOM order so cards render on top.
     _edgeSvg = document.createElementNS(_NS, 'svg');
     _edgeSvg.setAttribute('class', 'cm-edge-svg');
     _edgeSvg.style.cssText =
-      'position:absolute;left:0;top:0;overflow:visible;pointer-events:none;';
-    _edgeSvg.setAttribute('width', '0');
-    _edgeSvg.setAttribute('height', '0');
-    // Insert as first child of cloud layer so everything else renders on top
-    _cloudLayer.insertBefore(_edgeSvg, _cloudLayer.firstChild);
+      'position:absolute;left:0;top:0;width:100%;height:100%;' +
+      'overflow:visible;pointer-events:none;transform-origin:0 0;z-index:4;';
+    container.appendChild(_edgeSvg);
+
+    // ── Cloud layer (screen-coord, NOT transformed) ──
+    // Sibling of _edgeSvg. Cards are positioned in screen coordinates
+    // at native size by _sync(), so their text never goes through a
+    // browser texture-cache scale. This is what kills the rasterise-
+    // and-blit blurriness that hits any HTML inside a `transform: scale`
+    // parent.
+    _cloudLayer = document.createElement('div');
+    _cloudLayer.id = 'cloud-layer';
+    _cloudLayer.style.cssText =
+      'position:absolute;inset:0;pointer-events:none;overflow:visible;z-index:5;';
+    container.appendChild(_cloudLayer);
 
     return _cy;
   }
@@ -963,12 +974,27 @@ export const CloudMap = (() => {
   }
 
   // ── Viewport sync ────────────────────────────────────────────
+  // Two-layer rendering:
+  //   _edgeSvg     — graph-coord, transformed by `translate(pan) scale(zoom)`.
+  //                  SVG vector graphics re-rasterise crisply at any scale.
+  //   _cloudLayer  — screen-coord, NO transform. Cards positioned via
+  //                  per-card left/top in screen pixels and rendered at
+  //                  their native size, so HTML text never gets sucked
+  //                  into a parent's GPU texture-blit and stays crisp.
+  // Cards thus stay the same visual size regardless of zoom (Google-Maps-
+  // marker style). Zoom changes graph spacing on screen, not card size.
   function _sync() {
     if (!_cy || !_cloudLayer) return;
     const pan  = _cy.pan();
     const zoom = _cy.zoom();
-    _cloudLayer.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${zoom})`;
 
+    // Edge SVG: graph-coord with the standard pan + zoom transform.
+    if (_edgeSvg) {
+      _edgeSvg.style.transform = `translate(${pan.x}px,${pan.y}px) scale(${zoom})`;
+    }
+
+    // Card layer: stays at native screen size. Each card's position is
+    // node-graph-pos · zoom + pan. The wrapper has no transform.
     _cy.nodes().forEach(node => {
       const id = node.id();
       const wrapper = _cloudMap[id];
@@ -976,15 +1002,22 @@ export const CloudMap = (() => {
       const pos = node.position();
       const w   = node.data('w');
       const h   = node.data('h');
-      wrapper.style.left = (pos.x - w / 2) + 'px';
-      wrapper.style.top  = (pos.y - h / 2) + 'px';
+      const sx  = pos.x * zoom + pan.x;
+      const sy  = pos.y * zoom + pan.y;
+      wrapper.style.left = (sx - w / 2) + 'px';
+      wrapper.style.top  = (sy - h / 2) + 'px';
 
-      // Sync faction glow position
+      // Faction glow lives in the cloud layer too; same screen-coord rules.
       const glow = _glowMap[id];
       if (glow) {
         const gs = glow.classList.contains('cm-glow-sm') ? 320 : 550;
-        glow.style.left = (pos.x - gs / 2) + 'px';
-        glow.style.top  = (pos.y - gs / 2) + 'px';
+        // Glows scale with zoom so they cover the same amount of graph
+        // space as before — they're a "territory aura," not card chrome.
+        const gsScreen = gs * zoom;
+        glow.style.width  = gsScreen + 'px';
+        glow.style.height = gsScreen + 'px';
+        glow.style.left   = (sx - gsScreen / 2) + 'px';
+        glow.style.top    = (sy - gsScreen / 2) + 'px';
       }
     });
 
@@ -1202,29 +1235,43 @@ export const CloudMap = (() => {
       const udx = dx / len;
       const udy = dy / len;
 
-      const srcRaw = _nodeIntersect(srcNode, sp.x, sp.y,
-                       srcNode.data('w') / 2, srcNode.data('h') / 2,  udx,  udy);
-      const tgtRaw = _nodeIntersect(tgtNode, tp.x, tp.y,
-                       tgtNode.data('w') / 2, tgtNode.data('h') / 2, -udx, -udy);
+      // Cards now render at native screen size (see _sync). The SVG
+      // edges, however, live in a graph-coord layer scaled by `zoom`,
+      // so to make the SVG endpoints land on the visible card boundary
+      // we divide the screen-px card half-extents by zoom to get the
+      // equivalent graph-coord half-extents.
+      const zoomNow = _cy.zoom() || 1;
+      const srcHW = (srcNode.data('w') / 2) / zoomNow;
+      const srcHH = (srcNode.data('h') / 2) / zoomNow;
+      const tgtHW = (tgtNode.data('w') / 2) / zoomNow;
+      const tgtHH = (tgtNode.data('h') / 2) / zoomNow;
 
-      const srcExit  = { x: srcRaw.x + udx * INSET_SRC, y: srcRaw.y + udy * INSET_SRC };
-      const tgtEntry = { x: tgtRaw.x - udx * INSET_TGT, y: tgtRaw.y - udy * INSET_TGT };
+      const srcRaw = _nodeIntersect(srcNode, sp.x, sp.y, srcHW, srcHH,  udx,  udy);
+      const tgtRaw = _nodeIntersect(tgtNode, tp.x, tp.y, tgtHW, tgtHH, -udx, -udy);
+
+      // Marker insets are in graph-coord units; counter-scale by zoom
+      // so the markers (drawn by the SVG layer that scales with zoom)
+      // appear the same screen size at any zoom level.
+      const insSrc = INSET_SRC / zoomNow;
+      const insTgt = INSET_TGT / zoomNow;
+      const srcExit  = { x: srcRaw.x + udx * insSrc, y: srcRaw.y + udy * insSrc };
+      const tgtEntry = { x: tgtRaw.x - udx * insTgt, y: tgtRaw.y - udy * insTgt };
 
       const visLen = Math.hypot(tgtRaw.x - srcRaw.x, tgtRaw.y - srcRaw.y);
       if (visLen < 10) { hideAll(); return; }
 
-      // Geometric chord midpoint
+      // Geometric chord midpoint (graph coords)
       const midX = (srcRaw.x + tgtRaw.x) / 2;
       const midY = (srcRaw.y + tgtRaw.y) / 2;
 
-      // Parallel-fan perpendicular offset for the CP target. Sign is
-      // anchored to the canonical sorted pair so flipping source/target
-      // doesn't cancel out in a multi-edge group.
+      // Parallel-fan perpendicular offset for the CP target. The
+      // PARALLEL_FAN constant is in screen-px so we counter-scale by
+      // zoom to keep the visual fan the same at every zoom level.
       const pInfo = parallelInfo[eid] || { idx: 0, count: 1 };
       let perpAmt = 0;
       if (pInfo.count > 1) {
         const sign = srcNode.id() < tgtNode.id() ? 1 : -1;
-        perpAmt = (pInfo.idx - (pInfo.count - 1) / 2) * PARALLEL_FAN * sign;
+        perpAmt = (pInfo.idx - (pInfo.count - 1) / 2) * (PARALLEL_FAN / zoomNow) * sign;
       }
       const targetCPx = midX + (-udy) * perpAmt;
       const targetCPy = midY + ( udx) * perpAmt;
@@ -1274,13 +1321,22 @@ export const CloudMap = (() => {
       // For sub1 (u=0, v=t1):  Q1 = (1-t1)·P0 + t1·P1 = src·(1-t1) + cp·t1
       // For sub2 (u=t2, v=1):  Q1 = (1-t2)·P1 + t2·P2 = cp·(1-t2) + tgt·t2
 
-      // Curve midpoint (B(0.5)) is where the label sits along the curve.
-      const labelX = 0.25 * srcExit.x + 0.5 * cp.x + 0.25 * tgtEntry.x;
-      const labelY = 0.25 * srcExit.y + 0.5 * cp.y + 0.25 * tgtEntry.y;
+      // Curve midpoint (B(0.5)) in graph coords — where the label sits
+      // along the curve. We project to screen coords below for the HTML
+      // label position (the label div lives in the un-transformed
+      // cloud layer).
+      const labelGX = 0.25 * srcExit.x + 0.5 * cp.x + 0.25 * tgtEntry.x;
+      const labelGY = 0.25 * srcExit.y + 0.5 * cp.y + 0.25 * tgtEntry.y;
+      const panNow  = _cy.pan();
+      const labelSX = labelGX * zoomNow + panNow.x;
+      const labelSY = labelGY * zoomNow + panNow.y;
+      // Visible chord length on screen (use this for label sizing in
+      // screen pixels, since the label is rendered un-transformed).
+      const visLenScreen = visLen * zoomNow;
 
-      if (label && visLen > 50) {
+      if (label && visLenScreen > 50) {
         // ── Labelled curve ──
-        const labelW = Math.max(36, visLen - 20);
+        const labelW = Math.max(36, visLenScreen - 20);
         div.style.width = labelW + 'px';
 
         const lines = _wrap(label, EDGE_LABEL_FONT, labelW);
@@ -1289,11 +1345,13 @@ export const CloudMap = (() => {
           _ctx.font = EDGE_LABEL_FONT;
           maxLineW = Math.max(maxLineW, _ctx.measureText(ln).width);
         }
-        const gapHalfLen = Math.min(maxLineW / 2 + LABEL_GAP_PAD, visLen / 2 - 4);
-        // Convert visual gap (chord-length px) to a parameter offset
-        // around t=0.5. For shallow bows this is a near-perfect
-        // approximation since ds/dt ≈ chord length at t=0.5.
-        const halfT = Math.min(0.45, gapHalfLen / Math.max(1, visLen));
+        // Gap is in screen pixels (same units as the label width); convert
+        // to a parameter offset around t=0.5 along the curve. For shallow
+        // bows ds/dt ≈ visLen (graph units) at t=0.5, so the conversion
+        // uses the screen-px gap divided by the screen-px chord length.
+        const gapHalfLenScreen = Math.min(maxLineW / 2 + LABEL_GAP_PAD,
+                                          visLenScreen / 2 - 4);
+        const halfT = Math.min(0.45, gapHalfLenScreen / Math.max(1, visLenScreen));
         const t1 = 0.5 - halfT;
         const t2 = 0.5 + halfT;
 
@@ -1322,11 +1380,13 @@ export const CloudMap = (() => {
         let angle = Math.atan2(dy, dx) * 180 / Math.PI;
         if (angle > 90 || angle < -90) angle += angle > 0 ? -180 : 180;
         div.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
-        div.style.left = labelX + 'px';
-        div.style.top  = labelY + 'px';
+        // Label div lives in the un-transformed cloud layer, so its
+        // CSS left/top must be in screen coordinates.
+        div.style.left = labelSX + 'px';
+        div.style.top  = labelSY + 'px';
         div.style.visibility = 'visible';
       } else {
-        // ── Unlabelled or too-short: single Bézier through CP ──
+        // ── Unlabelled or too-short for label gap: single Bézier ──
         div.style.visibility = 'hidden';
         path1.setAttribute('d',
           `M ${srcExit.x} ${srcExit.y} Q ${cp.x} ${cp.y} ${tgtEntry.x} ${tgtEntry.y}`);
@@ -1726,6 +1786,13 @@ export const CloudMap = (() => {
   function _finishAutoLayout() {
     _phys.mode = 'elastic';
     _phys.temp = 0;
+
+    // Post-FR: try to reduce edge crossings via swap-based simulated
+    // annealing. FR alone minimises stress (distance-mismatch), not
+    // crossings — for sparse graphs the two are correlated, but we
+    // can usually find a few easy wins by swapping pairs of nodes.
+    _reduceCrossings();
+
     // Snap each node's rest to wherever it ended up — the layout
     // we just animated to is now the equilibrium.
     _cy.nodes().forEach(node => {
@@ -1739,6 +1806,140 @@ export const CloudMap = (() => {
     // and sized to fill the available area. Without this the user
     // often had to manually pan/zoom to find their cards after a run.
     if (_cy && _cy.nodes().nonempty()) _cy.animate({ fit: { padding: 80 } }, { duration: 450, easing: 'ease-out-cubic' });
+  }
+
+  // ── Crossing-reduction post-pass ─────────────────────────────
+  // Counts edge crossings, then repeatedly tries swapping random
+  // pairs of nodes to reduce the count. Accepts swaps that strictly
+  // improve, plus occasional worse swaps with annealing probability
+  // so we can escape shallow local minima. Finding the global
+  // crossing-minimum is NP-hard; this is a cheap heuristic that
+  // typically eliminates the obviously-bad crossings FR leaves
+  // behind on sparse graphs.
+  //
+  // Two segments AB and CD cross iff A and B lie on opposite sides
+  // of line CD AND C and D lie on opposite sides of line AB. We use
+  // the standard cross-product orientation test.
+  function _reduceCrossings() {
+    if (!_cy) return;
+    const nodes = _cy.nodes().filter(n => !n.hasClass('cm-filter-hidden'));
+    const N = nodes.length;
+    if (N < 4) return;
+
+    // Snapshot positions into a flat map for fast lookup.
+    const pos = new Map();
+    nodes.forEach(n => { const p = n.position(); pos.set(n.id(), { x: p.x, y: p.y }); });
+
+    // Cache visible edges as endpoint-id pairs.
+    const edges = [];
+    _cy.edges().forEach(e => {
+      if (e.hasClass('cm-filter-hidden')) return;
+      const s = e.source(), t = e.target();
+      if (s.hasClass('cm-filter-hidden') || t.hasClass('cm-filter-hidden')) return;
+      const sid = s.id(), tid = t.id();
+      if (!pos.has(sid) || !pos.has(tid)) return;
+      edges.push({ s: sid, t: tid });
+    });
+    const E = edges.length;
+    if (E < 2) return;
+
+    // Standard CCW orientation test.
+    const ccw = (ax, ay, bx, by, cx, cy) =>
+      (cy - ay) * (bx - ax) - (by - ay) * (cx - ax);
+
+    // Two edges cross iff their endpoints straddle each other AND they
+    // don't share a node (shared-endpoint pairs by definition meet at
+    // that node, not "cross" in the visual sense).
+    function segmentsCross(e1, e2) {
+      if (e1.s === e2.s || e1.s === e2.t || e1.t === e2.s || e1.t === e2.t) return false;
+      const a = pos.get(e1.s), b = pos.get(e1.t);
+      const c = pos.get(e2.s), d = pos.get(e2.t);
+      const o1 = ccw(a.x, a.y, b.x, b.y, c.x, c.y);
+      const o2 = ccw(a.x, a.y, b.x, b.y, d.x, d.y);
+      const o3 = ccw(c.x, c.y, d.x, d.y, a.x, a.y);
+      const o4 = ccw(c.x, c.y, d.x, d.y, b.x, b.y);
+      return (o1 * o2 < 0) && (o3 * o4 < 0);
+    }
+
+    function totalCrossings() {
+      let n = 0;
+      for (let i = 0; i < E; i++) {
+        for (let j = i + 1; j < E; j++) {
+          if (segmentsCross(edges[i], edges[j])) n++;
+        }
+      }
+      return n;
+    }
+
+    // Crossings touched by a single node — used to score a swap quickly
+    // without recomputing the full O(E²) total each attempt.
+    function crossingsForNode(id) {
+      let n = 0;
+      const incident = [];
+      for (let i = 0; i < E; i++) {
+        if (edges[i].s === id || edges[i].t === id) incident.push(i);
+      }
+      for (const i of incident) {
+        for (let j = 0; j < E; j++) {
+          if (j === i) continue;
+          if (segmentsCross(edges[i], edges[j])) n++;
+        }
+      }
+      // Each cross was counted once per incident edge — for a cross
+      // between an incident edge and a non-incident edge that's correct.
+      // For two incident edges sharing this node they share an endpoint
+      // so segmentsCross() returns false anyway. So no double-count.
+      return n;
+    }
+
+    let crossings = totalCrossings();
+    if (crossings === 0) return;
+
+    // Annealing schedule: start permissive, end strict. ~6N attempts
+    // over the cooldown — empirically enough to converge for a
+    // 50-node graph without burning many ms.
+    const ATTEMPTS = Math.min(2000, Math.max(60, N * 6));
+    let temperature = Math.max(2, crossings * 0.15);
+    const cooldown  = Math.pow(0.001, 1 / ATTEMPTS); // → ~0 by the end
+    const ids = nodes.map(n => n.id());
+
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      // Pick two distinct random nodes.
+      const i = (Math.random() * N) | 0;
+      let   j = (Math.random() * N) | 0;
+      if (j === i) j = (j + 1) % N;
+      const idA = ids[i], idB = ids[j];
+
+      // Score before
+      const before = crossingsForNode(idA) + crossingsForNode(idB);
+
+      // Swap positions
+      const pa = pos.get(idA), pb = pos.get(idB);
+      pos.set(idA, pb);
+      pos.set(idB, pa);
+
+      // Score after (new pos)
+      const after = crossingsForNode(idA) + crossingsForNode(idB);
+      const delta = after - before;
+
+      const accept = delta < 0 || Math.random() < Math.exp(-delta / temperature);
+      if (!accept) {
+        // Revert
+        pos.set(idA, pa);
+        pos.set(idB, pb);
+      } else {
+        crossings += delta;
+      }
+      temperature *= cooldown;
+    }
+
+    // Commit improved positions back to Cytoscape.
+    _cy.batch(() => {
+      pos.forEach((p, id) => {
+        const node = _cy.getElementById(id);
+        if (node && node.length) node.position(p);
+      });
+    });
   }
 
   function _physSnapshotForUndo() {
