@@ -688,18 +688,59 @@ export const CloudMap = (() => {
   let _edgeLabels  = {}; // edgeId → {div, label, svgEls}
   let _glowMap     = {}; // 'hub_fId' → glow div
 
-  // Inertia tracking
-  let _prevPos    = {}; // nodeId → {x,y} at previous drag event
-  let _vel        = {}; // nodeId → {vx,vy} in px/frame units
-  let _inertiaRaf = {}; // nodeId → rAF id
+  // ── Physics integrator state ─────────────────────────────────
+  // A single rAF loop drives every kind of motion in the mind map:
+  //   • elastic mode (default) — rope physics on edges, spring tension
+  //     between connected nodes during a drag, collision impulses,
+  //     post-release coast to saved rest positions.
+  //   • autolayout mode — Fruchterman-Reingold force field with
+  //     temperature-cooled displacement, animated over ~3 s.
+  // The loop sleeps when total kinetic energy drops below
+  // PHYS_K.ENERGY_SLEEP and wakes on drag, autolayout, or filter
+  // changes that displace edges.
+  const _phys = {
+    raf:        null,           // active rAF id; null = sleeping
+    mode:       'elastic',      // 'elastic' | 'autolayout'
+    draggedId:  null,           // node currently held by the user
+    layoutEnd:  0,              // performance.now() target end of autolayout
+    temp:       0,              // FR temperature (max per-step displacement)
+    k:          80,             // FR optimal node distance (set by _runAutoLayout)
+    nodeVel:    new Map(),      // nodeId → { vx, vy }
+    nodeRest:   new Map(),      // nodeId → { x, y } target equilibrium
+    edgeCP:     new Map(),      // edgeId → { x, y, vx, vy, tx, ty } control point
+    history:    [],             // [Map<id, {x,y}>] undo stack, max 5 entries
+  };
 
-  function _killInertia(id) {
-    if (_inertiaRaf[id]) { cancelAnimationFrame(_inertiaRaf[id]); delete _inertiaRaf[id]; }
+  // Tunable physics constants. All in node-position units (~px at zoom 1)
+  // per frame. Damping values are multiplicative per frame.
+  const PHYS_K = {
+    EDGE_SPRING:    0.18,   // edge CP spring stiffness toward midpoint target
+    EDGE_DAMP:      0.78,
+    NEIGH_PULL:     0.024,  // pull on dragged-node's connected neighbors
+    REST_PULL:      0.055,  // restoring spring toward each node's saved position
+    NODE_DAMP:      0.78,
+    COLLISION_KICK: 0.42,   // impulse magnitude on overlap (per overlap unit)
+    PADDING:        14,     // collision bbox padding around each node
+    MAX_VEL:        45,     // hard cap to keep things stable
+    GRAVITY:        0.0006, // weak pull toward viewport centre during autolayout
+    ENERGY_SLEEP:   0.05,   // total KE per node to allow the loop to sleep
+    AUTOLAYOUT_MS:  3500,   // how long the FR cooldown takes
+  };
+
+  function _physResetState() {
+    if (_phys.raf) { cancelAnimationFrame(_phys.raf); _phys.raf = null; }
+    _phys.nodeVel.clear();
+    _phys.nodeRest.clear();
+    _phys.edgeCP.clear();
+    _phys.draggedId = null;
+    _phys.mode = 'elastic';
+    _phys.history = [];
+    _phys.temp = 0;
   }
 
   function _destroy() {
     _hideCtxMenu();
-    Object.keys(_inertiaRaf).forEach(_killInertia);
+    _physResetState();
     Object.values(_edgeLabels).forEach(({ div, svgEls }) => {
       if (div) div.remove();
       if (svgEls) svgEls.forEach(el => el.remove());
@@ -710,9 +751,6 @@ export const CloudMap = (() => {
     _cloudMap   = {};
     _edgeLabels = {};
     _glowMap    = {};
-    _prevPos    = {};
-    _vel        = {};
-    _inertiaRaf = {};
   }
 
   // ── UI scaffold ─────────────────────────────────────────────
@@ -745,6 +783,8 @@ export const CloudMap = (() => {
           <a href="#/mapa/frakce"    class="map-mode-btn ${mode==='frakce'    ?'active':''}">Frakce</a>
           <a href="#/mapa/vztahy"    class="map-mode-btn ${mode==='vztahy'    ?'active':''}">Vztahy</a>
           <a href="#/mapa/tajemstvi" class="map-mode-btn ${mode==='tajemstvi' ?'active':''}">Záhady</a>
+          <button class="map-mode-btn cm-save-pos" onclick="CloudMap.runAutoLayout()" title="Animovaně přeuspořádá uzly do matematicky ideálních pozic (Fruchterman–Reingold) — minimalizuje křížení vazeb a drží mapu kompaktní">✨ Auto rozložení</button>
+          <button class="map-mode-btn cm-save-pos cm-undo-layout" onclick="CloudMap.undoLayout()" title="Vrátí poslední automatické přeuspořádání">↶ Zpět rozložení</button>
           <button class="map-mode-btn cm-save-pos" onclick="CloudMap.resetLayout()" title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
           <button class="map-mode-btn cm-save-pos" onclick="CloudMap.savePositions()" title="Uloží aktuální pozice uzlů">💾 Uložit pozice</button>
           <span class="map-hint">Klik = detail · Táhni = pohyb · Scroll = zoom</span>
@@ -1066,19 +1106,22 @@ export const CloudMap = (() => {
       const markerId = 'mk-' + color.replace(/[^a-zA-Z0-9]/g, '');
       _ensureMarkers(color, markerId);
 
-      // Two SVG line segments per edge (line1: src→gap, line2: gap→tgt)
-      const line1 = document.createElementNS(_NS, 'line');
-      const line2 = document.createElementNS(_NS, 'line');
-      const baseStyle = `stroke:${color};stroke-width:${width};opacity:0.82;stroke-linecap:round;`;
-      line1.setAttribute('style', baseStyle);
-      line2.setAttribute('style', baseStyle);
+      // Two SVG path segments per edge (path1: src→gap, path2: gap→tgt).
+      // Paths instead of lines so they can render as quadratic Béziers
+      // driven by the rope-physics control point in _phys.edgeCP.
+      const path1 = document.createElementNS(_NS, 'path');
+      const path2 = document.createElementNS(_NS, 'path');
+      const baseStyle = `stroke:${color};stroke-width:${width};opacity:0.82;` +
+                        `stroke-linecap:round;fill:none;`;
+      path1.setAttribute('style', baseStyle);
+      path2.setAttribute('style', baseStyle);
       const dash = _dashArray(lStyle, width);
       if (dash) {
-        line1.setAttribute('stroke-dasharray', dash);
-        line2.setAttribute('stroke-dasharray', dash);
+        path1.setAttribute('stroke-dasharray', dash);
+        path2.setAttribute('stroke-dasharray', dash);
       }
-      _edgeSvg.appendChild(line1);
-      _edgeSvg.appendChild(line2);
+      _edgeSvg.appendChild(path1);
+      _edgeSvg.appendChild(path2);
 
       // HTML label div
       const div = document.createElement('div');
@@ -1089,7 +1132,7 @@ export const CloudMap = (() => {
       }
       _cloudLayer.appendChild(div);
 
-      _edgeLabels[eid] = { div, label, svgEls: [line1, line2], markerId };
+      _edgeLabels[eid] = { div, label, svgEls: [path1, path2], markerId };
     });
   }
 
@@ -1118,242 +1161,578 @@ export const CloudMap = (() => {
   }
 
   function _syncEdgeLabels() {
-    const PARALLEL_STEP = 18; // px separation between parallel edges
-    const parallelInfo = _buildParallelGroups();
+    // Parallel edges between the same two nodes get a perpendicular CP
+    // offset so they bow apart instead of overlapping. The integrator
+    // uses cp.tx/cp.ty (set below) as the spring target, so the curve
+    // settles to a fan even at rest.
+    const PARALLEL_FAN  = 36;
+    const parallelInfo  = _buildParallelGroups();
 
     Object.entries(_edgeLabels).forEach(([eid, rec]) => {
       const { div, label, svgEls, markerId } = rec;
-      const [line1, line2] = svgEls;
+      const [path1, path2] = svgEls;
       const edge = _cy.getElementById(eid);
 
-      // Hide everything if edge gone or filter-hidden
-      if (!edge || !edge.length || edge.hasClass('cm-filter-hidden')) {
+      const hideAll = () => {
         div.style.visibility = 'hidden';
-        line1.setAttribute('visibility', 'hidden');
-        line2.setAttribute('visibility', 'hidden');
-        return;
-      }
+        path1.setAttribute('visibility', 'hidden');
+        path2.setAttribute('visibility', 'hidden');
+      };
+
+      if (!edge || !edge.length || edge.hasClass('cm-filter-hidden')) { hideAll(); return; }
 
       const srcNode = edge.source();
       const tgtNode = edge.target();
-      // Also hide if either endpoint is filter-hidden
       if (srcNode.hasClass('cm-filter-hidden') || tgtNode.hasClass('cm-filter-hidden')) {
-        div.style.visibility = 'hidden';
-        line1.setAttribute('visibility', 'hidden');
-        line2.setAttribute('visibility', 'hidden');
-        return;
+        hideAll(); return;
       }
 
       const sp = srcNode.position();
       const tp = tgtNode.position();
-
       const dx  = tp.x - sp.x;
       const dy  = tp.y - sp.y;
       const len = Math.hypot(dx, dy) || 1;
       const udx = dx / len;
       const udy = dy / len;
 
-      // Perpendicular offset for parallel edges between the same two nodes.
-      // Direction is based on the sorted pair key, so flipping source/target
-      // across edges in the same group still produces consistent fan-out.
-      const pInfo = parallelInfo[eid] || { idx: 0, count: 1 };
-      let pOff = 0;
-      if (pInfo.count > 1) {
-        const base = (pInfo.idx - (pInfo.count - 1) / 2) * PARALLEL_STEP;
-        // Normalize perpendicular direction relative to the pair's canonical
-        // orientation (lower id → higher id) so siblings don't cancel out.
-        const aId = srcNode.id(), bId = tgtNode.id();
-        pOff = aId < bId ? base : -base;
-      }
-      const perpX = -udy * pOff;
-      const perpY =  udx * pOff;
+      const srcRaw = _nodeIntersect(srcNode, sp.x, sp.y,
+                       srcNode.data('w') / 2, srcNode.data('h') / 2,  udx,  udy);
+      const tgtRaw = _nodeIntersect(tgtNode, tp.x, tp.y,
+                       tgtNode.data('w') / 2, tgtNode.data('h') / 2, -udx, -udy);
 
-      const srcRaw   = _nodeIntersect(srcNode, sp.x, sp.y,
-                         srcNode.data('w') / 2, srcNode.data('h') / 2,  udx,  udy);
-      const tgtRaw   = _nodeIntersect(tgtNode, tp.x, tp.y,
-                         tgtNode.data('w') / 2, tgtNode.data('h') / 2, -udx, -udy);
-
-      // Inset endpoints so markers sit just outside the cloud boundary,
-      // and apply the parallel-edge perpendicular shift.
-      const srcExit  = { x: srcRaw.x + udx * INSET_SRC + perpX, y: srcRaw.y + udy * INSET_SRC + perpY };
-      const tgtEntry = { x: tgtRaw.x - udx * INSET_TGT + perpX, y: tgtRaw.y - udy * INSET_TGT + perpY };
+      const srcExit  = { x: srcRaw.x + udx * INSET_SRC, y: srcRaw.y + udy * INSET_SRC };
+      const tgtEntry = { x: tgtRaw.x - udx * INSET_TGT, y: tgtRaw.y - udy * INSET_TGT };
 
       const visLen = Math.hypot(tgtRaw.x - srcRaw.x, tgtRaw.y - srcRaw.y);
+      if (visLen < 10) { hideAll(); return; }
 
-      // Hide when clouds overlap
-      if (visLen < 10) {
-        div.style.visibility = 'hidden';
-        line1.setAttribute('visibility', 'hidden');
-        line2.setAttribute('visibility', 'hidden');
-        return;
+      // Geometric chord midpoint
+      const midX = (srcRaw.x + tgtRaw.x) / 2;
+      const midY = (srcRaw.y + tgtRaw.y) / 2;
+
+      // Parallel-fan perpendicular offset for the CP target. Sign is
+      // anchored to the canonical sorted pair so flipping source/target
+      // doesn't cancel out in a multi-edge group.
+      const pInfo = parallelInfo[eid] || { idx: 0, count: 1 };
+      let perpAmt = 0;
+      if (pInfo.count > 1) {
+        const sign = srcNode.id() < tgtNode.id() ? 1 : -1;
+        perpAmt = (pInfo.idx - (pInfo.count - 1) / 2) * PARALLEL_FAN * sign;
+      }
+      const targetCPx = midX + (-udy) * perpAmt;
+      const targetCPy = midY + ( udx) * perpAmt;
+
+      // Stash the target on the CP record so the integrator springs
+      // toward it next frame. Initialize the CP if first sight.
+      let cp = _phys.edgeCP.get(eid);
+      if (!cp) {
+        cp = { x: targetCPx, y: targetCPy, vx: 0, vy: 0, tx: targetCPx, ty: targetCPy };
+        _phys.edgeCP.set(eid, cp);
+      } else {
+        cp.tx = targetCPx;
+        cp.ty = targetCPy;
       }
 
-      line1.setAttribute('visibility', 'visible');
-      line2.setAttribute('visibility', 'visible');
+      // Curve midpoint (B(0.5) of quadratic Bézier through srcRaw/cp/tgtRaw)
+      // = ¼·P0 + ½·P1 + ¼·P2 = midStraight + (CP − midStraight) · 0.5
+      const labelX = midX + (cp.x - midX) * 0.5;
+      const labelY = midY + (cp.y - midY) * 0.5;
 
-      // Mirror Cytoscape faded/highlighted opacity on SVG lines + label
+      // Mirror Cytoscape faded/highlighted opacity on SVG paths + label
       const isFaded = edge.hasClass('faded');
       const svgOpacity = isFaded ? 0.07 : 0.82;
-      line1.style.opacity = svgOpacity;
-      line2.style.opacity = svgOpacity;
-      div.style.opacity = isFaded ? 0.07 : 1;
+      path1.style.opacity = svgOpacity;
+      path2.style.opacity = svgOpacity;
+      div.style.opacity   = isFaded ? 0.07 : 1;
+      path1.setAttribute('visibility', 'visible');
+      path2.setAttribute('visibility', 'visible');
 
-      // Midpoint of the raw boundary gap (for label placement at true visual
-      // centre) — offset perpendicularly so parallel labels don't stack.
-      const mx = (srcRaw.x + tgtRaw.x) / 2 + perpX;
-      const my = (srcRaw.y + tgtRaw.y) / 2 + perpY;
+      // Per-segment CPs sit half-way between the segment's endpoints
+      // and get displaced toward the global edge CP so both segments
+      // share a single smooth bow.
+      const cpDx = cp.x - midX;
+      const cpDy = cp.y - midY;
 
       if (label && visLen > 50) {
-        // ── Labelled edge: split into two segments with gap ──
-        div.style.visibility = 'visible';
-
+        // ── Labelled curve: two Bézier segments with gap at midpoint ──
         const labelW = Math.max(36, visLen - 20);
         div.style.width = labelW + 'px';
 
-        // Measure wrapped text to determine gap size along edge direction
         const lines = _wrap(label, EDGE_LABEL_FONT, labelW);
-        const textH = lines.length * EDGE_LABEL_LINE_H;
-        // Gap half-length: how far from midpoint in each direction
-        // Use the longest wrapped line width (not the container) for tighter gap
         let maxLineW = 0;
         for (const ln of lines) {
           _ctx.font = EDGE_LABEL_FONT;
           maxLineW = Math.max(maxLineW, _ctx.measureText(ln).width);
         }
-        const gapHalfLen = Math.min(
-          (maxLineW / 2 + LABEL_GAP_PAD),
-          visLen / 2 - 4
-        );
+        const gapHalfLen = Math.min(maxLineW / 2 + LABEL_GAP_PAD, visLen / 2 - 4);
 
-        const gapStart = { x: mx - udx * gapHalfLen, y: my - udy * gapHalfLen };
-        const gapEnd   = { x: mx + udx * gapHalfLen, y: my + udy * gapHalfLen };
+        // Gap end-points along the chord, anchored at the curve's label
+        // midpoint so the label sits centred on the visible curve too.
+        const gapStart = { x: labelX - udx * gapHalfLen, y: labelY - udy * gapHalfLen };
+        const gapEnd   = { x: labelX + udx * gapHalfLen, y: labelY + udy * gapHalfLen };
 
-        // Segment 1: source → gap start (with source circle marker)
-        line1.setAttribute('x1', srcExit.x);
-        line1.setAttribute('y1', srcExit.y);
-        line1.setAttribute('x2', gapStart.x);
-        line1.setAttribute('y2', gapStart.y);
-        line1.setAttribute('marker-start', `url(#${markerId}-circ)`);
-        line1.removeAttribute('marker-end');
+        // Segment 1: srcExit → gapStart, control at seg-mid + ½·CP-offset
+        const seg1MidX = (srcExit.x + gapStart.x) / 2;
+        const seg1MidY = (srcExit.y + gapStart.y) / 2;
+        const c1x = seg1MidX + cpDx * 0.5;
+        const c1y = seg1MidY + cpDy * 0.5;
+        path1.setAttribute('d',
+          `M ${srcExit.x} ${srcExit.y} Q ${c1x} ${c1y} ${gapStart.x} ${gapStart.y}`);
+        path1.setAttribute('marker-start', `url(#${markerId}-circ)`);
+        path1.removeAttribute('marker-end');
 
-        // Segment 2: gap end → target (with target triangle marker)
-        line2.setAttribute('x1', gapEnd.x);
-        line2.setAttribute('y1', gapEnd.y);
-        line2.setAttribute('x2', tgtEntry.x);
-        line2.setAttribute('y2', tgtEntry.y);
-        line2.removeAttribute('marker-start');
-        line2.setAttribute('marker-end', `url(#${markerId}-tri)`);
-        line2.setAttribute('visibility', 'visible');
+        // Segment 2: gapEnd → tgtEntry
+        const seg2MidX = (gapEnd.x + tgtEntry.x) / 2;
+        const seg2MidY = (gapEnd.y + tgtEntry.y) / 2;
+        const c2x = seg2MidX + cpDx * 0.5;
+        const c2y = seg2MidY + cpDy * 0.5;
+        path2.setAttribute('d',
+          `M ${gapEnd.x} ${gapEnd.y} Q ${c2x} ${c2y} ${tgtEntry.x} ${tgtEntry.y}`);
+        path2.removeAttribute('marker-start');
+        path2.setAttribute('marker-end', `url(#${markerId}-tri)`);
 
-        // Position label at midpoint, rotated to follow edge
         let angle = Math.atan2(dy, dx) * 180 / Math.PI;
         if (angle > 90 || angle < -90) angle += angle > 0 ? -180 : 180;
         div.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
-        div.style.left = mx + 'px';
-        div.style.top  = my + 'px';
+        div.style.left = labelX + 'px';
+        div.style.top  = labelY + 'px';
+        div.style.visibility = 'visible';
       } else {
-        // ── Unlabelled or too-short: single line, no gap ──
+        // ── Unlabelled or too-short: single Bézier through CP ──
         div.style.visibility = 'hidden';
-
-        line1.setAttribute('x1', srcExit.x);
-        line1.setAttribute('y1', srcExit.y);
-        line1.setAttribute('x2', tgtEntry.x);
-        line1.setAttribute('y2', tgtEntry.y);
-        line1.setAttribute('marker-start', `url(#${markerId}-circ)`);
-        line1.setAttribute('marker-end', `url(#${markerId}-tri)`);
-
-        line2.setAttribute('visibility', 'hidden');
+        path1.setAttribute('d',
+          `M ${srcExit.x} ${srcExit.y} Q ${cp.x} ${cp.y} ${tgtEntry.x} ${tgtEntry.y}`);
+        path1.setAttribute('marker-start', `url(#${markerId}-circ)`);
+        path1.setAttribute('marker-end',   `url(#${markerId}-tri)`);
+        path2.setAttribute('visibility', 'hidden');
       }
     });
   }
 
-  // ── Squish helper ────────────────────────────────────────────
-  // Applies a CSS animation to the cloud card for a tactile collision feel.
-  // horizontal=true → squish left/right (X compressed); false → squish up/down.
-  function _squish(nodeId, horizontal) {
-    const wrapper = _cloudMap[nodeId];
-    if (!wrapper) return;
-    const cloud = wrapper.firstElementChild;
-    if (!cloud) return;
-    const cls = horizontal ? 'cm-squish-x' : 'cm-squish-y';
-    cloud.classList.remove('cm-squish-x', 'cm-squish-y');
-    void cloud.offsetWidth; // force reflow so the animation restarts cleanly
-    cloud.classList.add(cls);
+  // ── Physics integrator: drag handlers + main loop ────────────
+  // Drag events feed the integrator; they don't move anything by
+  // themselves. Cytoscape moves the dragged node natively (the user
+  // is dragging it directly), and we react to that motion in the
+  // physics step: rope CPs lag behind, neighbors get spring-pulled,
+  // collisions inject impulses on overlapping nodes.
+
+  function _ensureNodeState(id, pos) {
+    if (!_phys.nodeVel.has(id))  _phys.nodeVel.set(id, { vx: 0, vy: 0 });
+    if (!_phys.nodeRest.has(id)) _phys.nodeRest.set(id, { x: pos.x, y: pos.y });
   }
 
-  // ── Bounce + velocity tracking ───────────────────────────────
-  function _bounce(evt) {
-    const dragged = evt.target;
-    const id      = dragged.id();
-    const dp      = dragged.position();
-    const dHW     = dragged.data('w') / 2 + 10;
-    const dHH     = dragged.data('h') / 2 + 10;
+  function _onDragStart(evt) {
+    // If the user grabs anything mid-autolayout, freeze the FR run at
+    // its current state and switch back to elastic mode — they want
+    // direct control, not an animation fighting them.
+    if (_phys.mode === 'autolayout') _finishAutoLayout();
 
-    // Track per-frame velocity from consecutive drag positions
-    if (_prevPos[id]) {
-      _vel[id] = {
-        vx: (dp.x - _prevPos[id].x) * 0.75,
-        vy: (dp.y - _prevPos[id].y) * 0.75,
-      };
+    const id = evt.target.id();
+    _phys.draggedId = id;
+    _ensureNodeState(id, evt.target.position());
+    const v = _phys.nodeVel.get(id);
+    if (v) { v.vx = 0; v.vy = 0; }
+    _physWake();
+  }
+
+  function _onDragNode(evt) {
+    const id = evt.target.id();
+    if (id !== _phys.draggedId) return;
+    // The dragged node's "rest" follows the pointer so when the user
+    // releases, that becomes the new equilibrium.
+    const p = evt.target.position();
+    _phys.nodeRest.set(id, { x: p.x, y: p.y });
+    _physWake();
+  }
+
+  function _onDragFreeNode(evt) {
+    const id = evt.target.id();
+    if (id !== _phys.draggedId) return;
+    const p = evt.target.position();
+    _phys.nodeRest.set(id, { x: p.x, y: p.y });
+    _phys.draggedId = null;
+    _physWake();  // continue settling
+  }
+
+  // Wake the integrator if it's sleeping. Self-stops once kinetic
+  // energy drops below ENERGY_SLEEP and no drag/autolayout is active.
+  function _physWake() {
+    if (_phys.raf || !_cy) return;
+    const tick = () => {
+      _physStep();
+      const shouldRun =
+        _phys.draggedId !== null ||
+        _phys.mode === 'autolayout' ||
+        _physKineticEnergy() > PHYS_K.ENERGY_SLEEP;
+      if (shouldRun) {
+        _phys.raf = requestAnimationFrame(tick);
+      } else {
+        _phys.raf = null;
+        _sync();   // one final clean redraw
+      }
+    };
+    _phys.raf = requestAnimationFrame(tick);
+  }
+
+  function _physKineticEnergy() {
+    let ke = 0;
+    for (const v of _phys.nodeVel.values()) ke += v.vx * v.vx + v.vy * v.vy;
+    for (const c of _phys.edgeCP.values())  ke += c.vx * c.vx + c.vy * c.vy;
+    // Normalize per moving thing so big graphs don't refuse to sleep.
+    const denom = Math.max(1, _phys.nodeVel.size + _phys.edgeCP.size);
+    return ke / denom;
+  }
+
+  function _physStep() {
+    if (!_cy) return;   // guard against tick fired between _destroy and rAF cancel
+    if (_phys.mode === 'autolayout') _applyAutoLayoutForces();
+    else                              _applyElasticForces();
+
+    _resolveCollisions();
+    _integrateNodes();
+    _integrateEdgeCPs();
+
+    // Render: clouds + edges. _sync() also calls _syncEdgeLabels()
+    // which both consumes and updates each edge's CP target (tx,ty)
+    // for the parallel-fan effect.
+    _sync();
+
+    if (_phys.mode === 'autolayout') {
+      _phys.temp *= 0.974;     // ~3 s cooldown when starting from temp ≈ k
+      if (performance.now() > _phys.layoutEnd || _phys.temp < 0.4) {
+        _finishAutoLayout();
+      }
     }
-    _prevPos[id] = { x: dp.x, y: dp.y };
+  }
 
-    _cy.nodes().forEach(other => {
-      if (other.id() === id) return;
-      const op  = other.position();
-      const oHW = other.data('w') / 2 + 10;
-      const oHH = other.data('h') / 2 + 10;
+  // ── Force application: elastic mode ──────────────────────────
+  function _applyElasticForces() {
+    const draggedId = _phys.draggedId;
 
-      const ox = (dHW + oHW) - Math.abs(dp.x - op.x);
-      const oy = (dHH + oHH) - Math.abs(dp.y - op.y);
+    // Rest-pull: every undragged node is gently sprung toward its
+    // saved equilibrium so the layout the user curated holds shape.
+    _cy.nodes().forEach(node => {
+      const id = node.id();
+      if (id === draggedId) return;
+      const p = node.position();
+      const v = _phys.nodeVel.get(id);
+      const r = _phys.nodeRest.get(id);
+      if (!v || !r) return;
+      v.vx += (r.x - p.x) * PHYS_K.REST_PULL;
+      v.vy += (r.y - p.y) * PHYS_K.REST_PULL;
+    });
 
-      if (ox > 0 && oy > 0) {
-        const dx = dp.x - op.x;
-        const dy = dp.y - op.y;
-        const horizontal = ox < oy;
-        let nx, ny;
-        if (horizontal) {
-          nx = op.x - Math.sign(dx || 1) * (ox + 5);
-          ny = op.y;
-        } else {
-          nx = op.x;
-          ny = op.y - Math.sign(dy || 1) * (oy + 5);
+    // Neighbor pull: while a node is held, its 1-hop connected
+    // neighbors get tugged toward it. Combined with rest-pull above,
+    // they lean in then drift back when released.
+    if (draggedId) {
+      const dragNode = _cy.getElementById(draggedId);
+      if (dragNode && dragNode.length) {
+        const dp   = dragNode.position();
+        const seen = new Set();
+        dragNode.connectedEdges().forEach(edge => {
+          const other = edge.source().id() === draggedId ? edge.target() : edge.source();
+          const oid = other.id();
+          if (seen.has(oid) || oid === draggedId) return;
+          seen.add(oid);
+          if (other.hasClass('cm-filter-hidden')) return;
+          const op = other.position();
+          const v  = _phys.nodeVel.get(oid);
+          if (!v) return;
+          v.vx += (dp.x - op.x) * PHYS_K.NEIGH_PULL;
+          v.vy += (dp.y - op.y) * PHYS_K.NEIGH_PULL;
+        });
+      }
+    }
+  }
+
+  // ── Force application: Fruchterman-Reingold auto-layout ──────
+  // Classic FR: every pair repels by k²/d, every edge attracts by
+  // d²/k, plus a weak gravitational pull toward the viewport centre
+  // for compactness. Velocities are reset each frame and capped by
+  // the current "temperature" so the cooldown produces a smooth
+  // settling motion instead of jitter.
+  function _applyAutoLayoutForces() {
+    const k = _phys.k;
+    const nodes = _cy.nodes().filter(n => !n.hasClass('cm-filter-hidden'));
+    const N = nodes.length;
+    if (!N) return;
+
+    // Reset accumulated velocities — FR is re-evaluated from
+    // scratch each iteration.
+    nodes.forEach(n => {
+      const v = _phys.nodeVel.get(n.id());
+      if (v) { v.vx = 0; v.vy = 0; }
+    });
+
+    // Cache positions to avoid repeated property access in O(N²) loop.
+    const ps = new Array(N);
+    for (let i = 0; i < N; i++) ps[i] = { id: nodes[i].id(), p: nodes[i].position() };
+
+    // Pairwise repulsion
+    for (let i = 0; i < N; i++) {
+      const a = ps[i];
+      const va = _phys.nodeVel.get(a.id);
+      for (let j = i + 1; j < N; j++) {
+        const b = ps[j];
+        const dx = b.p.x - a.p.x;
+        const dy = b.p.y - a.p.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist < 1) {
+          // Coincident nodes: push them apart with a tiny random kick
+          dist = 1;
+          const jx = Math.random() - 0.5, jy = Math.random() - 0.5;
+          if (va) { va.vx -= jx; va.vy -= jy; }
+          const vb0 = _phys.nodeVel.get(b.id);
+          if (vb0) { vb0.vx += jx; vb0.vy += jy; }
+          continue;
         }
-        // Squish both the dragged and the hit cloud along the collision axis
-        _squish(id,          horizontal);
-        _squish(other.id(),  horizontal);
-
-        other.animate(
-          { position: { x: nx, y: ny } },
-          { duration: 200, easing: 'ease-out-cubic', queue: false }
-        );
+        const force = (k * k) / dist;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        if (va) { va.vx -= fx; va.vy -= fy; }
+        const vb = _phys.nodeVel.get(b.id);
+        if (vb) { vb.vx += fx; vb.vy += fy; }
       }
+    }
+
+    // Edge attraction
+    _cy.edges().forEach(edge => {
+      if (edge.hasClass('cm-filter-hidden')) return;
+      const sId = edge.source().id();
+      const tId = edge.target().id();
+      const sp = edge.source().position();
+      const tp = edge.target().position();
+      const dx = tp.x - sp.x, dy = tp.y - sp.y;
+      let dist = Math.hypot(dx, dy);
+      if (dist < 1) dist = 1;
+      const force = (dist * dist) / k;
+      const fx = (dx / dist) * force;
+      const fy = (dy / dist) * force;
+      const vs = _phys.nodeVel.get(sId);
+      const vt = _phys.nodeVel.get(tId);
+      if (vs) { vs.vx += fx; vs.vy += fy; }
+      if (vt) { vt.vx -= fx; vt.vy -= fy; }
+    });
+
+    // Gravity toward viewport centre (compactness)
+    const cont = _cy.container();
+    if (cont) {
+      const rect = cont.getBoundingClientRect();
+      const pan  = _cy.pan();
+      const zoom = _cy.zoom();
+      const cx = (rect.width  / 2 - pan.x) / zoom;
+      const cy = (rect.height / 2 - pan.y) / zoom;
+      for (let i = 0; i < N; i++) {
+        const v = _phys.nodeVel.get(ps[i].id);
+        if (!v) continue;
+        v.vx += (cx - ps[i].p.x) * PHYS_K.GRAVITY;
+        v.vy += (cy - ps[i].p.y) * PHYS_K.GRAVITY;
+      }
+    }
+
+    // Cap displacement by current temperature
+    const t = _phys.temp;
+    for (let i = 0; i < N; i++) {
+      const v = _phys.nodeVel.get(ps[i].id);
+      if (!v) continue;
+      const speed = Math.hypot(v.vx, v.vy);
+      if (speed > t) {
+        v.vx = (v.vx / speed) * t;
+        v.vy = (v.vy / speed) * t;
+      }
+    }
+  }
+
+  // ── Collision impulses (replaces snap-displace _bounce) ──────
+  // Overlapping nodes get a velocity kick proportional to penetration
+  // depth along the smallest-overlap axis. Self-stabilising: as nodes
+  // separate the impulse magnitude shrinks. The dragged node is
+  // immovable (infinite mass) — only the other node receives the
+  // kick, which feels right because the user is actively holding
+  // the dragged one.
+  function _resolveCollisions() {
+    const nodes = _cy.nodes();
+    const PAD   = PHYS_K.PADDING;
+    const draggedId = _phys.draggedId;
+    const N = nodes.length;
+
+    for (let i = 0; i < N; i++) {
+      const a = nodes[i];
+      if (a.hasClass('cm-filter-hidden')) continue;
+      const ap = a.position();
+      const aHW = a.data('w') / 2 + PAD;
+      const aHH = a.data('h') / 2 + PAD;
+      const aId = a.id();
+
+      for (let j = i + 1; j < N; j++) {
+        const b = nodes[j];
+        if (b.hasClass('cm-filter-hidden')) continue;
+        const bp = b.position();
+        const bHW = b.data('w') / 2 + PAD;
+        const bHH = b.data('h') / 2 + PAD;
+
+        const dx = bp.x - ap.x;
+        const dy = bp.y - ap.y;
+        const ox = (aHW + bHW) - Math.abs(dx);
+        const oy = (aHH + bHH) - Math.abs(dy);
+        if (ox <= 0 || oy <= 0) continue;
+
+        const horizontal = ox < oy;
+        const k  = PHYS_K.COLLISION_KICK;
+        const va = _phys.nodeVel.get(aId);
+        const vb = _phys.nodeVel.get(b.id());
+        if (horizontal) {
+          const dir = Math.sign(dx) || 1;
+          if (vb && b.id() !== draggedId) vb.vx += dir * ox * k;
+          if (va && aId      !== draggedId) va.vx -= dir * ox * k;
+        } else {
+          const dir = Math.sign(dy) || 1;
+          if (vb && b.id() !== draggedId) vb.vy += dir * oy * k;
+          if (va && aId      !== draggedId) va.vy -= dir * oy * k;
+        }
+      }
+    }
+  }
+
+  // ── Integration: nodes ───────────────────────────────────────
+  function _integrateNodes() {
+    const draggedId = _phys.draggedId;
+    _cy.batch(() => {
+      _cy.nodes().forEach(node => {
+        const id = node.id();
+        if (id === draggedId) return;
+        const v = _phys.nodeVel.get(id);
+        if (!v) return;
+        // Damping
+        v.vx *= PHYS_K.NODE_DAMP;
+        v.vy *= PHYS_K.NODE_DAMP;
+        // Cap
+        const speed = Math.hypot(v.vx, v.vy);
+        if (speed > PHYS_K.MAX_VEL) {
+          v.vx = (v.vx / speed) * PHYS_K.MAX_VEL;
+          v.vy = (v.vy / speed) * PHYS_K.MAX_VEL;
+        }
+        if (Math.abs(v.vx) < 0.001 && Math.abs(v.vy) < 0.001) return;
+        const p = node.position();
+        node.position({ x: p.x + v.vx, y: p.y + v.vy });
+      });
     });
   }
 
-  // ── Inertia (coast after release) ────────────────────────────
-  function _onDragFree(evt) {
-    const n  = evt.target;
-    const id = n.id();
-    const v  = _vel[id];
-    if (!v || (Math.abs(v.vx) < 0.4 && Math.abs(v.vy) < 0.4)) return;
+  // ── Integration: edge control points (rope physics) ──────────
+  // Each edge has a control point with its own mass and velocity.
+  // It springs toward a target stashed by _syncEdgeLabels (which is
+  // the geometric midpoint plus any parallel-fan offset). The lag
+  // between the target's motion and the CP's response is what gives
+  // the line its rubber-band sag during fast drags.
+  function _integrateEdgeCPs() {
+    _cy.edges().forEach(edge => {
+      const eid = edge.id();
+      if (edge.hasClass('cm-filter-hidden')) return;
+      let cp = _phys.edgeCP.get(eid);
+      if (!cp) {
+        const sp = edge.source().position(), tp = edge.target().position();
+        cp = { x: (sp.x + tp.x) / 2, y: (sp.y + tp.y) / 2, vx: 0, vy: 0,
+               tx: null, ty: null };
+        _phys.edgeCP.set(eid, cp);
+      }
+      let tx = cp.tx, ty = cp.ty;
+      if (tx == null || ty == null) {
+        const sp = edge.source().position(), tp = edge.target().position();
+        tx = (sp.x + tp.x) / 2;
+        ty = (sp.y + tp.y) / 2;
+      }
+      cp.vx += (tx - cp.x) * PHYS_K.EDGE_SPRING;
+      cp.vy += (ty - cp.y) * PHYS_K.EDGE_SPRING;
+      cp.vx *= PHYS_K.EDGE_DAMP;
+      cp.vy *= PHYS_K.EDGE_DAMP;
+      cp.x += cp.vx;
+      cp.y += cp.vy;
+    });
+  }
 
-    let vx = v.vx;
-    let vy = v.vy;
-    const FRICTION  = 0.88; // multiply per frame; ~0.88^20 ≈ 0.08 → stops in ~20 frames
-    const MIN_SPEED = 0.3;
+  // ── Auto-layout (Fruchterman-Reingold with cooling animation) ─
+  // Snapshots current positions to the undo stack, sets up the FR
+  // temperature, and lets the integrator do the rest. The cooldown
+  // animation is the user-visible "settling into ideal positions"
+  // motion. On finish, new positions become the saved rest and
+  // persist to localStorage automatically.
+  function _runAutoLayout() {
+    const nodes = _cy.nodes().filter(n => !n.hasClass('cm-filter-hidden'));
+    const N = nodes.length;
+    if (!N || !_cy) return;
 
-    function step() {
-      const speed = Math.hypot(vx, vy);
-      if (speed < MIN_SPEED) { delete _inertiaRaf[id]; return; }
-      vx *= FRICTION;
-      vy *= FRICTION;
-      n.position({ x: n.position().x + vx, y: n.position().y + vy });
-      _inertiaRaf[id] = requestAnimationFrame(step);
-    }
+    _physSnapshotForUndo();
 
-    _killInertia(id);
-    _inertiaRaf[id] = requestAnimationFrame(step);
+    const cont = _cy.container();
+    const area = (cont.clientWidth || 1200) * (cont.clientHeight || 800);
+    _phys.k = Math.max(60, Math.sqrt(area / N) * 0.85);
+    _phys.temp = _phys.k * 1.1;
+    _phys.mode = 'autolayout';
+    _phys.layoutEnd = performance.now() + PHYS_K.AUTOLAYOUT_MS;
+    _phys.draggedId = null;
+
+    nodes.forEach(node => {
+      const id = node.id();
+      _phys.nodeVel.set(id, { vx: 0, vy: 0 });
+      _ensureNodeState(id, node.position());
+    });
+
+    _updateLayoutBtnStates();
+    _physWake();
+  }
+
+  function _finishAutoLayout() {
+    _phys.mode = 'elastic';
+    _phys.temp = 0;
+    // Snap each node's rest to wherever it ended up — the layout
+    // we just animated to is now the equilibrium.
+    _cy.nodes().forEach(node => {
+      const id = node.id();
+      const p  = node.position();
+      _phys.nodeRest.set(id, { x: p.x, y: p.y });
+    });
+    _savePositions();
+    _updateLayoutBtnStates();
+  }
+
+  function _physSnapshotForUndo() {
+    const snap = new Map();
+    _cy.nodes().forEach(node => {
+      const p = node.position();
+      snap.set(node.id(), { x: p.x, y: p.y });
+    });
+    _phys.history.push(snap);
+    if (_phys.history.length > 5) _phys.history.shift();
+  }
+
+  function _undoLayout() {
+    const snap = _phys.history.pop();
+    if (!snap) return;
+    _cy.batch(() => {
+      snap.forEach((p, id) => {
+        const node = _cy.getElementById(id);
+        if (node && node.length) {
+          node.position({ x: p.x, y: p.y });
+          _phys.nodeRest.set(id, { x: p.x, y: p.y });
+          const v = _phys.nodeVel.get(id);
+          if (v) { v.vx = 0; v.vy = 0; }
+        }
+      });
+    });
+    _savePositions();
+    _sync();
+    _updateLayoutBtnStates();
+  }
+
+  function _updateLayoutBtnStates() {
+    const undoBtn = document.querySelector('.cm-undo-layout');
+    if (!undoBtn) return;
+    const enabled = _phys.history.length > 0;
+    undoBtn.disabled = !enabled;
+    undoBtn.style.opacity = enabled ? '1' : '0.4';
+    undoBtn.style.pointerEvents = enabled ? 'auto' : 'none';
   }
 
   // ── Tap / highlight ──────────────────────────────────────────
@@ -1556,18 +1935,13 @@ export const CloudMap = (() => {
 
   // ── Shared event binding ─────────────────────────────────────
   function _bind() {
-    _cy.on('render',           _sync);
-    _cy.on('dragstart', 'node', evt => {
-      const id = evt.target.id();
-      _killInertia(id);         // cancel any existing coast
-      delete _prevPos[id];      // reset velocity tracking
-      delete _vel[id];
-    });
-    _cy.on('drag',    'node',  _bounce);
-    _cy.on('dragfree','node',  evt => { _onDragFree(evt); });
-    _cy.on('tap',              _onTap);
-    _cy.on('cxttap',  'node',  _onCtxNode);
-    _cy.on('cxttap',           evt => { if (evt.target === _cy) _hideCtxMenu(); });
+    _cy.on('render',            _sync);
+    _cy.on('dragstart', 'node', _onDragStart);
+    _cy.on('drag',      'node', _onDragNode);
+    _cy.on('dragfree',  'node', _onDragFreeNode);
+    _cy.on('tap',               _onTap);
+    _cy.on('cxttap',    'node', _onCtxNode);
+    _cy.on('cxttap',            evt => { if (evt.target === _cy) _hideCtxMenu(); });
 
     // ── Smooth zoom — override Cytoscape's coarse wheel zoom ──────
     // Cytoscape's built-in wheel step (~15–20 % per tick) feels jumpy.
@@ -1614,6 +1988,25 @@ export const CloudMap = (() => {
             (_focusMode && _filters.focusId)) {
           _applyVisualFilter();
         }
+
+        // Seed the physics integrator: each node's saved position
+        // becomes its rest equilibrium, each edge gets a CP at the
+        // current geometric midpoint so the first elastic interaction
+        // doesn't snap from an arbitrary starting point.
+        _cy.nodes().forEach(node => {
+          const id = node.id();
+          const p  = node.position();
+          _phys.nodeRest.set(id, { x: p.x, y: p.y });
+          _phys.nodeVel.set(id, { vx: 0, vy: 0 });
+        });
+        _cy.edges().forEach(edge => {
+          const sp = edge.source().position(), tp = edge.target().position();
+          _phys.edgeCP.set(edge.id(), {
+            x: (sp.x + tp.x) / 2, y: (sp.y + tp.y) / 2,
+            vx: 0, vy: 0, tx: null, ty: null,
+          });
+        });
+        _updateLayoutBtnStates();
         // Positions are saved manually via the "Uložit pozice" button in edit mode
       });
     });
@@ -1959,6 +2352,8 @@ export const CloudMap = (() => {
   return {
     render, resetLayout,
     savePositions:   _savePositions,
+    runAutoLayout:   _runAutoLayout,
+    undoLayout:      _undoLayout,
     toggleFaction:   _toggleFaction,
     setFilterValues: _setFilterValues,   // called by TagFilter via tf-change event
     toggleEdgeType:  _toggleEdgeType,

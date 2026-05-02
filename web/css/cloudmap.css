@@ -314,23 +314,9 @@
     inset 0 1px 0 rgba(255,255,255,0.06);
 }
 
-/* Squish animations — triggered by JS on collision (subtle) */
-@keyframes cm-squish-x {
-  0%   { transform: scaleX(0.93) scaleY(1.04); }
-  55%  { transform: scaleX(1.02) scaleY(0.99); }
-  100% { transform: scaleX(1)    scaleY(1);    }
-}
-@keyframes cm-squish-y {
-  0%   { transform: scaleX(1.04) scaleY(0.93); }
-  55%  { transform: scaleX(0.99) scaleY(1.02); }
-  100% { transform: scaleX(1)    scaleY(1);    }
-}
-.cm-cloud.cm-squish-x {
-  animation: cm-squish-x 0.28s ease-out forwards;
-}
-.cm-cloud.cm-squish-y {
-  animation: cm-squish-y 0.28s ease-out forwards;
-}
+/* (Squish keyframes removed — collisions are now impulse-based and
+   the resulting motion provides its own tactile feedback. The
+   physics integrator in cloudmap.js owns all per-node animation.) */
 
 /* Edge labels sit centred on the line. The SVG edge is split into two
    segments with a gap where the label text is — no background needed.
