@@ -735,8 +735,11 @@ export const CloudMap = (() => {
     COLLISION_KICK: 0.55,
     PADDING:        14,     // collision bbox padding around each node
     MAX_VEL:        45,     // hard cap to keep things stable
-    GRAVITY:        0.0040, // pull toward viewport centre during autolayout
-                            // (strong enough to keep disconnected components from drifting)
+    GRAVITY:        0.0060, // pull toward viewport centre during autolayout
+                            // — bumped from 0.0040 to keep the occasional
+                            // outlier (a leaf node with no/few connections,
+                            // initialised far from centre by random scatter)
+                            // from getting stranded at the edge of the layout
     ENERGY_SLEEP:   0.05,   // total KE per node to allow the loop to sleep
     AUTOLAYOUT_MS:  3500,   // how long the FR cooldown takes
   };
@@ -980,21 +983,29 @@ export const CloudMap = (() => {
   // Single layer with TWO CSS properties:
   //   `zoom: <currentZoom>` — re-flows layout + re-rasterises text,
   //                           giving crisp text at any scale.
-  //   `transform: translate(pan)` — pan in screen pixels (translate
-  //                                 doesn't trigger the texture-cache
-  //                                 blurriness that scale() does).
+  //   `transform: translate(panX/zoom, panY/zoom)` — pan in CSS px.
+  //
+  // CRITICAL: when the parent has `zoom: Z`, transform-translate values
+  // are interpreted in the ZOOMED coordinate system, so a written
+  // `translate(N px)` moves the element by `N · Z` actual screen px.
+  // To get an actual on-screen translation of `pan` (which is what
+  // Cytoscape's pan represents — see _cy.pan()), we must write
+  // `translate(pan / zoom px)` so that `(pan / zoom) · zoom = pan` on
+  // screen. Forgetting this divide-by-zoom is what made the layer
+  // pan at zoom·rate (so dragging at zoom=0.33 looked like "1/3
+  // scale" panning) and shifted both wheel-zoom-around-cursor and
+  // node hit-testing toward the layer's top-left corner.
+  //
   // Cards positioned in graph coordinates at native size — the layer's
-  // `zoom` shrinks/grows them visually, but each shrink causes the
-  // browser to RE-RENDER text at the new effective size rather than
-  // blit a cached texture. End result: cards visually scale with zoom
-  // (the original feel) AND text stays crisp.
+  // `zoom` shrinks/grows them visually, and the browser re-renders
+  // text at the new effective size rather than blit a cached texture.
   function _sync() {
     if (!_cy || !_cloudLayer) return;
     const pan  = _cy.pan();
     const zoom = _cy.zoom();
 
     _cloudLayer.style.zoom = zoom;
-    _cloudLayer.style.transform = `translate(${pan.x}px,${pan.y}px)`;
+    _cloudLayer.style.transform = `translate(${pan.x / zoom}px,${pan.y / zoom}px)`;
 
     _cy.nodes().forEach(node => {
       const id = node.id();
