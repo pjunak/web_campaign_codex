@@ -726,11 +726,12 @@ export const CloudMap = (() => {
     // colinear with the endpoints. Geometric constraint, not tuning.)
     EDGE_SPRING:    0.04,
     EDGE_DAMP:      0.85,
-    // High NEIGH_PULL so connected nodes visibly lean toward whatever
-    // you're dragging. With REST_PULL=0.055, a neighbour's equilibrium
-    // sits at ≈ 0.10 / (0.055 + 0.10) = 65% of the drag displacement —
-    // a clear, can't-miss lean.
-    NEIGH_PULL:     0.10,
+    // Neighbours are NOT pulled toward the held node. Only the
+    // dragged node moves on its own; other nodes stay at their rest
+    // positions until something physically pushes them (collision
+    // impulse). Set to a small positive value (e.g. 0.04) to re-enable
+    // a subtle "lean toward the dragged node" effect.
+    NEIGH_PULL:     0.0,
     REST_PULL:      0.055,
     NODE_DAMP:      0.78,
     // Stronger collision impulse — nodes you push through visibly scoot
@@ -1498,9 +1499,11 @@ export const CloudMap = (() => {
     });
 
     // Neighbor pull: while a node is held, its 1-hop connected
-    // neighbors get tugged toward it. Combined with rest-pull above,
-    // they lean in then drift back when released.
-    if (draggedId) {
+    // neighbours can be tugged toward it (set PHYS_K.NEIGH_PULL > 0
+    // to enable). Disabled by default — only the dragged node moves
+    // on its own; other nodes stay put until physically pushed by a
+    // collision impulse.
+    if (draggedId && PHYS_K.NEIGH_PULL > 0) {
       const dragNode = _cy.getElementById(draggedId);
       if (dragNode && dragNode.length) {
         const dp   = dragNode.position();
