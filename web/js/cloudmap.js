@@ -714,15 +714,18 @@ export const CloudMap = (() => {
   // Tunable physics constants. All in node-position units (~px at zoom 1)
   // per frame. Damping values are multiplicative per frame.
   const PHYS_K = {
-    // Very soft edge spring → at a typical drag speed of 15 graph-px
-    // per frame the edge midpoint lags 0.22/0.06 · 15 ≈ 55 graph-px
-    // behind the chord midpoint. (Visible only when the chord rotates
-    // — for pure translational drag along the chord, the lag is along
-    // the chord and looks like nothing happens. Quadratic Béziers can't
-    // bow if the control point stays colinear with the endpoints; this
-    // is a fundamental geometric constraint, not a tuning issue.)
-    EDGE_SPRING:    0.06,
-    EDGE_DAMP:      0.78,
+    // Very soft edge spring + extra inertia (less damping). At a typical
+    // drag speed of 15 graph-px per frame the edge midpoint lags about
+    // 0.15/0.04 · 15 ≈ 56 graph-px behind the chord midpoint at steady
+    // state, AND the per-frame catch-up is small (cp moves only
+    // (1−0.85)·spring·delta ≈ 0.6 % of the gap per frame from a standing
+    // start), so the bow takes several frames to dissipate after the
+    // drag stops — easy to see. (Visible mainly when the chord rotates;
+    // pure translational drag along the chord direction can't bow a
+    // quadratic Bézier no matter how soft the spring — the CP stays
+    // colinear with the endpoints. Geometric constraint, not tuning.)
+    EDGE_SPRING:    0.04,
+    EDGE_DAMP:      0.85,
     // High NEIGH_PULL so connected nodes visibly lean toward whatever
     // you're dragging. With REST_PULL=0.055, a neighbour's equilibrium
     // sits at ≈ 0.10 / (0.055 + 0.10) = 65% of the drag displacement —
@@ -1271,10 +1274,13 @@ export const CloudMap = (() => {
 
       // Stash the target on the CP record so the integrator springs
       // toward it next frame. Initialize lazily if first sight, and
-      // snap to target whenever the integrator is asleep — that way
-      // the at-rest curve always matches the freshly-computed target
-      // even when nothing has driven physics yet (initial render,
-      // mid-layout-animation Cytoscape redraws, after settle, etc.).
+      // snap to target ONLY when the system is genuinely at rest (no
+      // rAF scheduled, no node being dragged, not running autolayout).
+      // The previous `!_phys.raf`-only check was vulnerable to brief
+      // rAF flicker between tick rescheduling and the next mousemove,
+      // which would zero out the rope-lag mid-drag and make the bow
+      // invisible. The combined check is safe — rope physics only
+      // gets snapped away once the user has actually let go.
       let cp = _phys.edgeCP.get(eid);
       if (!cp) {
         cp = { x: targetCPx, y: targetCPy, vx: 0, vy: 0, tx: targetCPx, ty: targetCPy };
@@ -1282,8 +1288,10 @@ export const CloudMap = (() => {
       } else {
         cp.tx = targetCPx;
         cp.ty = targetCPy;
-        if (!_phys.raf) {
-          // Asleep → render the at-rest position, no rope lag
+        const atRest = _phys.raf === null
+                    && _phys.draggedId === null
+                    && _phys.mode !== 'autolayout';
+        if (atRest) {
           cp.x = targetCPx; cp.y = targetCPy;
           cp.vx = 0; cp.vy = 0;
         }
@@ -2195,13 +2203,19 @@ export const CloudMap = (() => {
 
   // ── Shared event binding ─────────────────────────────────────
   function _bind() {
-    _cy.on('render',            _sync);
-    _cy.on('dragstart', 'node', _onDragStart);
-    _cy.on('drag',      'node', _onDragNode);
-    _cy.on('dragfree',  'node', _onDragFreeNode);
-    _cy.on('tap',               _onTap);
-    _cy.on('cxttap',    'node', _onCtxNode);
-    _cy.on('cxttap',            evt => { if (evt.target === _cy) _hideCtxMenu(); });
+    _cy.on('render',                  _sync);
+    // Node drag — listen for BOTH event names. Cytoscape's documented
+    // node-drag events are `grab` / `drag` / `free`; `dragstart` and
+    // `dragfree` are partial aliases that fire in some code paths but
+    // not all. Belt-and-braces: bind both so the integrator wakes
+    // reliably regardless of which alias actually fires for a given
+    // grab gesture in the current Cytoscape build.
+    _cy.on('grab dragstart',   'node', _onDragStart);
+    _cy.on('drag',             'node', _onDragNode);
+    _cy.on('free dragfree',    'node', _onDragFreeNode);
+    _cy.on('tap',                     _onTap);
+    _cy.on('cxttap',           'node', _onCtxNode);
+    _cy.on('cxttap',                  evt => { if (evt.target === _cy) _hideCtxMenu(); });
 
     // ── Smooth zoom — override Cytoscape's coarse wheel zoom ──────
     // Cytoscape's built-in wheel step (~15–20 % per tick) feels jumpy.
