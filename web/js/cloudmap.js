@@ -1027,7 +1027,13 @@ export const CloudMap = (() => {
 
     // Update the CSS variable only when zoom actually changes.
     // Tolerance avoids floating-point chatter from re-firing relayout.
-    if (Math.abs(zoom - _lastSyncedZoom) > 0.0005) {
+    // First-call / post-reset case: _lastSyncedZoom is NaN, and any
+    // arithmetic with NaN yields NaN (which is NOT > 0.0005), so we
+    // explicitly force a write when the cached value isn't a real
+    // number. Without this guard cards stay at the fallback size of 1
+    // forever (because --cm-z never gets written).
+    if (!Number.isFinite(_lastSyncedZoom) ||
+        Math.abs(zoom - _lastSyncedZoom) > 0.0005) {
       _cloudLayer.style.setProperty('--cm-z', zoom);
       _lastSyncedZoom = zoom;
     }
