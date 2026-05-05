@@ -241,8 +241,12 @@ export const EditMode = (() => {
     }
   }, true);
 
-  // ── Navigate helper (forces re-render even if hash unchanged) ──
-  function _navigateOrRefresh(hash) {
+  // ── Navigate to `hash` and force a re-render. ──────────────────
+  // If the hash is already current, hashchange wouldn't fire and the
+  // page would stay rendered with stale data — dispatch a synthetic
+  // hashchange in that case. Otherwise just set the hash and let the
+  // browser fire the event naturally.
+  function _refreshTo(hash) {
     if (window.location.hash === hash) {
       window.dispatchEvent(new Event("hashchange"));
     } else {
@@ -431,7 +435,7 @@ export const EditMode = (() => {
   function startNewCharacter(prefill) {
     _prefill.character = prefill || {};
     _afterSave.character = null;
-    _navigateOrRefresh('#/postava/new');
+    _refreshTo('#/postava/new');
   }
 
   /** "+ Postava zde" — create a new character and auto-link it to a location.
@@ -440,7 +444,7 @@ export const EditMode = (() => {
   function startNewCharacterInLocation(locId) {
     _prefill.character = { location: locId };
     _afterSave.character = null;
-    _navigateOrRefresh('#/postava/new');
+    _refreshTo('#/postava/new');
   }
 
   // ── Character save / delete ────────────────────────────────────
@@ -509,7 +513,7 @@ export const EditMode = (() => {
     _runAfterSave('character', newId);
     _toast("✓ Postava uložena");
     _markClean();
-    _navigateOrRefresh(`#/postava/${newId}`);
+    _refreshTo(`#/postava/${newId}`);
   }
 
   function deleteCharacter(id) {
@@ -638,7 +642,7 @@ export const EditMode = (() => {
 
   function startNewLocation(prefill) {
     _prefill.location = prefill || {};
-    _navigateOrRefresh('#/misto/new');
+    _refreshTo('#/misto/new');
   }
 
   function saveLocation(originalId) {
@@ -690,7 +694,7 @@ export const EditMode = (() => {
     _runAfterSave('location', newId);
     _toast("✓ Místo uloženo");
     _markClean();
-    _navigateOrRefresh(`#/misto/${newId}`);
+    _refreshTo(`#/misto/${newId}`);
   }
 
   // ── Location status dropdown ──────────────────────────────────
@@ -777,7 +781,7 @@ export const EditMode = (() => {
 
   function startNewEvent(prefill) {
     _prefill.event = prefill || {};
-    _navigateOrRefresh('#/udalost/new');
+    _refreshTo('#/udalost/new');
   }
 
   function saveEvent(originalId) {
@@ -815,7 +819,7 @@ export const EditMode = (() => {
     _runAfterSave('event', newId);
     _toast("✓ Událost uložena");
     _markClean();
-    _navigateOrRefresh(`#/udalost/${newId}`);
+    _refreshTo(`#/udalost/${newId}`);
   }
 
   function deleteEvent(id) {
@@ -869,7 +873,7 @@ export const EditMode = (() => {
     });
     _toast("✓ Záhada uložena");
     _markClean();
-    _navigateOrRefresh(`#/zahada/${newId}`);
+    _refreshTo(`#/zahada/${newId}`);
   }
 
   function deleteMystery(id) {
@@ -933,7 +937,7 @@ export const EditMode = (() => {
     Store.saveFaction(newId, { ...existing, name, color, textColor, badge, description: desc, rankChains });
     _toast("✓ Frakce uložena");
     _markClean();
-    _navigateOrRefresh(`#/frakce/${newId}`);
+    _refreshTo(`#/frakce/${newId}`);
   }
 
   function deleteFaction(id) {
@@ -1041,7 +1045,7 @@ export const EditMode = (() => {
   }
   function startNewSpecies(prefill) {
     _prefill.species = prefill || {};
-    _navigateOrRefresh('#/druh/new');
+    _refreshTo('#/druh/new');
   }
   function saveSpecies(originalId) {
     const uid  = originalId || 'new_sp';
@@ -1056,7 +1060,7 @@ export const EditMode = (() => {
     });
     _toast('✓ Druh uložen');
     _markClean();
-    _navigateOrRefresh(`#/druh/${newId}`);
+    _refreshTo(`#/druh/${newId}`);
   }
   function deleteSpecies(id) {
     Store.deleteSpecies(id);
@@ -1078,7 +1082,7 @@ export const EditMode = (() => {
   }
   function startNewBuh(prefill) {
     _prefill.buh = prefill || {};
-    _navigateOrRefresh('#/buh/new');
+    _refreshTo('#/buh/new');
   }
   function saveBuh(originalId) {
     const uid  = originalId || 'new_god';
@@ -1096,7 +1100,7 @@ export const EditMode = (() => {
     });
     _toast('✓ Božstvo uloženo');
     _markClean();
-    _navigateOrRefresh(`#/buh/${newId}`);
+    _refreshTo(`#/buh/${newId}`);
   }
   function deleteBuh(id) {
     Store.deleteBuh(id);
@@ -1118,7 +1122,7 @@ export const EditMode = (() => {
   }
   function startNewArtifact(prefill) {
     _prefill.artifact = prefill || {};
-    _navigateOrRefresh('#/artefakt/new');
+    _refreshTo('#/artefakt/new');
   }
   function saveArtifact(originalId) {
     const uid  = originalId || 'new_art';
@@ -1136,7 +1140,7 @@ export const EditMode = (() => {
     });
     _toast('✓ Artefakt uložen');
     _markClean();
-    _navigateOrRefresh(`#/artefakt/${newId}`);
+    _refreshTo(`#/artefakt/${newId}`);
   }
   function deleteArtifact(id) {
     Store.deleteArtifact(id);
@@ -1159,7 +1163,7 @@ export const EditMode = (() => {
   }
   function startNewHistoricalEvent(prefill) {
     _prefill.historicalEvent = prefill || {};
-    _navigateOrRefresh('#/historicka-udalost/new');
+    _refreshTo('#/historicka-udalost/new');
   }
   function saveHistoricalEvent(originalId) {
     const uid  = originalId || 'new_hist';
@@ -1182,7 +1186,7 @@ export const EditMode = (() => {
     });
     _toast('✓ Historická událost uložena');
     _markClean();
-    _navigateOrRefresh(`#/historicka-udalost/${newId}`);
+    _refreshTo(`#/historicka-udalost/${newId}`);
   }
   function deleteHistoricalEvent(id) {
     Store.deleteHistoricalEvent(id);

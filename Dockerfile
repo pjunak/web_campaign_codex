@@ -5,6 +5,7 @@ COPY package*.json ./
 RUN npm install --production
 
 COPY server.js .
+COPY server-utils.cjs .
 COPY tiler.js .
 COPY web ./web
 

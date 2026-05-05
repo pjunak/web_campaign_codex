@@ -9,6 +9,10 @@ const path         = require('path');
 const crypto       = require('crypto');
 const cookieParser = require('cookie-parser');
 
+// Pure helpers extracted for testability. server-utils.cjs has no
+// module-level side effects so it can be required from `node --test`.
+const { isForbiddenKey, safeJoinIn, pickKeptSnapshots } = require('./server-utils.cjs');
+
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
@@ -17,14 +21,11 @@ const PORT = process.env.PORT || 3000;
 // docker-compose layout uses an external `proxy` network).
 app.set('trust proxy', 1);
 
-// Reject prototype-pollution-style ids on keyed-object PATCH paths.
-// `factions`, `settings`, and `campaign` are stored as plain objects on
-// disk and indexed via `container[payload.id] = …`, so an `__proto__`
-// id would write to the prototype chain.
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-function _isForbiddenKey(k) {
-  return typeof k !== 'string' || FORBIDDEN_KEYS.has(k);
-}
+// Re-bind the imported helpers under the `_`-prefix names that the
+// rest of this file was written against. Keeps the diff at the call
+// sites minimal while still letting tests import the canonical names
+// from server-utils.cjs.
+const _isForbiddenKey = isForbiddenKey;
 
 const DATA_DIR       = path.join(__dirname, 'data');
 const PORTRAITS_DIR  = path.join(__dirname, 'data', 'portraits');
@@ -183,36 +184,9 @@ async function _atomicWrite(filePath, content) {
 }
 
 // ── Path-safety helper ──────────────────────────────────────────
-// Resolves `rel` inside `dir` and returns the absolute path only if
-// the result is genuinely contained — no traversal, no absolute paths,
-// no symlink escapes. Used everywhere we accept caller-supplied path
-// fragments (portrait migration, restore zip entries, etc.).
-function _safeJoinIn(dir, rel) {
-  if (typeof rel !== 'string' || !rel) return null;
-  if (rel.startsWith('/') || rel.startsWith('\\')) return null;
-  if (/(^|[\\/])\.\.([\\/]|$)/.test(rel))         return null;
-  if (rel.includes('\0'))                          return null;
-  const resolved = path.resolve(dir, rel);
-  const root     = path.resolve(dir);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
-  // Defeat symlink escapes: if any prefix of the resolved path is a
-  // symlink that points outside `dir`, reject. We can only realpath
-  // existing prefixes (the leaf may not exist yet for a write target).
-  try {
-    let probe = resolved;
-    while (probe !== root && probe.length > root.length) {
-      if (fs.existsSync(probe)) {
-        const real = fs.realpathSync(probe);
-        if (real !== root && !real.startsWith(root + path.sep)) return null;
-        break;
-      }
-      const next = path.dirname(probe);
-      if (next === probe) break;
-      probe = next;
-    }
-  } catch (_) { return null; }
-  return resolved;
-}
+// Imported from server-utils.cjs (this re-bind keeps the legacy
+// `_`-prefix name used throughout the rest of this file).
+const _safeJoinIn = safeJoinIn;
 
 // ── Snapshot system ──────────────────────────────────────────────
 // Every PATCH / POST that writes data creates a point-in-time
@@ -302,31 +276,19 @@ async function _createSnapshot(reason = 'save') {
   return snap.id;
 }
 
-// Keep last N plus one per UTC-day for D days. Anything outside
-// both windows is deleted.
+// Keep last N plus the latest per UTC-day for D days. Anything
+// outside both windows is deleted. The pure retention logic lives in
+// `pickKeptSnapshots` (server-utils.cjs) so it can be unit-tested
+// without touching disk.
 async function _pruneSnapshots() {
   const files = await _snapshotFiles();
   if (files.length <= SNAPSHOT_RECENT_KEEP) return;
 
   const metas = (await Promise.all(files.map(_snapshotMeta))).filter(Boolean);
-  metas.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-
-  const keep = new Set();
-  // Recent window: last N regardless of date.
-  metas.slice(-SNAPSHOT_RECENT_KEEP).forEach(m => keep.add(m.id));
-
-  // Daily window: one snapshot per UTC-day for the last D days.
-  const byDay = new Map();
-  const oldestDayMs = Date.now() - SNAPSHOT_DAILY_DAYS * 86_400_000;
-  for (const m of metas) {
-    const t = Date.parse(m.createdAt);
-    if (t < oldestDayMs) continue;
-    const day = m.createdAt.slice(0, 10);
-    // Keep the last snapshot of each day (not first, since that
-    // captures the most work done that day).
-    byDay.set(day, m.id);
-  }
-  for (const id of byDay.values()) keep.add(id);
+  const keep  = pickKeptSnapshots(metas, {
+    recentKeep: SNAPSHOT_RECENT_KEEP,
+    dailyDays:  SNAPSHOT_DAILY_DAYS,
+  });
 
   await Promise.all(metas.map(m =>
     keep.has(m.id) ? null : fsp.unlink(path.join(SNAPSHOTS_DIR, m.id)).catch(() => {})
