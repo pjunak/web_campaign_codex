@@ -136,11 +136,21 @@ export const EditMode = (() => {
   // Clears dirty flag and wipes drafts for every currently-mounted
   // editor — once saved, the entity's content matches the draft.
   function _markClean() {
+    const wasDirty = _dirty;
     _dirty = false;
     document.querySelectorAll('textarea.md-easy').forEach(ta => {
       if (ta.id) _clearDraft(ta.id);
     });
+    if (wasDirty) window.dispatchEvent(new CustomEvent('editmode:clean'));
   }
+
+  function _setDirty() {
+    if (_dirty) return;
+    _dirty = true;
+    window.dispatchEvent(new CustomEvent('editmode:dirty'));
+  }
+
+  function isDirty() { return _dirty; }
 
   function _showDraftBanner(textarea, draft, mde) {
     // Place banner directly above the EasyMDE wrapper so it's visually
@@ -162,7 +172,7 @@ export const EditMode = (() => {
     banner.querySelector('.md-draft-btn-restore').addEventListener('click', () => {
       if (mde && typeof mde.value === 'function') mde.value(draft.content);
       else textarea.value = draft.content;
-      _dirty = true;   // restoring a draft counts as unsaved edits
+      _setDirty();   // restoring a draft counts as unsaved edits
       banner.remove();
     });
     banner.querySelector('.md-draft-btn-discard').addEventListener('click', () => {
@@ -190,7 +200,7 @@ export const EditMode = (() => {
     // 2) Autosave on every CodeMirror change.
     try {
       mde.codemirror.on('change', () => {
-        _dirty = true;
+        _setDirty();
         clearTimeout(_draftTimers.get(id));
         _draftTimers.set(id, setTimeout(() => {
           const ta = document.getElementById(id);
@@ -202,10 +212,10 @@ export const EditMode = (() => {
 
   // Dirty on any input/change inside an .edit-form (covers non-MD fields).
   document.addEventListener('input', (e) => {
-    if (e.target.closest && e.target.closest('.edit-form')) _dirty = true;
+    if (e.target.closest && e.target.closest('.edit-form')) _setDirty();
   }, true);
   document.addEventListener('change', (e) => {
-    if (e.target.closest && e.target.closest('.edit-form')) _dirty = true;
+    if (e.target.closest && e.target.closest('.edit-form')) _setDirty();
   }, true);
 
   // Warn if the user tries to close/refresh the tab with unsaved edits.
@@ -244,6 +254,13 @@ export const EditMode = (() => {
   function isActive() { return _active; }
 
   async function toggle() {
+    // Toggling re-renders the page (synthetic hashchange below) which
+    // would silently lose any unsaved edits in the active form. Confirm
+    // first if dirty so the user can cancel and save.
+    if (_dirty && !confirm('Máš neuložené změny. Opravdu opustit režim úprav?')) {
+      return;
+    }
+
     if (!_active) {
       try {
         const check = await fetch('/api/auth');
@@ -269,6 +286,10 @@ export const EditMode = (() => {
       }
     }
 
+    // Re-rendering replaces the form DOM, so dirty state is meaningless
+    // beyond this point. Clear without firing events (the user already
+    // confirmed; we don't want a "saved" indication).
+    _dirty = false;
     _active = !_active;
     document.body.classList.toggle("edit-mode", _active);
     document.querySelectorAll(".edit-mode-toggle").forEach(btn => {
@@ -877,6 +898,22 @@ export const EditMode = (() => {
   }
 
   // ── EasyMDE mount ─────────────────────────────────────────────
+  // Track every mounted EasyMDE instance. When `navigate()` replaces
+  // the page DOM (innerHTML) the old textareas become detached but their
+  // EasyMDE/CodeMirror wrappers retain document-level listeners and
+  // memory until GC'd. We sweep before each mount: any tracked instance
+  // whose textarea is no longer connected gets `toTextArea()`-ed (the
+  // documented teardown that removes the wrapper + listeners).
+  const _mountedEasyMDE = new Set();
+  function _cleanupOrphanedEasyMDE() {
+    for (const mde of _mountedEasyMDE) {
+      const ta = mde.element || (mde.codemirror?.getTextArea?.() ?? null);
+      if (ta && ta.isConnected) continue;
+      try { mde.toTextArea(); } catch (_) { /* already torn down */ }
+      _mountedEasyMDE.delete(mde);
+    }
+  }
+
   // Any <textarea class="md-easy"> rendered by edit templates gets
   // upgraded to a CodeMirror-backed EasyMDE instance on next
   // Widgets.mountAll pass. `forceSync:true` keeps the underlying
@@ -884,6 +921,7 @@ export const EditMode = (() => {
   // save code reading `document.getElementById(id).value` just works.
   // Preview goes through our sanitized renderMarkdown (marked+DOMPurify).
   function mountEasyMDE(root) {
+    _cleanupOrphanedEasyMDE();
     const scope = root || document;
     if (typeof window.EasyMDE !== 'function') return;
     const tas = scope.querySelectorAll('textarea.md-easy:not([data-md-mounted])');
@@ -919,6 +957,7 @@ export const EditMode = (() => {
           },
         });
         ta._easymde = mde;
+        _mountedEasyMDE.add(mde);
         _wireEasyMDEDraft(mde, ta);
       } catch (e) {
         console.warn('EasyMDE mount failed', e);
@@ -1094,7 +1133,7 @@ export const EditMode = (() => {
 
   // ── Public API ─────────────────────────────────────────────────
   return {
-    isActive, toggle,
+    isActive, toggle, isDirty,
     addDynRow, handlePortraitUpload,
     addRankChain, addRankRow,
     saveCharacter, deleteCharacter, onGenderChange,

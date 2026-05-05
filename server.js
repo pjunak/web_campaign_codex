@@ -1,13 +1,30 @@
 const express      = require('express');
+const helmet       = require('helmet');
 const multer       = require('multer');
 const archiver     = require('archiver');
 const fs           = require('fs');
+const fsp          = fs.promises;
+const os           = require('os');
 const path         = require('path');
 const crypto       = require('crypto');
 const cookieParser = require('cookie-parser');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+
+// Trust the first reverse-proxy hop so req.ip / cookie `secure` work
+// correctly when deployed behind nginx/Caddy/Traefik (the standard
+// docker-compose layout uses an external `proxy` network).
+app.set('trust proxy', 1);
+
+// Reject prototype-pollution-style ids on keyed-object PATCH paths.
+// `factions`, `settings`, and `campaign` are stored as plain objects on
+// disk and indexed via `container[payload.id] = …`, so an `__proto__`
+// id would write to the prototype chain.
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function _isForbiddenKey(k) {
+  return typeof k !== 'string' || FORBIDDEN_KEYS.has(k);
+}
 
 const DATA_DIR       = path.join(__dirname, 'data');
 const PORTRAITS_DIR  = path.join(__dirname, 'data', 'portraits');
@@ -25,6 +42,16 @@ fs.mkdirSync(TILES_DIR,      { recursive: true });
 fs.mkdirSync(SWORDCOAST_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR,  { recursive: true });
 
+// Sensible default security headers — X-Content-Type-Options,
+// X-Frame-Options, Strict-Transport-Security, etc. CSP is OFF because
+// the UI uses inline onclick handlers and inline style="…" attributes
+// that strict CSP would block. crossOriginEmbedderPolicy is OFF so
+// CDN scripts/fonts without explicit CORP headers still load.
+app.use(helmet({
+  contentSecurityPolicy:     false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 
@@ -83,14 +110,75 @@ const localMapStorage = multer.diskStorage({
 });
 const uploadLocalMap = multer({ storage: localMapStorage, limits: { fileSize: 20 * 1024 * 1024 }, fileFilter: _imageFilter });
 
+// ── Write serialisation ─────────────────────────────────────────
+// Single-host single-process app, so a Promise-chain mutex is enough
+// to prevent two concurrent PATCHes from interleaving read-modify-
+// write cycles on the same JSON file. Wrap any handler that mutates
+// disk state in `withWriteLock(async () => { … })`.
+let _writeChain = Promise.resolve();
+function withWriteLock(fn) {
+  const next = _writeChain.then(fn, fn);  // run regardless of prior outcome
+  _writeChain = next.catch(() => {});      // never break the chain
+  return next;
+}
+
 // ── Atomic write helper ──────────────────────────────────────────
 // Writing JSON directly can corrupt the file if the server is killed
 // mid-write. We write to a sibling `.tmp` and `rename()` into place —
-// POSIX rename is atomic on the same filesystem.
-function _atomicWrite(filePath, content) {
+// POSIX rename is atomic on the same filesystem. On Windows the rename
+// can briefly fail with EBUSY/EPERM if any reader has the destination
+// open; retry a few times with a tiny backoff before giving up.
+async function _atomicWrite(filePath, content) {
   const tmp = filePath + '.tmp';
-  fs.writeFileSync(tmp, content, 'utf8');
-  fs.renameSync(tmp, filePath);
+  await fsp.writeFile(tmp, content, 'utf8');
+  const delays = [10, 50, 200];
+  let lastErr = null;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      await fsp.rename(tmp, filePath);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (e.code !== 'EBUSY' && e.code !== 'EPERM' && e.code !== 'EACCES') break;
+      if (attempt === delays.length) break;
+      await new Promise(r => setTimeout(r, delays[attempt]));
+    }
+  }
+  // Best-effort tmp cleanup so we don't leave half-written sidecars.
+  try { await fsp.unlink(tmp); } catch (_) {}
+  throw lastErr;
+}
+
+// ── Path-safety helper ──────────────────────────────────────────
+// Resolves `rel` inside `dir` and returns the absolute path only if
+// the result is genuinely contained — no traversal, no absolute paths,
+// no symlink escapes. Used everywhere we accept caller-supplied path
+// fragments (portrait migration, restore zip entries, etc.).
+function _safeJoinIn(dir, rel) {
+  if (typeof rel !== 'string' || !rel) return null;
+  if (rel.startsWith('/') || rel.startsWith('\\')) return null;
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(rel))         return null;
+  if (rel.includes('\0'))                          return null;
+  const resolved = path.resolve(dir, rel);
+  const root     = path.resolve(dir);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
+  // Defeat symlink escapes: if any prefix of the resolved path is a
+  // symlink that points outside `dir`, reject. We can only realpath
+  // existing prefixes (the leaf may not exist yet for a write target).
+  try {
+    let probe = resolved;
+    while (probe !== root && probe.length > root.length) {
+      if (fs.existsSync(probe)) {
+        const real = fs.realpathSync(probe);
+        if (real !== root && !real.startsWith(root + path.sep)) return null;
+        break;
+      }
+      const next = path.dirname(probe);
+      if (next === probe) break;
+      probe = next;
+    }
+  } catch (_) { return null; }
+  return resolved;
 }
 
 // ── Snapshot system ──────────────────────────────────────────────
@@ -106,27 +194,25 @@ const SNAPSHOT_COALESCE_MS = 60 * 1000;
 const SNAPSHOT_RECENT_KEEP = 50;
 const SNAPSHOT_DAILY_DAYS  = 14;
 
-function _snapshotFiles() {
+async function _snapshotFiles() {
   try {
-    return fs.readdirSync(SNAPSHOTS_DIR)
-      .filter(f => /^snapshot-.*\.json$/.test(f))
-      .sort();
+    const list = await fsp.readdir(SNAPSHOTS_DIR);
+    return list.filter(f => /^snapshot-.*\.json$/.test(f)).sort();
   } catch { return []; }
 }
 
-function _readSnapshot(id) {
+async function _readSnapshot(id) {
   const safe = String(id || '').replace(/[^a-zA-Z0-9_\-\.]/g, '');
   const file = path.join(SNAPSHOTS_DIR, safe);
-  if (!fs.existsSync(file)) return null;
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
+  try { return JSON.parse(await fsp.readFile(file, 'utf8')); }
   catch { return null; }
 }
 
-function _snapshotMeta(filename) {
+async function _snapshotMeta(filename) {
   const file = path.join(SNAPSHOTS_DIR, filename);
   try {
-    const stat = fs.statSync(file);
-    const snap = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const [stat, raw] = await Promise.all([fsp.stat(file), fsp.readFile(file, 'utf8')]);
+    const snap = JSON.parse(raw);
     return {
       id:        filename,
       createdAt: snap.createdAt,
@@ -137,45 +223,46 @@ function _snapshotMeta(filename) {
   } catch { return null; }
 }
 
-function _lastSnapshotTime() {
-  const files = _snapshotFiles();
+async function _lastSnapshotTime() {
+  const files = await _snapshotFiles();
   if (!files.length) return 0;
-  const meta = _snapshotMeta(files[files.length - 1]);
+  const meta = await _snapshotMeta(files[files.length - 1]);
   return meta && meta.createdAt ? Date.parse(meta.createdAt) : 0;
 }
 
-function _createSnapshot(reason = 'save') {
+async function _createSnapshot(reason = 'save') {
   const now       = Date.now();
   const createdAt = new Date(now).toISOString();
   const files     = {};
   try {
-    for (const f of fs.readdirSync(DATA_DIR)) {
+    const list = await fsp.readdir(DATA_DIR);
+    for (const f of list) {
       if (!f.endsWith('.json')) continue;
       try {
-        files[f] = JSON.parse(fs.readFileSync(path.join(DATA_DIR, f), 'utf8'));
+        files[f] = JSON.parse(await fsp.readFile(path.join(DATA_DIR, f), 'utf8'));
       } catch (_) { /* skip corrupt file */ }
     }
   } catch (_) { /* data dir missing is OK */ }
   const snap = {
     id:        `snapshot-${createdAt.replace(/[:.]/g, '-')}.json`,
     createdAt,
-    dataHash:  _dataHash(),
+    dataHash:  await _dataHash(),
     reason,
     files,
   };
   const target = path.join(SNAPSHOTS_DIR, snap.id);
-  _atomicWrite(target, JSON.stringify(snap));
-  _pruneSnapshots();
+  await _atomicWrite(target, JSON.stringify(snap));
+  await _pruneSnapshots();
   return snap.id;
 }
 
 // Keep last N plus one per UTC-day for D days. Anything outside
 // both windows is deleted.
-function _pruneSnapshots() {
-  const files = _snapshotFiles();
+async function _pruneSnapshots() {
+  const files = await _snapshotFiles();
   if (files.length <= SNAPSHOT_RECENT_KEEP) return;
 
-  const metas = files.map(_snapshotMeta).filter(Boolean);
+  const metas = (await Promise.all(files.map(_snapshotMeta))).filter(Boolean);
   metas.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
   const keep = new Set();
@@ -195,19 +282,18 @@ function _pruneSnapshots() {
   }
   for (const id of byDay.values()) keep.add(id);
 
-  for (const m of metas) {
-    if (keep.has(m.id)) continue;
-    try { fs.unlinkSync(path.join(SNAPSHOTS_DIR, m.id)); } catch (_) {}
-  }
+  await Promise.all(metas.map(m =>
+    keep.has(m.id) ? null : fsp.unlink(path.join(SNAPSHOTS_DIR, m.id)).catch(() => {})
+  ));
 }
 
 // Take a snapshot unless the last one is within the coalesce window.
 // Called AFTER a successful write — snapshot N represents the data
 // state after change N, so restoring N puts you back to that moment.
-function _maybeSnapshot(reason = 'save') {
-  const last = _lastSnapshotTime();
+async function _maybeSnapshot(reason = 'save') {
+  const last = await _lastSnapshotTime();
   if (last && Date.now() - last < SNAPSHOT_COALESCE_MS) return null;
-  try { return _createSnapshot(reason); }
+  try { return await _createSnapshot(reason); }
   catch (e) { console.warn('[snapshot] create failed:', e.message); return null; }
 }
 
@@ -215,22 +301,23 @@ function _maybeSnapshot(reason = 'save') {
 // snapshot's contents, and delete any JSON file present today that
 // the snapshot didn't have. Before restoring, take a "pre-restore"
 // snapshot so the operation itself is undoable.
-function _restoreSnapshot(id) {
-  const snap = _readSnapshot(id);
+async function _restoreSnapshot(id) {
+  const snap = await _readSnapshot(id);
   if (!snap || !snap.files) return { ok: false, error: 'Snapshot nenalezen' };
-  _createSnapshot('pre-restore');
+  await _createSnapshot('pre-restore');
   // Write every file in the snapshot.
   for (const [name, content] of Object.entries(snap.files)) {
     if (!/^[a-z0-9_]+\.json$/i.test(name)) continue;
-    _atomicWrite(path.join(DATA_DIR, name), JSON.stringify(content, null, 2));
+    await _atomicWrite(path.join(DATA_DIR, name), JSON.stringify(content, null, 2));
   }
   // Remove any JSON file not in the snapshot (e.g. a collection
   // added after the snapshot that didn't exist then).
   try {
-    for (const f of fs.readdirSync(DATA_DIR)) {
+    const list = await fsp.readdir(DATA_DIR);
+    for (const f of list) {
       if (!f.endsWith('.json')) continue;
       if (!Object.prototype.hasOwnProperty.call(snap.files, f)) {
-        try { fs.unlinkSync(path.join(DATA_DIR, f)); } catch (_) {}
+        try { await fsp.unlink(path.join(DATA_DIR, f)); } catch (_) {}
       }
     }
   } catch (_) {}
@@ -242,18 +329,16 @@ function _restoreSnapshot(id) {
 // on filesystems with low-res mtime (e.g. Docker on Windows) and false
 // negatives on touch(1). We hash the concatenated JSON file contents,
 // which is cheap enough for our ~100 KB dataset.
-function _dataHash() {
+async function _dataHash() {
   try {
     const h = crypto.createHash('sha1');
-    fs.readdirSync(DATA_DIR)
-      .filter(f => f.endsWith('.json'))
-      .sort()
-      .forEach(f => {
-        h.update(f);
-        h.update('\0');
-        h.update(fs.readFileSync(path.join(DATA_DIR, f)));
-        h.update('\0');
-      });
+    const list = (await fsp.readdir(DATA_DIR)).filter(f => f.endsWith('.json')).sort();
+    for (const f of list) {
+      h.update(f);
+      h.update('\0');
+      h.update(await fsp.readFile(path.join(DATA_DIR, f)));
+      h.update('\0');
+    }
     return h.digest('hex').slice(0, 16);
   } catch {
     return 'none';
@@ -273,8 +358,8 @@ function _broadcast(eventName, payload) {
     try { res.write(data); } catch (_) { /* client gone — cleanup on close */ }
   }
 }
-function _broadcastDataChanged() {
-  _broadcast('data-changed', { hash: _dataHash(), at: Date.now() });
+async function _broadcastDataChanged() {
+  _broadcast('data-changed', { hash: await _dataHash(), at: Date.now() });
 }
 
 // ── Allowed collections ──────────────────────────────────────────
@@ -296,17 +381,20 @@ const ALL_TYPES = [
   'historicalEvents', 'campaign',
 ];
 
-app.get('/api/data', (_req, res) => {
+app.get('/api/data', async (_req, res) => {
   try {
     const campaign = {};
     let foundAny   = false;
-    for (const t of ALL_TYPES) {
+    await Promise.all(ALL_TYPES.map(async t => {
       const p = getFile(t);
-      if (fs.existsSync(p)) {
-        campaign[t] = JSON.parse(fs.readFileSync(p, 'utf8'));
+      try {
+        const raw = await fsp.readFile(p, 'utf8');
+        campaign[t] = JSON.parse(raw);
         foundAny    = true;
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e;
       }
-    }
+    }));
     if (!foundAny) return res.json(null);
     res.type('application/json').send(JSON.stringify(campaign));
   } catch (e) {
@@ -356,6 +444,7 @@ app.post('/api/login', (req, res) => {
   res.cookie('edit_session', _expectedToken(), {
     httpOnly: true,
     sameSite: 'lax',
+    secure:   process.env.NODE_ENV === 'production',
     path:     '/',
     maxAge:   30 * 24 * 60 * 60 * 1000,   // 30 days
   });
@@ -366,144 +455,199 @@ app.get('/api/auth', requireAuth, (_req, res) => {
   res.json({ ok: true });
 });
 
+// Collections stored as keyed objects on disk (factions, settings,
+// campaign). Everything else is a plain entity-list array. The shape
+// validator below uses this to refuse malformed POST bodies that
+// could accidentally swap an array collection for an object or vice
+// versa, which would corrupt subsequent reads.
+const KEYED_OBJ_TYPES = new Set(['factions', 'settings', 'campaign']);
+
 app.post('/api/data', requireAuth, (req, res) => {
-  try {
-    const body = req.body;
-    if (!body || typeof body !== 'object') return res.status(400).json({ error: 'Invalid data' });
-    for (const key of Object.keys(body)) {
-      if (!ALLOWED_TYPES.has(key)) return res.status(400).json({ error: `Unknown collection: ${key}` });
+  withWriteLock(async () => {
+    try {
+      const body = req.body;
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({ error: 'Invalid data' });
+      }
+      for (const [key, value] of Object.entries(body)) {
+        if (!ALLOWED_TYPES.has(key)) return res.status(400).json({ error: `Unknown collection: ${key}` });
+        if (value === null || typeof value !== 'object') {
+          return res.status(400).json({ error: `Collection ${key} must be array or object` });
+        }
+        if (KEYED_OBJ_TYPES.has(key)) {
+          if (Array.isArray(value)) return res.status(400).json({ error: `Collection ${key} must be a keyed object` });
+        } else {
+          if (!Array.isArray(value)) return res.status(400).json({ error: `Collection ${key} must be an array` });
+        }
+      }
+      for (const [key, value] of Object.entries(body)) {
+        await _atomicWrite(getFile(key), JSON.stringify(value, null, 2));
+      }
+      await _maybeSnapshot('save');
+      await _broadcastDataChanged();
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('POST /api/data:', e);
+      if (!res.headersSent) res.status(500).json({ error: 'Write error' });
     }
-    for (const [key, value] of Object.entries(body)) {
-      if (typeof value === 'object') _atomicWrite(getFile(key), JSON.stringify(value, null, 2));
-    }
-    _maybeSnapshot('save');
-    _broadcastDataChanged();
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('POST /api/data:', e);
-    res.status(500).json({ error: 'Write error' });
-  }
+  });
 });
 
-app.patch('/api/data', requireAuth, (req, res) => {
+// Read a JSON collection file and return parsed contents, or `fallback`
+// if the file is missing. Used inside the PATCH handler.
+async function _readJsonOr(filePath, fallback) {
   try {
-    const { type, action, payload } = req.body || {};
+    return JSON.parse(await fsp.readFile(filePath, 'utf8'));
+  } catch (e) {
+    if (e.code === 'ENOENT') return fallback;
+    throw e;
+  }
+}
 
-    if (!ALLOWED_TYPES.has(type)) {
-      return res.status(400).json({ error: `Unknown collection: ${type}` });
-    }
-    if (action !== 'save' && action !== 'delete') {
-      return res.status(400).json({ error: `Unknown action: ${action}` });
-    }
-    if (!payload || typeof payload !== 'object') {
-      return res.status(400).json({ error: 'Missing payload' });
-    }
+app.patch('/api/data', requireAuth, (req, res) => {
+  withWriteLock(async () => {
+    try {
+      const { type, action, payload } = req.body || {};
 
-    const p = getFile(type);
-    // Keyed-object collections: factions (id → record), settings
-    // (category → array), and campaign (single 'main' record).
-    // Everything else is an entity list.
-    let container = (type === 'factions' || type === 'settings' || type === 'campaign') ? {} : [];
-    if (fs.existsSync(p)) container = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (!ALLOWED_TYPES.has(type)) {
+        return res.status(400).json({ error: `Unknown collection: ${type}` });
+      }
+      if (action !== 'save' && action !== 'delete') {
+        return res.status(400).json({ error: `Unknown action: ${action}` });
+      }
+      if (!payload || typeof payload !== 'object') {
+        return res.status(400).json({ error: 'Missing payload' });
+      }
 
-    // Auto-migrate portrait to canonical subfolder on character save
-    if (type === 'characters' && action === 'save' && payload?.id && payload?.portrait) {
-      const charId         = payload.id;
-      const cleanUrl       = payload.portrait.split('?')[0];
-      const expectedPrefix = `/portraits/${charId}/portrait.`;
-      if (!cleanUrl.startsWith(expectedPrefix)) {
-        const relPath = cleanUrl.replace(/^\/portraits\//, '');
-        const srcFile = path.join(PORTRAITS_DIR, ...relPath.split('/').filter(Boolean));
-        if (fs.existsSync(srcFile) && fs.statSync(srcFile).isFile()) {
-          const ext      = path.extname(srcFile).toLowerCase() || '.jpg';
-          const destDir  = path.join(PORTRAITS_DIR, charId);
-          const destFile = path.join(destDir, `portrait${ext}`);
-          try {
-            fs.mkdirSync(destDir, { recursive: true });
-            try { fs.readdirSync(destDir).filter(f => /^portrait\./i.test(f)).forEach(f => fs.unlinkSync(path.join(destDir, f))); } catch (_) {}
-            fs.renameSync(srcFile, destFile);
-            const srcDir = path.dirname(srcFile);
-            if (srcDir !== PORTRAITS_DIR) {
-              try { if (fs.readdirSync(srcDir).length === 0) fs.rmdirSync(srcDir); } catch (_) {}
+      const p = getFile(type);
+      // Keyed-object collections: factions (id → record), settings
+      // (category → array), and campaign (single 'main' record).
+      // Everything else is an entity list.
+      const emptyContainer = KEYED_OBJ_TYPES.has(type) ? {} : [];
+      let container = await _readJsonOr(p, emptyContainer);
+
+      // Auto-migrate portrait to canonical subfolder on character save
+      if (type === 'characters' && action === 'save' && payload?.id && payload?.portrait) {
+        const charId         = payload.id;
+        const cleanUrl       = payload.portrait.split('?')[0];
+        const expectedPrefix = `/portraits/${charId}/portrait.`;
+        if (!cleanUrl.startsWith(expectedPrefix)) {
+          const relPath = cleanUrl.replace(/^\/portraits\//, '');
+          // Refuse traversal/absolute paths and verify the resolved
+          // location is still inside PORTRAITS_DIR. Without this, an
+          // authed editor could move arbitrary files into the portraits
+          // dir by sending a portrait URL like "/portraits/../../etc/passwd".
+          const srcFile = _safeJoinIn(PORTRAITS_DIR, relPath);
+          // Also guard the destination charId — character ids today are
+          // ASCII slugs, but `payload.id` is caller-supplied so a crafted
+          // `..` would otherwise let the rename target escape.
+          const destDir = _safeJoinIn(PORTRAITS_DIR, charId);
+          let migrated = false;
+          if (srcFile && destDir) {
+            try {
+              const srcStat = await fsp.lstat(srcFile);
+              if (srcStat.isFile()) {
+                const ext      = path.extname(srcFile).toLowerCase() || '.jpg';
+                const destFile = path.join(destDir, `portrait${ext}`);
+                await fsp.mkdir(destDir, { recursive: true });
+                try {
+                  const existing = await fsp.readdir(destDir);
+                  await Promise.all(existing.filter(f => /^portrait\./i.test(f))
+                    .map(f => fsp.unlink(path.join(destDir, f)).catch(() => {})));
+                } catch (_) {}
+                await fsp.rename(srcFile, destFile);
+                const srcDir = path.dirname(srcFile);
+                if (srcDir !== PORTRAITS_DIR) {
+                  try {
+                    const remaining = await fsp.readdir(srcDir);
+                    if (remaining.length === 0) await fsp.rmdir(srcDir);
+                  } catch (_) {}
+                }
+                payload.portrait = `/portraits/${charId}/portrait${ext}`;
+                migrated = true;
+              }
+            } catch (e) {
+              if (e.code !== 'ENOENT') {
+                console.warn(`[portrait] Migration failed for ${charId}:`, e.message);
+              }
             }
-            payload.portrait = `/portraits/${charId}/portrait${ext}`;
-          } catch (e) {
-            console.warn(`[portrait] Migration failed for ${charId}:`, e.message);
-            payload.portrait = cleanUrl;
           }
+          if (!migrated) payload.portrait = cleanUrl;
         } else {
           payload.portrait = cleanUrl;
         }
-      } else {
-        payload.portrait = cleanUrl;
       }
-    }
 
-    if (action === 'save') {
-      if (Array.isArray(container)) {
-        if (type === 'relationships') {
-          const k   = r => `${r.source}||${r.target}||${r.type}`;
-          const idx = container.findIndex(r => k(r) === k(payload));
-          if (idx >= 0) container[idx] = payload; else container.push(payload);
+      if (action === 'save') {
+        if (Array.isArray(container)) {
+          if (type === 'relationships') {
+            const k   = r => `${r.source}||${r.target}||${r.type}`;
+            const idx = container.findIndex(r => k(r) === k(payload));
+            if (idx >= 0) container[idx] = payload; else container.push(payload);
+          } else {
+            const idx = container.findIndex(x => x.id === payload.id);
+            if (idx >= 0) container[idx] = payload; else container.push(payload);
+          }
         } else {
-          const idx = container.findIndex(x => x.id === payload.id);
-          if (idx >= 0) container[idx] = payload; else container.push(payload);
+          // Keyed-object collection: reject ids that would write to the
+          // prototype chain (`__proto__`, `constructor`, `prototype`).
+          if (_isForbiddenKey(payload.id)) {
+            return res.status(400).json({ error: `Forbidden id: ${payload.id}` });
+          }
+          container[payload.id] = payload.data;
         }
-      } else {
-        container[payload.id] = payload.data;
-      }
-    } else if (action === 'delete') {
-      if (Array.isArray(container)) {
-        if (type === 'relationships') {
-          container = container.filter(r => !(r.source === payload.source && r.target === payload.target && r.type === payload.type));
-        } else {
-          container = container.filter(x => x.id !== payload.id);
-          if (type === 'characters') {
-            const relP = getFile('relationships');
-            if (fs.existsSync(relP)) {
-              let rels = JSON.parse(fs.readFileSync(relP, 'utf8'));
-              rels = rels.filter(r => r.source !== payload.id && r.target !== payload.id);
-              _atomicWrite(relP, JSON.stringify(rels, null, 2));
-            }
-            const evtP = getFile('events');
-            if (fs.existsSync(evtP)) {
-              let evts = JSON.parse(fs.readFileSync(evtP, 'utf8'));
-              if (evts.some(e => (e.characters || []).includes(payload.id))) {
-                evts = evts.map(e => ({ ...e, characters: (e.characters || []).filter(cid => cid !== payload.id) }));
-                _atomicWrite(evtP, JSON.stringify(evts, null, 2));
+      } else if (action === 'delete') {
+        if (Array.isArray(container)) {
+          if (type === 'relationships') {
+            container = container.filter(r => !(r.source === payload.source && r.target === payload.target && r.type === payload.type));
+          } else {
+            container = container.filter(x => x.id !== payload.id);
+            if (type === 'characters') {
+              const relP = getFile('relationships');
+              const rels = await _readJsonOr(relP, null);
+              if (Array.isArray(rels)) {
+                const filtered = rels.filter(r => r.source !== payload.id && r.target !== payload.id);
+                await _atomicWrite(relP, JSON.stringify(filtered, null, 2));
               }
-            }
-            const mysP = getFile('mysteries');
-            if (fs.existsSync(mysP)) {
-              let mys = JSON.parse(fs.readFileSync(mysP, 'utf8'));
-              if (mys.some(m => (m.characters || []).includes(payload.id))) {
-                mys = mys.map(m => ({ ...m, characters: (m.characters || []).filter(cid => cid !== payload.id) }));
-                _atomicWrite(mysP, JSON.stringify(mys, null, 2));
+              const evtP = getFile('events');
+              const evts = await _readJsonOr(evtP, null);
+              if (Array.isArray(evts) && evts.some(e => (e.characters || []).includes(payload.id))) {
+                const next = evts.map(e => ({ ...e, characters: (e.characters || []).filter(cid => cid !== payload.id) }));
+                await _atomicWrite(evtP, JSON.stringify(next, null, 2));
+              }
+              const mysP = getFile('mysteries');
+              const mys = await _readJsonOr(mysP, null);
+              if (Array.isArray(mys) && mys.some(m => (m.characters || []).includes(payload.id))) {
+                const next = mys.map(m => ({ ...m, characters: (m.characters || []).filter(cid => cid !== payload.id) }));
+                await _atomicWrite(mysP, JSON.stringify(next, null, 2));
               }
             }
           }
+        } else {
+          if (_isForbiddenKey(payload.id)) {
+            return res.status(400).json({ error: `Forbidden id: ${payload.id}` });
+          }
+          delete container[payload.id];
         }
-      } else {
-        delete container[payload.id];
       }
-    }
 
-    _atomicWrite(p, JSON.stringify(container, null, 2));
-    _maybeSnapshot('save');
-    _broadcastDataChanged();
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('PATCH /api/data:', e);
-    res.status(500).json({ error: 'Patch error' });
-  }
+      await _atomicWrite(p, JSON.stringify(container, null, 2));
+      await _maybeSnapshot('save');
+      await _broadcastDataChanged();
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('PATCH /api/data:', e);
+      if (!res.headersSent) res.status(500).json({ error: 'Patch error' });
+    }
+  });
 });
 
-app.get('/api/version', (_req, res) => {
-  res.json({ hash: _dataHash() });
+app.get('/api/version', async (_req, res) => {
+  res.json({ hash: await _dataHash() });
 });
 
 // ── SSE event stream (Phase 5.1) ──────────────────────────────────
-app.get('/api/events', (req, res) => {
+app.get('/api/events', async (req, res) => {
   res.set({
     'Content-Type':      'text/event-stream',
     'Cache-Control':     'no-cache, no-transform',
@@ -511,7 +655,8 @@ app.get('/api/events', (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   res.flushHeaders?.();
-  res.write(`event: hello\ndata: ${JSON.stringify({ hash: _dataHash(), at: Date.now() })}\n\n`);
+  const hash = await _dataHash();
+  res.write(`event: hello\ndata: ${JSON.stringify({ hash, at: Date.now() })}\n\n`);
   _sseClients.add(res);
 
   const ping = setInterval(() => {
@@ -524,15 +669,15 @@ app.get('/api/events', (req, res) => {
   });
 });
 
-app.post('/api/portrait/:charId', requireAuth, uploadChar.single('portrait'), (req, res) => {
+app.post('/api/portrait/:charId', requireAuth, uploadChar.single('portrait'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const charId  = (req.params.charId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
   const charDir = path.join(PORTRAITS_DIR, charId);
   const newFile = req.file.filename;
   try {
-    fs.readdirSync(charDir)
-      .filter(f => f !== newFile && /^portrait\./i.test(f))
-      .forEach(f => fs.unlinkSync(path.join(charDir, f)));
+    const list = await fsp.readdir(charDir);
+    await Promise.all(list.filter(f => f !== newFile && /^portrait\./i.test(f))
+      .map(f => fsp.unlink(path.join(charDir, f)).catch(() => {})));
   } catch (_) {}
   res.json({ url: `/portraits/${charId}/${req.file.filename}` });
 });
@@ -545,15 +690,15 @@ let _tiler = null;
 try { _tiler = require('./tiler'); }
 catch (e) { console.warn('[tiles] sharp not installed — tile generation disabled:', e.message); }
 
-app.post('/api/localmap/:locId', requireAuth, uploadLocalMap.single('localmap'), (req, res) => {
+app.post('/api/localmap/:locId', requireAuth, uploadLocalMap.single('localmap'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const locId  = (req.params.locId || '').replace(/[^a-z0-9_\-]/gi, '_').substring(0, 60);
   const locDir = path.join(LOCAL_MAPS_DIR, locId);
   const newFile = req.file.filename;
   try {
-    fs.readdirSync(locDir)
-      .filter(f => f !== newFile && /^map\./i.test(f))
-      .forEach(f => fs.unlinkSync(path.join(locDir, f)));
+    const list = await fsp.readdir(locDir);
+    await Promise.all(list.filter(f => f !== newFile && /^map\./i.test(f))
+      .map(f => fsp.unlink(path.join(locDir, f)).catch(() => {})));
   } catch (_) {}
   const url = `/maps/local/${locId}/${req.file.filename}`;
   // Kick off tile generation in the background; the URL above is
@@ -569,14 +714,21 @@ app.post('/api/localmap/:locId', requireAuth, uploadLocalMap.single('localmap'),
 // path under /maps/tiles. Includes a tiles.json manifest per mapId.
 app.use('/maps/tiles', express.static(TILES_DIR, { fallthrough: true, maxAge: '7d' }));
 
-app.delete('/api/portrait/:identifier', requireAuth, (req, res) => {
+app.delete('/api/portrait/:identifier', requireAuth, async (req, res) => {
   const identifier = (req.params.identifier || '').replace(/[^a-z0-9_\-\.]/gi, '_');
-  const target     = path.join(PORTRAITS_DIR, identifier);
+  const target     = _safeJoinIn(PORTRAITS_DIR, identifier);
+  if (!target) return res.status(400).json({ error: 'Invalid identifier' });
   try {
-    if (!fs.existsSync(target)) return res.json({ ok: true });
-    const stat = fs.statSync(target);
-    if (stat.isDirectory()) fs.rmSync(target, { recursive: true, force: true });
-    else fs.unlinkSync(target);
+    let stat;
+    try { stat = await fsp.lstat(target); }
+    catch (e) {
+      if (e.code === 'ENOENT') return res.json({ ok: true });
+      throw e;
+    }
+    // Refuse symlinks — never follow them out of PORTRAITS_DIR.
+    if (stat.isSymbolicLink()) return res.status(400).json({ error: 'Symlinks not allowed' });
+    if (stat.isDirectory()) await fsp.rm(target, { recursive: true, force: true });
+    else await fsp.unlink(target);
     res.json({ ok: true });
   } catch (e) {
     console.error('DELETE /api/portrait:', e);
@@ -588,63 +740,77 @@ app.delete('/api/portrait/:identifier', requireAuth, (req, res) => {
 // The snapshot system lives in the helpers at the top of this file.
 // Endpoints here expose list / create / restore / delete to the
 // client so the /nastaveni Záloha tab can manage them.
-app.get('/api/snapshots', requireAuth, (_req, res) => {
-  const files = _snapshotFiles();
-  const metas = files.map(_snapshotMeta).filter(Boolean);
-  // Newest first for UI convenience.
-  metas.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  res.json({ snapshots: metas });
+app.get('/api/snapshots', requireAuth, async (_req, res) => {
+  try {
+    const files = await _snapshotFiles();
+    const metas = (await Promise.all(files.map(_snapshotMeta))).filter(Boolean);
+    // Newest first for UI convenience.
+    metas.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    res.json({ snapshots: metas });
+  } catch (e) {
+    console.error('GET /api/snapshots:', e);
+    res.status(500).json({ error: 'List failed' });
+  }
 });
 
 app.post('/api/snapshots', requireAuth, (_req, res) => {
-  try {
-    const id = _createSnapshot('manual');
-    res.json({ ok: true, id });
-  } catch (e) {
-    console.error('POST /api/snapshots:', e);
-    res.status(500).json({ error: 'Snapshot failed' });
-  }
+  withWriteLock(async () => {
+    try {
+      const id = await _createSnapshot('manual');
+      res.json({ ok: true, id });
+    } catch (e) {
+      console.error('POST /api/snapshots:', e);
+      if (!res.headersSent) res.status(500).json({ error: 'Snapshot failed' });
+    }
+  });
 });
 
 app.post('/api/snapshots/:id/restore', requireAuth, (req, res) => {
-  try {
-    const r = _restoreSnapshot(req.params.id);
-    if (!r.ok) return res.status(404).json(r);
-    _broadcastDataChanged();
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('POST /api/snapshots/:id/restore:', e);
-    res.status(500).json({ error: 'Restore failed' });
-  }
+  withWriteLock(async () => {
+    try {
+      const r = await _restoreSnapshot(req.params.id);
+      if (!r.ok) return res.status(404).json(r);
+      await _broadcastDataChanged();
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('POST /api/snapshots/:id/restore:', e);
+      if (!res.headersSent) res.status(500).json({ error: 'Restore failed' });
+    }
+  });
 });
 
 // Revert the last N changes by restoring the snapshot N-1 positions
 // back in the newest-first list (so n=1 = second-newest snapshot,
 // which represents state before the most recent change).
 app.post('/api/snapshots/revert-last/:n', requireAuth, (req, res) => {
-  const n = Math.max(1, Math.min(50, Number(req.params.n) || 1));
-  const files = _snapshotFiles();
-  if (files.length <= n) return res.status(400).json({ error: 'Nedostatek bodů zálohy pro zpětný krok' });
-  // files is ascending by timestamp; the last entry is the newest.
-  // To undo the last N changes, restore the snapshot N+1 from the end.
-  const id = files[files.length - 1 - n];
-  try {
-    const r = _restoreSnapshot(id);
-    if (!r.ok) return res.status(404).json(r);
-    _broadcastDataChanged();
-    res.json({ ok: true, id });
-  } catch (e) {
-    console.error('POST /api/snapshots/revert-last:', e);
-    res.status(500).json({ error: 'Revert failed' });
-  }
+  withWriteLock(async () => {
+    const n = Math.max(1, Math.min(50, Number(req.params.n) || 1));
+    try {
+      const files = await _snapshotFiles();
+      if (files.length <= n) return res.status(400).json({ error: 'Nedostatek bodů zálohy pro zpětný krok' });
+      // files is ascending by timestamp; the last entry is the newest.
+      // To undo the last N changes, restore the snapshot N+1 from the end.
+      const id = files[files.length - 1 - n];
+      const r = await _restoreSnapshot(id);
+      if (!r.ok) return res.status(404).json(r);
+      await _broadcastDataChanged();
+      res.json({ ok: true, id });
+    } catch (e) {
+      console.error('POST /api/snapshots/revert-last:', e);
+      if (!res.headersSent) res.status(500).json({ error: 'Revert failed' });
+    }
+  });
 });
 
-app.delete('/api/snapshots/:id', requireAuth, (req, res) => {
+app.delete('/api/snapshots/:id', requireAuth, async (req, res) => {
   const safe = String(req.params.id || '').replace(/[^a-zA-Z0-9_\-\.]/g, '');
+  if (!safe) return res.status(400).json({ error: 'Invalid id' });
   const file = path.join(SNAPSHOTS_DIR, safe);
-  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Snapshot nenalezen' });
-  try { fs.unlinkSync(file); res.json({ ok: true }); }
-  catch (e) {
+  try {
+    await fsp.unlink(file);
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.code === 'ENOENT') return res.status(404).json({ error: 'Snapshot nenalezen' });
     console.error('DELETE /api/snapshots:', e);
     res.status(500).json({ error: 'Delete failed' });
   }
@@ -671,13 +837,13 @@ const uploadWorldMap = multer({
   fileFilter: _imageFilter,
 });
 
-app.post('/api/worldmap', requireAuth, uploadWorldMap.single('worldmap'), (req, res) => {
+app.post('/api/worldmap', requireAuth, uploadWorldMap.single('worldmap'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image received' });
   const newFile = req.file.filename;
   try {
-    fs.readdirSync(SWORDCOAST_DIR)
-      .filter(f => f !== newFile && /^sword_coast\./i.test(f))
-      .forEach(f => fs.unlinkSync(path.join(SWORDCOAST_DIR, f)));
+    const list = await fsp.readdir(SWORDCOAST_DIR);
+    await Promise.all(list.filter(f => f !== newFile && /^sword_coast\./i.test(f))
+      .map(f => fsp.unlink(path.join(SWORDCOAST_DIR, f)).catch(() => {})));
   } catch (_) {}
   const url = `/maps/swordcoast/${newFile}`;
   // Schedule tile rebuild so the Leaflet path picks up the new image.
@@ -715,22 +881,28 @@ app.get('/api/backup', requireAuth, (_req, res) => {
 // Always takes a `pre-restore` snapshot first so the operation is
 // undoable from the Záloha tab. Path-traversal-safe: every entry
 // is resolved against DATA_DIR and rejected if it would escape.
+//
+// Uses disk-staged storage rather than memory: the container's 256 MB
+// memory limit can't absorb a 200 MB upload buffer, so multer writes
+// to the OS temp dir first and we read from there. 50 MB cap is well
+// above any realistic backup (campaign data + portraits + maps).
 const AdmZip = require('adm-zip');
 const restoreUpload = multer({
-  storage: multer.memoryStorage(),
-  limits:  { fileSize: 200 * 1024 * 1024 },  // 200 MB hard cap
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+    filename:    (_req, _file, cb) => cb(null, `tiamat-restore-${Date.now()}-${crypto.randomBytes(6).toString('hex')}`),
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 },
 });
 
 function _safeJoinDataDir(rel) {
-  // Refuse traversal/absolute paths.
-  if (!rel || rel.startsWith('/') || rel.startsWith('\\') || /(^|[\\/])\.\.([\\/]|$)/.test(rel)) {
-    return null;
-  }
-  const target = path.join(DATA_DIR, rel);
-  // path.resolve normalizes; verify the result is still inside DATA_DIR.
-  const resolved = path.resolve(target);
-  const root     = path.resolve(DATA_DIR);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
+  const resolved = _safeJoinIn(DATA_DIR, rel);
+  if (!resolved) return null;
+  // Additionally refuse anything that would write into the snapshots
+  // directory. Without this, a crafted ZIP could overwrite legitimate
+  // snapshots or plant a fake one for a later "restore" attack.
+  const snapRoot = path.resolve(SNAPSHOTS_DIR);
+  if (resolved === snapRoot || resolved.startsWith(snapRoot + path.sep)) return null;
   return resolved;
 }
 
@@ -738,78 +910,112 @@ app.post('/api/restore', requireAuth, restoreUpload.single('backup'), (req, res)
   if (!req.file) return res.status(400).json({ error: 'Žádný soubor nepřijat' });
 
   const filename = String(req.file.originalname || '');
-  const buffer   = req.file.buffer;
+  const tmpPath  = req.file.path;
 
-  // Detect format: ZIP starts with magic `PK\x03\x04`, JSON typically
-  // with `{` (after optional whitespace).
-  const isZipMagic  = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4B
-                                         && buffer[2] === 0x03 && buffer[3] === 0x04;
-  const isZip       = /\.zip$/i.test(filename) || isZipMagic;
-  const looksJson   = !isZip && (/\.json$/i.test(filename)
-                       || /^\s*[\{\[]/.test(buffer.toString('utf8', 0, Math.min(64, buffer.length))));
-
-  // Pre-restore snapshot — bypass the coalesce window so we always
-  // capture the current state regardless of recent activity.
-  try { _createSnapshot('pre-restore'); }
-  catch (e) { console.warn('[restore] pre-restore snapshot failed:', e.message); }
-
-  if (isZip) {
-    let zip;
-    try { zip = new AdmZip(buffer); }
-    catch (e) { return res.status(400).json({ error: 'Neplatný ZIP soubor' }); }
-
-    const entries  = zip.getEntries();
-    const restored = [];
-    const skipped  = [];
-    for (const entry of entries) {
-      if (entry.isDirectory) continue;
-      // Normalize separators and strip the leading `data/` wrapper that
-      // /api/backup adds. Other zip producers may put files at the root.
-      let name = entry.entryName.replace(/\\/g, '/');
-      if (name.startsWith('data/')) name = name.slice(5);
-      if (!name) continue;
-
-      const target = _safeJoinDataDir(name);
-      if (!target) { skipped.push(name); continue; }
+  withWriteLock(async () => {
+    const cleanup = () => fsp.unlink(tmpPath).catch(() => {});
+    try {
+      // Sniff the first 64 bytes from disk to detect format. ZIP starts
+      // with magic `PK\x03\x04`; JSON with `{` or `[` after optional ws.
+      let head;
       try {
-        fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.writeFileSync(target, entry.getData());
-        restored.push(name);
+        const fh = await fsp.open(tmpPath, 'r');
+        try {
+          const { buffer: buf, bytesRead } = await fh.read(Buffer.alloc(64), 0, 64, 0);
+          head = buf.slice(0, bytesRead);
+        } finally { await fh.close(); }
       } catch (e) {
-        console.warn('[restore] failed entry', name, e.message);
-        skipped.push(name);
+        await cleanup();
+        return res.status(500).json({ error: 'Nelze přečíst nahraný soubor' });
       }
-    }
 
-    // Rebuild tile pyramids in the background so map images uploaded
-    // along with the backup get fresh tiles.
-    try { _backgroundTileSweep(); } catch (_) {}
+      const isZipMagic = head.length >= 4 && head[0] === 0x50 && head[1] === 0x4B
+                                          && head[2] === 0x03 && head[3] === 0x04;
+      const isZip      = /\.zip$/i.test(filename) || isZipMagic;
+      const looksJson  = !isZip && (/\.json$/i.test(filename)
+                          || /^\s*[\{\[]/.test(head.toString('utf8')));
 
-    _broadcastDataChanged();
-    return res.json({ ok: true, format: 'zip', restored: restored.length, skipped: skipped.length });
-  }
+      // Pre-restore snapshot — bypass the coalesce window so we always
+      // capture the current state regardless of recent activity.
+      try { await _createSnapshot('pre-restore'); }
+      catch (e) { console.warn('[restore] pre-restore snapshot failed:', e.message); }
 
-  if (looksJson) {
-    let parsed;
-    try { parsed = JSON.parse(buffer.toString('utf8')); }
-    catch (e) { return res.status(400).json({ error: 'Neplatný JSON soubor' }); }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return res.status(400).json({ error: 'Neplatný formát zálohy (očekávám objekt)' });
-    }
-    const restored = [];
-    for (const t of ALL_TYPES) {
-      if (parsed[t] === undefined) continue;
-      _atomicWrite(getFile(t), JSON.stringify(parsed[t], null, 2));
-      restored.push(`${t}.json`);
-    }
-    if (!restored.length) {
-      return res.status(400).json({ error: 'JSON neobsahuje žádnou známou kolekci' });
-    }
-    _broadcastDataChanged();
-    return res.json({ ok: true, format: 'json', restored: restored.length });
-  }
+      if (isZip) {
+        let zip;
+        try { zip = new AdmZip(tmpPath); }
+        catch (e) {
+          await cleanup();
+          return res.status(400).json({ error: 'Neplatný ZIP soubor' });
+        }
 
-  return res.status(400).json({ error: 'Nepodporovaný formát — očekávám .zip nebo .json' });
+        const entries  = zip.getEntries();
+        const restored = [];
+        const skipped  = [];
+        for (const entry of entries) {
+          if (entry.isDirectory) continue;
+          // Normalize separators and strip the leading `data/` wrapper that
+          // /api/backup adds. Other zip producers may put files at the root.
+          let name = entry.entryName.replace(/\\/g, '/');
+          if (name.startsWith('data/')) name = name.slice(5);
+          if (!name) continue;
+
+          const target = _safeJoinDataDir(name);
+          if (!target) { skipped.push(name); continue; }
+          try {
+            await fsp.mkdir(path.dirname(target), { recursive: true });
+            await fsp.writeFile(target, entry.getData());
+            restored.push(name);
+          } catch (e) {
+            console.warn('[restore] failed entry', name, e.message);
+            skipped.push(name);
+          }
+        }
+
+        // Rebuild tile pyramids in the background so map images uploaded
+        // along with the backup get fresh tiles.
+        try { _backgroundTileSweep(); } catch (_) {}
+
+        await _broadcastDataChanged();
+        await cleanup();
+        return res.json({ ok: true, format: 'zip', restored: restored.length, skipped: skipped.length });
+      }
+
+      if (looksJson) {
+        let parsed;
+        try {
+          const raw = await fsp.readFile(tmpPath, 'utf8');
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          await cleanup();
+          return res.status(400).json({ error: 'Neplatný JSON soubor' });
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          await cleanup();
+          return res.status(400).json({ error: 'Neplatný formát zálohy (očekávám objekt)' });
+        }
+        const restored = [];
+        for (const t of ALL_TYPES) {
+          if (parsed[t] === undefined) continue;
+          await _atomicWrite(getFile(t), JSON.stringify(parsed[t], null, 2));
+          restored.push(`${t}.json`);
+        }
+        if (!restored.length) {
+          await cleanup();
+          return res.status(400).json({ error: 'JSON neobsahuje žádnou známou kolekci' });
+        }
+        await _broadcastDataChanged();
+        await cleanup();
+        return res.json({ ok: true, format: 'json', restored: restored.length });
+      }
+
+      await cleanup();
+      return res.status(400).json({ error: 'Nepodporovaný formát — očekávám .zip nebo .json' });
+    } catch (e) {
+      await cleanup();
+      console.error('POST /api/restore:', e);
+      if (!res.headersSent) res.status(500).json({ error: 'Restore failed' });
+    }
+  });
 });
 
 app.get('*', (_req, res) => {
@@ -817,41 +1023,52 @@ app.get('*', (_req, res) => {
 });
 
 // ── Bootstrap: ensure tiles exist for any map already on disk ─────
-function _backgroundTileSweep() {
+async function _backgroundTileSweep() {
   if (!_tiler) return;
   const jobs = [];
   // World map(s): data/maps/swordcoast/*.jpg
   try {
     const swDir = path.join(MAPS_DIR, 'swordcoast');
-    if (fs.existsSync(swDir)) {
-      for (const f of fs.readdirSync(swDir)) {
-        if (!/\.(jpe?g|png|webp)$/i.test(f)) continue;
-        const base = path.basename(f, path.extname(f));
-        jobs.push({ mapId: `swordcoast/${base}`, src: path.join(swDir, f) });
-      }
+    const list  = await fsp.readdir(swDir).catch(() => []);
+    for (const f of list) {
+      if (!/\.(jpe?g|png|webp)$/i.test(f)) continue;
+      const base = path.basename(f, path.extname(f));
+      jobs.push({ mapId: `swordcoast/${base}`, src: path.join(swDir, f) });
     }
   } catch (_) {}
   // Local maps: data/maps/local/<locId>/map.*
   try {
-    if (fs.existsSync(LOCAL_MAPS_DIR)) {
-      for (const locId of fs.readdirSync(LOCAL_MAPS_DIR)) {
-        const locDir = path.join(LOCAL_MAPS_DIR, locId);
-        if (!fs.statSync(locDir).isDirectory()) continue;
-        const files = fs.readdirSync(locDir).filter(f => /^map\.(jpe?g|png|webp)$/i.test(f));
-        if (files.length) jobs.push({ mapId: `local/${locId}`, src: path.join(locDir, files[0]) });
-      }
+    const locIds = await fsp.readdir(LOCAL_MAPS_DIR).catch(() => []);
+    for (const locId of locIds) {
+      const locDir = path.join(LOCAL_MAPS_DIR, locId);
+      let stat;
+      try { stat = await fsp.stat(locDir); } catch { continue; }
+      if (!stat.isDirectory()) continue;
+      const files = (await fsp.readdir(locDir)).filter(f => /^map\.(jpe?g|png|webp)$/i.test(f));
+      if (files.length) jobs.push({ mapId: `local/${locId}`, src: path.join(locDir, files[0]) });
     }
   } catch (_) {}
   // Run sequentially to avoid hammering CPU on startup
-  (async () => {
-    for (const j of jobs) {
-      try { await _tiler.buildFor(j.mapId, j.src); }
-      catch (e) { console.warn(`[tiles] ${j.mapId}: ${e.message}`); }
-    }
-  })();
+  for (const j of jobs) {
+    try { await _tiler.buildFor(j.mapId, j.src); }
+    catch (e) { console.warn(`[tiles] ${j.mapId}: ${e.message}`); }
+  }
 }
 
 app.listen(PORT, () => {
   console.log(`Tiamat running on http://localhost:${PORT}`);
-  _backgroundTileSweep();
+  // Loud warning if running with the default/insecure password. The
+  // codebase is open-source so anyone can compute SHA256("123") — a
+  // deployment that left EDIT_PASSWORD unset would be world-editable.
+  const pwd = process.env.EDIT_PASSWORD;
+  if (!pwd || pwd === '123') {
+    console.warn('');
+    console.warn('  ⚠  EDIT_PASSWORD is ' + (pwd ? 'the default ("123")' : 'UNSET') + '.');
+    console.warn('     Anyone with the source can compute the cookie value and gain edit access.');
+    console.warn('     Set EDIT_PASSWORD in the environment (e.g. in docker-compose.yml or .env) before exposing this server.');
+    console.warn('');
+  }
+  // Fire-and-forget — sweep can take seconds for large maps; don't
+  // block the listen callback.
+  _backgroundTileSweep().catch(e => console.warn('[tiles] sweep failed:', e.message));
 });

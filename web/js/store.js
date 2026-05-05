@@ -3,7 +3,7 @@ import {
   SPECIES, PANTHEON, ARTIFACTS, HISTORICAL_EVENTS,
   SETTINGS_DEFAULTS, SETTINGS_USAGE_MAP,
 } from './data.js';
-import { norm } from './utils.js';
+import { norm, clearMarkdownCache } from './utils.js';
 
 export const Store = (() => {
   let _data            = null;
@@ -25,16 +25,17 @@ export const Store = (() => {
     arr.push(val);
   }
 
-  function _reindex() {
-    _idxCharsByFaction   = new Map();
-    _idxCharsByLocation  = new Map();
-    _idxRelsByChar       = new Map();
-    _idxEventsByChar     = new Map();
-    _idxEventsByLocation = new Map();
-    _idxMysteriesByChar  = new Map();
-    _idxChildLocations   = new Map();
+  // Per-collection reindex helpers. Save/delete callers invoke only the
+  // ones that could have changed — saving a character can't affect the
+  // events index, etc. `_reindex()` runs all of them and is used by
+  // `load()` after a fresh fetch. The split lets a save touch ~1/5 the
+  // entries it used to. Each helper also busts the markdown cache so
+  // wiki-link resolution stays consistent after renames/creates.
+  function _reindexCharacters() {
+    _idxCharsByFaction  = new Map();
+    _idxCharsByLocation = new Map();
+    _bustMarkdownCache();
     if (!_data) return;
-
     for (const c of _data.characters || []) {
       _push(_idxCharsByFaction, c.faction, c);
       if (c.location) _push(_idxCharsByLocation, c.location, c);
@@ -42,20 +43,58 @@ export const Store = (() => {
         if (r?.locationId) _push(_idxCharsByLocation, r.locationId, c);
       }
     }
+  }
+  function _reindexRelationships() {
+    _idxRelsByChar = new Map();
+    _bustMarkdownCache();
+    if (!_data) return;
     for (const r of _data.relationships || []) {
       _push(_idxRelsByChar, r.source, r);
       if (r.target !== r.source) _push(_idxRelsByChar, r.target, r);
     }
+  }
+  function _reindexEvents() {
+    _idxEventsByChar     = new Map();
+    _idxEventsByLocation = new Map();
+    _bustMarkdownCache();
+    if (!_data) return;
     for (const e of _data.events || []) {
       for (const cid of e.characters || []) _push(_idxEventsByChar, cid, e);
       for (const lid of e.locations  || []) _push(_idxEventsByLocation, lid, e);
     }
+  }
+  function _reindexMysteries() {
+    _idxMysteriesByChar = new Map();
+    _bustMarkdownCache();
+    if (!_data) return;
     for (const m of _data.mysteries || []) {
       for (const cid of m.characters || []) _push(_idxMysteriesByChar, cid, m);
     }
+  }
+  function _reindexLocations() {
+    _idxChildLocations = new Map();
+    _bustMarkdownCache();
+    if (!_data) return;
     for (const l of _data.locations || []) {
       if (l.parentId) _push(_idxChildLocations, l.parentId, l);
     }
+  }
+
+  function _reindex() {
+    _reindexCharacters();
+    _reindexRelationships();
+    _reindexEvents();
+    _reindexMysteries();
+    _reindexLocations();
+  }
+
+  // Wiki-link resolution (`[[Name]]` → `#/postava/<id>`) walks every
+  // collection. The markdown cache keyed by raw source can hold stale
+  // resolutions after a rename or creation. Invalidate it on every
+  // mutation. Cheap — markdown re-rendering is incremental and cached
+  // again the next time each article is opened.
+  function _bustMarkdownCache() {
+    try { clearMarkdownCache(); } catch (_) {}
   }
 
   function _defaults() {
@@ -243,17 +282,63 @@ export const Store = (() => {
     return true;
   }
 
-  function _sync(type, action, payload) {
-    if (!_serverAvailable) return false;
-    fetch('/api/data', {
+  // Serialised write queue — every PATCH waits for the previous one
+  // to settle (success, definitive failure, or auth) before sending.
+  // Preserves ordering on the wire, so a save-then-delete pair can't
+  // arrive out of order. Each request gets up to 3 attempts with
+  // exponential backoff for transient network/5xx errors.
+  let _writeChain   = Promise.resolve();
+  let _inflightCount = 0;
+  function _setInflight(n) {
+    _inflightCount = n;
+    window.dispatchEvent(new CustomEvent('store:inflight', { detail: { count: n } }));
+  }
+
+  async function _patchOnce(type, action, payload) {
+    const res = await fetch('/api/data', {
       method:  'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ type, action, payload }),
-    }).then(res => {
-      if (res.status === 401) window.dispatchEvent(new CustomEvent('store:auth-failed'));
-    }).catch(e => {
-      console.warn('Store: server sync failed.', e);
-      window.dispatchEvent(new CustomEvent('store:save-failed'));
+    });
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent('store:auth-failed'));
+      return { ok: false, terminal: true, status: 401 };
+    }
+    if (res.ok) return { ok: true };
+    // 4xx (other than 401) means our payload is wrong — retrying won't
+    // help. 5xx and network errors are worth retrying.
+    if (res.status >= 400 && res.status < 500) return { ok: false, terminal: true, status: res.status };
+    return { ok: false, terminal: false, status: res.status };
+  }
+
+  function _sync(type, action, payload) {
+    if (!_serverAvailable) return false;
+    _setInflight(_inflightCount + 1);
+    _writeChain = _writeChain.then(async () => {
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const r = await _patchOnce(type, action, payload);
+          if (r.ok) return;
+          if (r.terminal) {
+            if (r.status !== 401) {
+              console.warn(`Store: ${type}/${action} rejected (${r.status}).`);
+              window.dispatchEvent(new CustomEvent('store:save-failed', { detail: { type, action, status: r.status }}));
+            }
+            return;
+          }
+          lastErr = new Error(`HTTP ${r.status}`);
+        } catch (e) {
+          lastErr = e;
+        }
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, attempt * attempt * 200));  // 200ms, 800ms
+        }
+      }
+      console.warn(`Store: ${type}/${action} sync failed after retries.`, lastErr);
+      window.dispatchEvent(new CustomEvent('store:save-failed', { detail: { type, action }}));
+    }).finally(() => {
+      _setInflight(Math.max(0, _inflightCount - 1));
     });
     return true;
   }
@@ -406,7 +491,7 @@ export const Store = (() => {
     _stamp(char);
     const idx = _data.characters.findIndex(c => c.id === char.id);
     if (idx >= 0) _data.characters[idx] = char; else _data.characters.push(char);
-    _reindex();
+    _reindexCharacters();
     return _sync('characters', 'save', char);
   }
 
@@ -432,7 +517,10 @@ export const Store = (() => {
     _data.relationships = _data.relationships.filter(r => r.source !== id && r.target !== id);
     _data.events        = (_data.events    || []).map(e => ({ ...e, characters: (e.characters    || []).filter(cid => cid !== id) }));
     _data.mysteries     = (_data.mysteries || []).map(m => ({ ...m, characters: (m.characters    || []).filter(cid => cid !== id) }));
-    _reindex();
+    _reindexCharacters();
+    _reindexRelationships();
+    _reindexEvents();
+    _reindexMysteries();
     return _sync('characters', 'delete', { id });
   }
 
@@ -443,7 +531,7 @@ export const Store = (() => {
     const k   = key(rel);
     const idx = _data.relationships.findIndex(r => key(r) === k);
     if (idx >= 0) _data.relationships[idx] = rel; else _data.relationships.push(rel);
-    _reindex();
+    _reindexRelationships();
     return _sync('relationships', 'save', rel);
   }
 
@@ -461,7 +549,7 @@ export const Store = (() => {
     _data.relationships = _data.relationships.filter(
       r => !(r.source === source && r.target === target && r.type === type)
     );
-    _reindex();
+    _reindexRelationships();
     return _sync('relationships', 'delete', { source, target, type });
   }
 
@@ -503,7 +591,7 @@ export const Store = (() => {
       }
     }
 
-    _reindex();
+    _reindexLocations();
     const ok = _sync('locations', 'save', loc);
     for (const pid of touched) {
       const peer = _data.locations.find(l => l.id === pid);
@@ -535,7 +623,7 @@ export const Store = (() => {
       if (changed) { _stamp(l); touched.push(l); }
     }
 
-    _reindex();
+    _reindexLocations();
     const ok = _sync('locations', 'delete', { id });
     for (const peer of touched) _sync('locations', 'save', peer);
     return ok;
@@ -546,7 +634,7 @@ export const Store = (() => {
     _stamp(evt);
     const idx = _data.events.findIndex(e => e.id === evt.id);
     if (idx >= 0) _data.events[idx] = evt; else _data.events.push(evt);
-    _reindex();
+    _reindexEvents();
     return _sync('events', 'save', evt);
   }
 
@@ -555,7 +643,7 @@ export const Store = (() => {
     const evt = _data.events.find(e => e.id === id);
     if (evt) _trash.set(_trashKey('events', id), { kind:'events', entity: JSON.parse(JSON.stringify(evt)) });
     _data.events = _data.events.filter(e => e.id !== id);
-    _reindex();
+    _reindexEvents();
     return _sync('events', 'delete', { id });
   }
 
@@ -564,7 +652,7 @@ export const Store = (() => {
     _stamp(mys);
     const idx = _data.mysteries.findIndex(m => m.id === mys.id);
     if (idx >= 0) _data.mysteries[idx] = mys; else _data.mysteries.push(mys);
-    _reindex();
+    _reindexMysteries();
     return _sync('mysteries', 'save', mys);
   }
 
@@ -573,7 +661,7 @@ export const Store = (() => {
     const m = _data.mysteries.find(x => x.id === id);
     if (m) _trash.set(_trashKey('mysteries', id), { kind:'mysteries', entity: JSON.parse(JSON.stringify(m)) });
     _data.mysteries = _data.mysteries.filter(m => m.id !== id);
-    _reindex();
+    _reindexMysteries();
     return _sync('mysteries', 'delete', { id });
   }
 

@@ -182,17 +182,39 @@
   <div class="map-sheet-backdrop" id="map-backdrop" hidden></div>
 
   <!-- ── SCRIPTS ───────────────────────────────────────────── -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- All CDN tags carry SRI hashes + crossorigin="anonymous" so a CDN
+       compromise can't silently inject code. Hashes are pinned to the
+       exact version in the URL — bumping the version requires re-running
+       the SRI generator and updating the integrity attribute. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H"
+        crossorigin="anonymous">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"
+          integrity="sha384-J7Q85oZE4GJ/e7+n2aOQsLXfDwwfnA8S2nZAL5BpFsfpCF84zQD7LroZ/dMnLgex"
+          crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"
+          integrity="sha384-2IH3T69EIKYC4c+RXZifZRvaH5SRUdacJW7j6HtE5rQbvLhKKdawxq6vpIzJ7j9M"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"
+          integrity="sha384-drxU/AikJCPfvw6zqWesCn7xREkWv1Y91CVTxrMRTwdttj6lHh27yDR9Ap7zABYr"
+          crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH"
+          crossorigin="anonymous"></script>
   <!-- Markdown + sanitizer for article-style long-description fields -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"
+          integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi"
+          crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.11/dist/purify.min.js"
+          integrity="sha384-Ic7KEGROu37YaruU6NyiYeib7UhjFyDZQ5fzBAji965L75T/4LGk5nzwMEjNGexs"
+          crossorigin="anonymous"></script>
   <!-- EasyMDE — markdown editor wrapping CodeMirror, with toolbar + preview -->
-  <link rel="stylesheet" href="https://unpkg.com/easymde@2.18.0/dist/easymde.min.css">
-  <script src="https://unpkg.com/easymde@2.18.0/dist/easymde.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/easymde@2.18.0/dist/easymde.min.css"
+        integrity="sha384-uqD/OYCNfagd1EgXMgl5QedTD5K+B3e9b8GYo/41t7+Serf7CBxvl+tU1gHd+qd1"
+        crossorigin="anonymous">
+  <script src="https://unpkg.com/easymde@2.18.0/dist/easymde.min.js"
+          integrity="sha384-KtB38COewxfrhJxoN2d+olxJAeT08LF8cVZ6DQ8Poqu89zIptqO6zAXoIxpGNWYE"
+          crossorigin="anonymous"></script>
   <!-- Modules -->
   <script type="module" src="js/app.js"></script>
 </body>

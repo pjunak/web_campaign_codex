@@ -36,7 +36,6 @@ export const ROUTE = Object.freeze({
   MAPA_FRAKCE: '/mapa/frakce',
   MAPA_VZTAHY: '/mapa/vztahy',
   MAPA_ZAHADY: '/mapa/tajemstvi',
-  ADMIN:       '/admin',
   SETTINGS:    '/nastaveni',
 });
 

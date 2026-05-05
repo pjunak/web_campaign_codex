@@ -12,6 +12,7 @@
 // file's mtime+size, we skip. Delete the folder to force rebuild.
 
 const fs    = require('fs');
+const fsp   = fs.promises;
 const path  = require('path');
 const sharp = require('sharp');
 
@@ -19,8 +20,8 @@ const MAPS_DIR  = path.join(__dirname, 'data', 'maps');
 const TILES_DIR = path.join(MAPS_DIR, 'tiles');
 const TILE_SIZE = 256;
 
-function _srcFingerprint(srcPath) {
-  const s = fs.statSync(srcPath);
+async function _srcFingerprint(srcPath) {
+  const s = await fsp.stat(srcPath);
   return `${s.size}-${Math.floor(s.mtimeMs)}`;
 }
 
@@ -34,20 +35,20 @@ function _maxZoomFor(w, h) {
 }
 
 async function buildFor(mapId, srcPath) {
-  if (!srcPath || !fs.existsSync(srcPath)) throw new Error(`Source missing: ${srcPath}`);
+  if (!srcPath) throw new Error('Source missing');
+  try { await fsp.access(srcPath); }
+  catch { throw new Error(`Source missing: ${srcPath}`); }
   const safeId = mapId.replace(/[^a-z0-9_\-\/]/gi, '_');
   const outDir = path.join(TILES_DIR, safeId);
   const manifestPath = path.join(outDir, 'tiles.json');
 
-  const fp = _srcFingerprint(srcPath);
-  if (fs.existsSync(manifestPath)) {
-    try {
-      const existing = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      if (existing.srcHash === fp) return existing;   // already built
-    } catch (_) { /* corrupt manifest → rebuild */ }
-  }
+  const fp = await _srcFingerprint(srcPath);
+  try {
+    const existing = JSON.parse(await fsp.readFile(manifestPath, 'utf8'));
+    if (existing.srcHash === fp) return existing;   // already built
+  } catch (_) { /* missing or corrupt manifest → rebuild */ }
 
-  fs.mkdirSync(outDir, { recursive: true });
+  await fsp.mkdir(outDir, { recursive: true });
 
   const meta = await sharp(srcPath).metadata();
   const { width: w, height: h } = meta;
@@ -73,13 +74,14 @@ async function buildFor(mapId, srcPath) {
     const cols = Math.ceil(scaledW / TILE_SIZE);
     const rows = Math.ceil(scaledH / TILE_SIZE);
 
-    // Render the scaled image once, then slice into tiles.
-    const scaled = await sharp(srcPath)
+    // One pipeline: read+decode source, resize, extend to tile-aligned
+    // canvas, output as raw pixels. Previously this was three pipelines
+    // per zoom level (decode→resize→encode→decode→extend→encode→decode
+    // per tile→encode); the raw output skips two intermediate JPEG
+    // encode/decode round-trips. Slicing into tiles below operates on
+    // raw bytes so the only encode is the final per-tile JPEG.
+    const { data: rawData, info: rawInfo } = await sharp(srcPath)
       .resize({ width: scaledW, height: scaledH, fit: 'fill' })
-      .toBuffer();
-
-    // Extend to a tile-aligned canvas so sharp.extract() works at edges.
-    const aligned = await sharp(scaled)
       .extend({
         top:    0,
         left:   0,
@@ -87,17 +89,18 @@ async function buildFor(mapId, srcPath) {
         right:  (cols * TILE_SIZE) - scaledW,
         background: { r: 20, g: 20, b: 20, alpha: 1 },
       })
-      .toBuffer();
+      .raw()
+      .toBuffer({ resolveWithObject: true });
 
     for (let x = 0; x < cols; x++) {
       const zxDir = path.join(outDir, String(z), String(x));
-      fs.mkdirSync(zxDir, { recursive: true });
+      await fsp.mkdir(zxDir, { recursive: true });
       for (let y = 0; y < rows; y++) {
-        const tile = await sharp(aligned)
+        const tile = await sharp(rawData, { raw: rawInfo })
           .extract({ left: x * TILE_SIZE, top: y * TILE_SIZE, width: TILE_SIZE, height: TILE_SIZE })
           .jpeg({ quality: 78, mozjpeg: true })
           .toBuffer();
-        fs.writeFileSync(path.join(zxDir, `${y}.jpg`), tile);
+        await fsp.writeFile(path.join(zxDir, `${y}.jpg`), tile);
       }
     }
   }
@@ -113,7 +116,7 @@ async function buildFor(mapId, srcPath) {
     canvasLong,
     builtAt:   Date.now(),
   };
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   return manifest;
 }
 

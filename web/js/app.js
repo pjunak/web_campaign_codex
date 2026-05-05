@@ -8,7 +8,6 @@ import { Wiki } from './wiki.js';
 import { CloudMap } from './cloudmap.js';
 import { Timeline } from './timeline.js';
 import { WorldMap } from './map.js';
-import { Admin } from './admin.js';
 import { Settings } from './settings.js';
 import { Widgets } from './widgets/widgets.js';
 import { GlobalSearch } from './search.js';
@@ -21,7 +20,6 @@ window.Wiki = Wiki;
 window.CloudMap = CloudMap;
 window.Timeline = Timeline;
 window.WorldMap = WorldMap;
-window.Admin = Admin;
 window.Settings = Settings;
 window.GlobalSearch = GlobalSearch;
 
@@ -81,9 +79,15 @@ window.GlobalSearch = GlobalSearch;
     // Schedule widget mount after the page renders. Runs for every route so
     // any cb-mount/ms-mount placeholders in newly-rendered HTML get wired up.
     // EasyMDE is initialised for any textarea.md-easy in the same pass.
+    // Scope: only #main-content changes between routes — the sidebar /
+    // bottom-nav / map-sheet have no widget mount points, so walking
+    // the whole document is wasted work. Modules that inject widgets
+    // dynamically (e.g. relTypeChanged, faction add) call
+    // `Widgets.mountAll(scopedRoot)` with a tighter root themselves.
     requestAnimationFrame(() => {
-      Widgets.mountAll(document.body);
-      EditMode.mountEasyMDE(document.body);
+      const root = document.getElementById('main-content') || document.body;
+      Widgets.mountAll(root);
+      EditMode.mountEasyMDE(root);
     });
 
     // Close the mobile drawer if navigating via a sidebar link.
@@ -182,8 +186,6 @@ window.GlobalSearch = GlobalSearch;
         Wiki.renderPage("historie"); break;
       case "historicka-udalost":
         Wiki.renderPage("historicka-udalost", sub); break;
-      case "admin":
-        Admin.render(); break;
       case "nastaveni":
         Settings.render(); break;
       default:
@@ -194,13 +196,15 @@ window.GlobalSearch = GlobalSearch;
   // ── Collaborative sync via SSE (Phase 5.1) ──────────────────
   // Subscribe to /api/events; server pushes 'data-changed' after every
   // successful write. We refetch + re-render in <1s. No polling.
-  // If the user is actively editing a form, we defer the re-render
-  // until focus leaves the form to avoid clobbering in-progress input.
+  // If the user has unsaved edits in a form (`EditMode.isDirty()`) we
+  // defer the re-render and show a banner — re-rendering would replace
+  // the EasyMDE/CodeMirror DOM and silently destroy in-progress text.
+  // The banner clears automatically once the user saves (which fires
+  // `editmode:clean`) or they can dismiss/refresh on demand.
   let _lastHash    = null;
-  let _syncPaused   = false;  // true while an input/textarea/select is focused
-  let _pendingHash  = null;   // latest hash seen while paused; null = nothing pending
-  let _es           = null;
-  let _esRetryMs    = 1000;
+  let _pendingHash = null;   // latest hash seen while dirty; null = nothing pending
+  let _es          = null;
+  let _esRetryMs   = 1000;
 
   async function _applyRemoteChange(hash) {
     // Skip only if we already have this exact hash; null means "unknown, refetch anyway"
@@ -209,6 +213,45 @@ window.GlobalSearch = GlobalSearch;
     await Store.load();
     Settings.applySidebarVisibility();
     navigate(getRoute());
+  }
+
+  function _showRemoteBanner() {
+    let banner = document.getElementById('remote-change-banner');
+    if (banner) return;
+    banner = document.createElement('div');
+    banner.id = 'remote-change-banner';
+    banner.style.cssText = [
+      'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:9998',
+      'background:#3a4f6c', 'color:#fff', 'font-size:13px',
+      'padding:8px 16px', 'text-align:center',
+      'font-family:system-ui,sans-serif', 'letter-spacing:0.02em',
+      'display:flex', 'align-items:center', 'justify-content:center', 'gap:12px',
+    ].join(';');
+    banner.innerHTML = `
+      <span>📡 Někdo jiný upravil data. Tvoje rozepsané změny zatím nejsou ztracené.</span>
+      <button type="button" id="remote-change-banner-refresh"
+              style="background:#1a2738;color:#fff;border:1px solid #5a7090;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">
+        Načíst (zahodit moje změny)
+      </button>
+      <button type="button" id="remote-change-banner-dismiss"
+              style="background:transparent;color:#fff;border:1px solid #5a7090;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">
+        Zavřít
+      </button>
+    `;
+    document.body.prepend(banner);
+    document.getElementById('remote-change-banner-refresh').addEventListener('click', () => {
+      const h = _pendingHash;
+      _pendingHash = null;
+      banner.remove();
+      _applyRemoteChange(h);
+    });
+    document.getElementById('remote-change-banner-dismiss').addEventListener('click', () => {
+      _pendingHash = null;
+      banner.remove();
+    });
+  }
+  function _hideRemoteBanner() {
+    document.getElementById('remote-change-banner')?.remove();
   }
 
   function _startSync() {
@@ -227,7 +270,11 @@ window.GlobalSearch = GlobalSearch;
     es.addEventListener('data-changed', ev => {
       let hash = null;
       try { hash = JSON.parse(ev.data).hash; } catch (_) {}
-      if (_syncPaused) { _pendingHash = hash; return; }
+      if (EditMode.isDirty()) {
+        _pendingHash = hash;
+        _showRemoteBanner();
+        return;
+      }
       _applyRemoteChange(hash);
     });
 
@@ -243,19 +290,15 @@ window.GlobalSearch = GlobalSearch;
     };
   }
 
-  // Pause sync while the user has a form focused — flush any pending
-  // change the moment they tab out.
-  document.addEventListener("focusin",  e => {
-    if (e.target.matches("input,textarea,select")) _syncPaused = true;
-  });
-  document.addEventListener("focusout", e => {
-    if (e.target.matches("input,textarea,select")) {
-      _syncPaused = false;
-      if (_pendingHash !== null) {
-        const h = _pendingHash;
-        _pendingHash = null;
-        _applyRemoteChange(h);
-      }
+  // Once the active form is saved (or discarded), flush any deferred
+  // remote change. This is what makes "save" feel responsive when
+  // someone else just edited — no manual refresh needed.
+  window.addEventListener('editmode:clean', () => {
+    _hideRemoteBanner();
+    if (_pendingHash !== null) {
+      const h = _pendingHash;
+      _pendingHash = null;
+      _applyRemoteChange(h);
     }
   });
 
