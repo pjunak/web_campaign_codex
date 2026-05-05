@@ -250,6 +250,70 @@ export const EditMode = (() => {
     }
   }
 
+  // ── Password prompt modal ─────────────────────────────────────
+  // Replaces the native `prompt()` for the edit-mode unlock flow:
+  //   - works on mobile (native prompt suppressed in some browsers),
+  //   - lets password managers autofill (input is type="password"
+  //     with name=password + autocomplete="current-password"),
+  //   - has a 👁 visibility toggle.
+  // Returns a Promise that resolves to the typed string on submit
+  // and `null` on cancel/Esc/backdrop click.
+  function _passwordPrompt(message) {
+    return new Promise(resolve => {
+      let settled = false;
+      const finish = (val) => { if (settled) return; settled = true; cleanup(); resolve(val); };
+
+      const overlay = document.createElement('div');
+      overlay.className = 'pw-modal';
+      overlay.innerHTML = `
+        <div class="pw-backdrop"></div>
+        <form class="pw-panel" autocomplete="on">
+          <div class="pw-title">${message || 'Tato sekce je zabezpečena. Zadej heslo:'}</div>
+          <div class="pw-row">
+            <input class="pw-input" type="password" name="password"
+                   autocomplete="current-password" autofocus
+                   spellcheck="false" autocapitalize="off">
+            <button type="button" class="pw-toggle" aria-label="Zobrazit heslo">👁</button>
+          </div>
+          <div class="pw-actions">
+            <button type="button" class="pw-btn pw-cancel">Zrušit</button>
+            <button type="submit" class="pw-btn pw-ok">Odemknout</button>
+          </div>
+        </form>
+      `;
+      document.body.appendChild(overlay);
+
+      const form  = overlay.querySelector('.pw-panel');
+      const input = overlay.querySelector('.pw-input');
+      const back  = overlay.querySelector('.pw-backdrop');
+      const tog   = overlay.querySelector('.pw-toggle');
+      const cnl   = overlay.querySelector('.pw-cancel');
+
+      function onKey(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); finish(null); }
+      }
+      function cleanup() {
+        document.removeEventListener('keydown', onKey, true);
+        overlay.remove();
+      }
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        finish(input.value);
+      });
+      cnl.addEventListener('click', () => finish(null));
+      back.addEventListener('click', () => finish(null));
+      tog.addEventListener('click', () => {
+        const isPwd = input.type === 'password';
+        input.type = isPwd ? 'text' : 'password';
+        tog.setAttribute('aria-label', isPwd ? 'Skrýt heslo' : 'Zobrazit heslo');
+        input.focus();
+      });
+      document.addEventListener('keydown', onKey, true);
+      // Focus after layout — autofocus alone misses on some mobile browsers.
+      requestAnimationFrame(() => input.focus());
+    });
+  }
+
   // ── State ──────────────────────────────────────────────────────
   function isActive() { return _active; }
 
@@ -265,7 +329,7 @@ export const EditMode = (() => {
       try {
         const check = await fetch('/api/auth');
         if (!check.ok) {
-           const pwd = prompt("Tato sekce je zabezpečena. Zadejte heslo:");
+           const pwd = await _passwordPrompt('Tato sekce je zabezpečena. Zadej heslo:');
            if (pwd) {
              const res = await fetch('/api/login', {
                  method: 'POST',

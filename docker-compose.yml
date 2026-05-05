@@ -4,6 +4,11 @@ services:
     container_name: tiamat
     volumes:
       - ./data:/app/data
+      # Snapshots live OUTSIDE data/ (clean separation, see CLAUDE.md →
+      # "Snapshot system"). The directory must persist across container
+      # restarts so a fresh deploy doesn't wipe snapshot history. The
+      # production stack at junak.eu/stacks/tiamat needs the same mount.
+      - ./data-snapshots:/app/data-snapshots
     environment:
       - PORT=3000
       - EDIT_PASSWORD=${EDIT_PASSWORD}

@@ -799,3 +799,78 @@ body.edit-mode .edit-card-overlay  { opacity: 0.8; }
 .EasyMDEContainer.sided--no-fullscreen .CodeMirror {
   border-right: none;
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Edit-mode password prompt
+   Replaces native prompt() so password managers can autofill and
+   the input has a visibility toggle. Layered above everything via
+   z-index 10001 (search modal sits at 10000).
+   ───────────────────────────────────────────────────────────── */
+.pw-modal {
+  position: fixed; inset: 0; z-index: 10001;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 18vh;
+}
+.pw-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(2px);
+}
+.pw-panel {
+  position: relative;
+  width: min(420px, 92vw);
+  background: var(--bg-raised);
+  border: 1px solid rgba(200,160,64,0.35);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55);
+  padding: 1.25rem;
+  display: flex; flex-direction: column; gap: 0.9rem;
+}
+.pw-title {
+  font-family: var(--font-title);
+  font-size: 0.95rem;
+  color: var(--accent-gold);
+  letter-spacing: 0.04em;
+}
+.pw-row { display: flex; gap: 0.4rem; align-items: stretch; }
+.pw-input {
+  flex: 1;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(200,160,64,0.3);
+  border-radius: 6px;
+  color: var(--text-parchment);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  padding: 0.55rem 0.75rem;
+  outline: none;
+}
+.pw-input:focus { border-color: var(--accent-gold); }
+.pw-toggle {
+  background: transparent;
+  border: 1px solid rgba(200,160,64,0.3);
+  border-radius: 6px;
+  color: var(--text-parchment);
+  cursor: pointer;
+  width: 2.4rem;
+  font-size: 1rem;
+}
+.pw-toggle:hover { background: rgba(200,160,64,0.08); }
+.pw-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.pw-btn {
+  background: rgba(200,160,64,0.08);
+  border: 1px solid rgba(200,160,64,0.3);
+  border-radius: 6px;
+  color: var(--text-parchment);
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+  padding: 0.45rem 0.95rem;
+  cursor: pointer;
+}
+.pw-btn:hover { background: rgba(200,160,64,0.14); }
+.pw-ok {
+  background: var(--accent-gold);
+  color: #1a1208;
+  border-color: var(--accent-gold);
+  font-weight: 600;
+}
+.pw-ok:hover { filter: brightness(1.08); }

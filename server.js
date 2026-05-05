@@ -32,7 +32,15 @@ const MAPS_DIR       = path.join(__dirname, 'data', 'maps');
 const LOCAL_MAPS_DIR = path.join(MAPS_DIR, 'local');
 const TILES_DIR      = path.join(MAPS_DIR, 'tiles');
 const SWORDCOAST_DIR = path.join(MAPS_DIR, 'swordcoast');
-const SNAPSHOTS_DIR  = path.join(DATA_DIR, 'snapshots');
+// Snapshots live OUTSIDE data/ so:
+//   - the data hash and the backup zip don't have to keep stepping
+//     around them (they used to be at data/snapshots/).
+//   - the restore zip can never inadvertently plant or overwrite a
+//     legitimate snapshot via _safeJoinDataDir.
+//   - "data/" stays a clean reflection of the campaign content.
+// One-time migration below moves any pre-existing data/snapshots/* up.
+const SNAPSHOTS_DIR  = path.join(__dirname, 'data-snapshots');
+const LEGACY_SNAPSHOTS_DIR = path.join(DATA_DIR, 'snapshots');
 const WEB_DIR        = path.join(__dirname, 'web');
 
 fs.mkdirSync(DATA_DIR,       { recursive: true });
@@ -41,6 +49,26 @@ fs.mkdirSync(LOCAL_MAPS_DIR, { recursive: true });
 fs.mkdirSync(TILES_DIR,      { recursive: true });
 fs.mkdirSync(SWORDCOAST_DIR, { recursive: true });
 fs.mkdirSync(SNAPSHOTS_DIR,  { recursive: true });
+
+// One-shot relocation: if a pre-A3 deployment left snapshots inside
+// data/, move them to the new sibling dir. Idempotent — re-running is
+// a no-op once data/snapshots is gone.
+try {
+  if (fs.existsSync(LEGACY_SNAPSHOTS_DIR)) {
+    const list = fs.readdirSync(LEGACY_SNAPSHOTS_DIR);
+    for (const f of list) {
+      if (!/^snapshot-.*\.json$/.test(f)) continue;
+      const src = path.join(LEGACY_SNAPSHOTS_DIR, f);
+      const dst = path.join(SNAPSHOTS_DIR, f);
+      try {
+        if (!fs.existsSync(dst)) fs.renameSync(src, dst);
+        else fs.unlinkSync(src);
+      } catch (e) { console.warn(`[snapshot migrate] ${f}: ${e.message}`); }
+    }
+    try { fs.rmdirSync(LEGACY_SNAPSHOTS_DIR); } catch (_) {}
+    console.log('[snapshot] migrated legacy data/snapshots → data-snapshots');
+  }
+} catch (e) { console.warn('[snapshot migrate]', e.message); }
 
 // Sensible default security headers — X-Content-Type-Options,
 // X-Frame-Options, Strict-Transport-Security, etc. CSP is OFF because
@@ -136,6 +164,11 @@ async function _atomicWrite(filePath, content) {
   for (let attempt = 0; attempt <= delays.length; attempt++) {
     try {
       await fsp.rename(tmp, filePath);
+      // Invalidate the cached top-level data hash whenever a JSON file in
+      // DATA_DIR (but NOT a snapshot file) is written. Subdirectories like
+      // SNAPSHOTS_DIR don't contribute to the hash so they don't need to
+      // bust it.
+      _maybeBustDataHash(filePath);
       return;
     } catch (e) {
       lastErr = e;
@@ -226,8 +259,21 @@ async function _snapshotMeta(filename) {
 async function _lastSnapshotTime() {
   const files = await _snapshotFiles();
   if (!files.length) return 0;
-  const meta = await _snapshotMeta(files[files.length - 1]);
-  return meta && meta.createdAt ? Date.parse(meta.createdAt) : 0;
+  const last = files[files.length - 1];
+  const meta = await _snapshotMeta(last);
+  if (meta && meta.createdAt) {
+    const t = Date.parse(meta.createdAt);
+    if (!Number.isNaN(t)) return t;
+  }
+  // Defensive fallback for a corrupt/unreadable snapshot file: trust the
+  // file's mtime instead of the field that failed to parse. Without this
+  // a NaN propagated into `Date.now() - last < SNAPSHOT_COALESCE_MS` and
+  // the comparison was always false — accidentally correct (a fresh
+  // snapshot would be taken) but only via NaN's quirks.
+  try {
+    const stat = await fsp.stat(path.join(SNAPSHOTS_DIR, last));
+    return stat.mtimeMs || 0;
+  } catch { return 0; }
 }
 
 async function _createSnapshot(reason = 'save') {
@@ -321,15 +367,40 @@ async function _restoreSnapshot(id) {
       }
     }
   } catch (_) {}
+  // Unlinks above bypassed _atomicWrite, and a fresh write set may
+  // differ from the cached digest — bust unconditionally.
+  _invalidateDataHash();
   return { ok: true };
 }
 
-// ── Data hash ────────────────────────────────────────────────────
+// ── Data hash (with cache) ───────────────────────────────────────
 // Content-hashed — previous mtime+size version gave false positives
 // on filesystems with low-res mtime (e.g. Docker on Windows) and false
 // negatives on touch(1). We hash the concatenated JSON file contents,
 // which is cheap enough for our ~100 KB dataset.
+//
+// Cached so SSE broadcasts (one per write) don't re-read every JSON
+// file on disk to compute the same hex digest. `_atomicWrite` clears
+// the cache when it rewrites a top-level data file, and
+// `_restoreSnapshot` clears it when it deletes one.
+let _cachedDataHash = null;
+const _DATA_DIR_RESOLVED      = path.resolve(DATA_DIR);
+const _SNAPSHOTS_DIR_RESOLVED = path.resolve(SNAPSHOTS_DIR);
+function _invalidateDataHash() { _cachedDataHash = null; }
+function _maybeBustDataHash(filePath) {
+  try {
+    if (!filePath.endsWith('.json')) return;
+    const dir = path.dirname(path.resolve(filePath));
+    // Only the top level of DATA_DIR contributes to the hash; snapshots
+    // and any other nested dir do not.
+    if (dir !== _DATA_DIR_RESOLVED) return;
+    if (dir.startsWith(_SNAPSHOTS_DIR_RESOLVED)) return;
+    _cachedDataHash = null;
+  } catch (_) { _cachedDataHash = null; }
+}
+
 async function _dataHash() {
+  if (_cachedDataHash !== null) return _cachedDataHash;
   try {
     const h = crypto.createHash('sha1');
     const list = (await fsp.readdir(DATA_DIR)).filter(f => f.endsWith('.json')).sort();
@@ -339,7 +410,8 @@ async function _dataHash() {
       h.update(await fsp.readFile(path.join(DATA_DIR, f)));
       h.update('\0');
     }
-    return h.digest('hex').slice(0, 16);
+    _cachedDataHash = h.digest('hex').slice(0, 16);
+    return _cachedDataHash;
   } catch {
     return 'none';
   }
@@ -411,7 +483,10 @@ const _loginAttempts = new Map();   // ip → { count, firstMs }
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX       = 10;
 function _loginKey(req) {
-  return (req.ip || req.connection?.remoteAddress || 'unknown').toString();
+  // `app.set('trust proxy', 1)` (above) makes req.ip honour X-Forwarded-For
+  // from the immediate reverse proxy, so we don't need the deprecated
+  // req.connection.remoteAddress fallback.
+  return (req.ip || req.socket?.remoteAddress || 'unknown').toString();
 }
 function _isBlocked(ip) {
   const rec = _loginAttempts.get(ip);
@@ -456,42 +531,11 @@ app.get('/api/auth', requireAuth, (_req, res) => {
 });
 
 // Collections stored as keyed objects on disk (factions, settings,
-// campaign). Everything else is a plain entity-list array. The shape
-// validator below uses this to refuse malformed POST bodies that
-// could accidentally swap an array collection for an object or vice
-// versa, which would corrupt subsequent reads.
-const KEYED_OBJ_TYPES = new Set(['factions', 'settings', 'campaign']);
-
-app.post('/api/data', requireAuth, (req, res) => {
-  withWriteLock(async () => {
-    try {
-      const body = req.body;
-      if (!body || typeof body !== 'object' || Array.isArray(body)) {
-        return res.status(400).json({ error: 'Invalid data' });
-      }
-      for (const [key, value] of Object.entries(body)) {
-        if (!ALLOWED_TYPES.has(key)) return res.status(400).json({ error: `Unknown collection: ${key}` });
-        if (value === null || typeof value !== 'object') {
-          return res.status(400).json({ error: `Collection ${key} must be array or object` });
-        }
-        if (KEYED_OBJ_TYPES.has(key)) {
-          if (Array.isArray(value)) return res.status(400).json({ error: `Collection ${key} must be a keyed object` });
-        } else {
-          if (!Array.isArray(value)) return res.status(400).json({ error: `Collection ${key} must be an array` });
-        }
-      }
-      for (const [key, value] of Object.entries(body)) {
-        await _atomicWrite(getFile(key), JSON.stringify(value, null, 2));
-      }
-      await _maybeSnapshot('save');
-      await _broadcastDataChanged();
-      res.json({ ok: true });
-    } catch (e) {
-      console.error('POST /api/data:', e);
-      if (!res.headersSent) res.status(500).json({ error: 'Write error' });
-    }
-  });
-});
+// campaign, deletedDefaults). Everything else is a plain entity-list
+// array. `deletedDefaults` was historically a string array but was
+// converted to a keyed-object so individual tombstones can round-trip
+// through the per-entity PATCH path (no whole-collection wipe needed).
+const KEYED_OBJ_TYPES = new Set(['factions', 'settings', 'campaign', 'deletedDefaults']);
 
 // Read a JSON collection file and return parsed contents, or `fallback`
 // if the file is missing. Used inside the PATCH handler.
@@ -898,9 +942,10 @@ const restoreUpload = multer({
 function _safeJoinDataDir(rel) {
   const resolved = _safeJoinIn(DATA_DIR, rel);
   if (!resolved) return null;
-  // Additionally refuse anything that would write into the snapshots
-  // directory. Without this, a crafted ZIP could overwrite legitimate
-  // snapshots or plant a fake one for a later "restore" attack.
+  // Defence-in-depth: snapshots now live in a sibling `data-snapshots/`
+  // dir, so a restore ZIP cannot reach them through DATA_DIR — but if a
+  // future refactor ever moves them back inside DATA_DIR, this guard
+  // prevents the silent-overwrite class of attack.
   const snapRoot = path.resolve(SNAPSHOTS_DIR);
   if (resolved === snapRoot || resolved.startsWith(snapRoot + path.sep)) return null;
   return resolved;

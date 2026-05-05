@@ -1,6 +1,6 @@
 import { Store } from './store.js';
 import { Widgets } from './widgets/widgets.js';
-import { esc as _esc } from './utils.js';
+import { esc } from './utils.js';
 
 export const PIN_TYPES = {
   major_city:  { icon: '🏙',  label: 'Velké město',  color: '#D4A017' },
@@ -166,7 +166,7 @@ export const WorldMap = (() => {
     _currentParentId = parentId || null;
     const parent = _currentParentId ? Store.getLocation(_currentParentId) : null;
     const titleHtml = parent
-      ? `🗺 ${_esc(parent.name)} <span class="sc-breadcrumb">
+      ? `🗺 ${esc(parent.name)} <span class="sc-breadcrumb">
            · <a href="#/mapa/svet">↩ Pobřeží Meče</a>
          </span>`
       : `🗺 Mapa světa`;
@@ -224,7 +224,7 @@ export const WorldMap = (() => {
             <input type="file" accept="image/*" style="display:none" onchange="WorldMap.handleMapFileUpload(this)">
           </label>
           <label class="sc-label">— nebo zadat URL obrázku —</label>
-          <input class="sc-input" id="sc-img-url" type="text" value="${_esc(_getImgUrl().startsWith('data:') ? '' : _getImgUrl())}">
+          <input class="sc-input" id="sc-img-url" type="text" value="${esc(_getImgUrl().startsWith('data:') ? '' : _getImgUrl())}">
           <div class="sc-dialog-actions">
             <button class="sc-btn ok" onclick="WorldMap.applySettings()">✓ Použít URL</button>
             <button class="sc-btn" onclick="WorldMap.closeSettings()">Zrušit</button>
@@ -487,7 +487,7 @@ export const WorldMap = (() => {
         color:${ps.fg};
         text-shadow:${textShadow};
         font-size:${size*0.55}px;
-      " title="${_esc(pin.name)}">${pt.icon}</div>`,
+      " title="${esc(pin.name)}">${pt.icon}</div>`,
     });
   }
 
@@ -593,10 +593,10 @@ export const WorldMap = (() => {
   function _presetButtonsHtml() {
     const views = _mapViewsForCurrent();
     return views.map(v => {
-      const icon  = _esc(v.icon || '📍');
-      const label = _esc(v.label || '—');
-      return `<button class="sc-btn" onclick="WorldMap.applyMapView('${_esc(v.id)}')"
-                 title="${_esc(v.label || '')}">${icon} ${label}</button>`;
+      const icon  = esc(v.icon || '📍');
+      const label = esc(v.label || '—');
+      return `<button class="sc-btn" onclick="WorldMap.applyMapView('${esc(v.id)}')"
+                 title="${esc(v.label || '')}">${icon} ${label}</button>`;
     }).join('');
   }
 
@@ -685,13 +685,13 @@ export const WorldMap = (() => {
     const attLabels = (pin.attitudes && pin.attitudes.length ? pin.attitudes : [pin.status])
       .map(id => {
         const s = statuses[id];
-        return s ? `<span style="color:${s.labelColor}">${_esc(s.label)}</span>` : '';
+        return s ? `<span style="color:${s.labelColor}">${esc(s.label)}</span>` : '';
       })
       .filter(Boolean).join(', ');
     const headerInner = `
       <span class="sc-pin-icon">${pt.icon}</span>
       <div>
-        <div class="sc-pin-name">${_esc(pin.name)}</div>
+        <div class="sc-pin-name">${esc(pin.name)}</div>
         <div class="sc-pin-meta">${pt.label}${attLabels ? ' · ' + attLabels : ''}</div>
         ${subInfo}
       </div>`;
@@ -702,7 +702,7 @@ export const WorldMap = (() => {
     document.getElementById('sc-panel-content').innerHTML = `
       <div class="sc-pin-view">
         ${header}
-        ${pin.notes ? `<div class="sc-pin-notes">${_esc(pin.notes)}</div>` : ''}
+        ${pin.notes ? `<div class="sc-pin-notes">${esc(pin.notes)}</div>` : ''}
         ${localMapBtn ? `<div class="sc-pin-actions">${localMapBtn}</div>` : ''}
       </div>
     `;
@@ -724,9 +724,9 @@ export const WorldMap = (() => {
     const attEnum   = Store.getEnum('attitudes') || [];
     const attChips  = attEnum.map(a => `
       <label class="attitude-chip" style="--attitude-color: ${a.labelColor || a.bg || '#888'}">
-        <input type="checkbox" value="${_esc(a.id)}" ${pinAtts.includes(a.id) ? 'checked' : ''}>
+        <input type="checkbox" value="${esc(a.id)}" ${pinAtts.includes(a.id) ? 'checked' : ''}>
         <span class="attitude-chip-dot"></span>
-        <span class="attitude-chip-label">${_esc(a.label)}</span>
+        <span class="attitude-chip-label">${esc(a.label)}</span>
       </label>`).join('');
     const currentPri = _priorityOf(pin);
     const priLabels  = { 1: '1 — Vždy viditelné', 2: '2 — Střední zoom', 3: '3 — Detailní zoom' };
@@ -753,7 +753,7 @@ export const WorldMap = (() => {
         <div class="sc-pin-form-title">${isNew ? 'Nové místo' : 'Upravit místo'}</div>
         ${linkPicker}
         <label class="sc-label">Název *</label>
-        <input class="sc-input" id="spf-name" type="text" value="${_esc(pin.name||'')}" placeholder="Waterdeep...">
+        <input class="sc-input" id="spf-name" type="text" value="${esc(pin.name||'')}" placeholder="Waterdeep...">
         <label class="sc-label">Typ</label>
         <select class="sc-input" id="spf-type">${typeOpts}</select>
         <label class="sc-label">Postoje k partě <span class="sc-hint">(víc = rozdělený prstenec na kartě)</span></label>
@@ -761,7 +761,7 @@ export const WorldMap = (() => {
         <label class="sc-label">Důležitost (priorita zobrazení)</label>
         <div class="sc-pri-row" id="spf-priority">${priOpts}</div>
         <label class="sc-label">Popis / Poznámky na mapě</label>
-        <textarea class="sc-input" id="spf-notes" rows="3" placeholder="Krátký popis...">${_esc(pin.notes||'')}</textarea>
+        <textarea class="sc-input" id="spf-notes" rows="3" placeholder="Krátký popis...">${esc(pin.notes||'')}</textarea>
         <div class="sc-pin-actions">
           <button class="sc-btn ok" onclick="WorldMap.savePin(${isNew}, ${pin.x||0}, ${pin.y||0})">💾 Uložit</button>
           ${!isNew ? `<a class="sc-btn" href="#/misto/${pin.locationId}">📖 Otevřít místo</a>` : ''}
@@ -900,9 +900,9 @@ export const WorldMap = (() => {
         className: '',
         iconSize:  [28, 28],
         iconAnchor:[14, 14],
-        html: `<div class="sc-event-marker" title="${_esc(e.name)}"
+        html: `<div class="sc-event-marker" title="${esc(e.name)}"
                     style="background:${bgColor}">
-                 <span class="sc-event-marker-label">${_esc(sittingLabel)}</span>
+                 <span class="sc-event-marker-label">${esc(sittingLabel)}</span>
                </div>`,
       });
       const m = L.marker(ll, { icon, interactive: true }).addTo(_map);
@@ -1137,8 +1137,8 @@ export const WorldMap = (() => {
       const pt = PIN_TYPES[p.type] || PIN_TYPES.custom;
       return `<div class="sc-search-item" onclick="WorldMap.zoomToPin('${p.id}')">
         <span class="sc-search-ico">${pt.icon}</span>
-        <span class="sc-search-name">${_esc(p.name)}</span>
-        <span class="sc-search-sub">${_esc(pt.label)}</span>
+        <span class="sc-search-name">${esc(p.name)}</span>
+        <span class="sc-search-sub">${esc(pt.label)}</span>
       </div>`;
     }).join('');
     _showSearchResults();

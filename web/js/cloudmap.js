@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
-import { norm, debounce, esc as _esc } from './utils.js';
+import { norm, debounce, esc } from './utils.js';
 import { REL_TYPES, getRelType } from './data.js';
 
 export const CloudMap = (() => {
@@ -123,8 +123,8 @@ export const CloudMap = (() => {
     let body = `<div class="cm-fact">${count} ${count === 1 ? 'postava' : count < 5 ? 'postavy' : 'postav'}</div>`;
     return `<div class="cm-cloud cm-faction-hub" data-id="hub_${fId}" data-type="faction"
               style="--cc:${faction.color}; --cw:${CW_HUB}px">
-      <div class="cm-strip">${_esc(faction.badge)} FRAKCE</div>
-      <div class="cm-name">${_esc(faction.name)}</div>
+      <div class="cm-strip">${esc(faction.badge)} FRAKCE</div>
+      <div class="cm-name">${esc(faction.name)}</div>
       <div class="cm-divider"></div>
       ${body}
     </div>`;
@@ -139,12 +139,12 @@ export const CloudMap = (() => {
   function _locationCloudHTML(loc) {
     const status = loc.status || '';
     let body = '';
-    if (status) body += `<div class="cm-fact cm-dim">${_esc(status)}</div>`;
+    if (status) body += `<div class="cm-fact cm-dim">${esc(status)}</div>`;
 
     return `<div class="cm-cloud cm-location" data-id="${loc.id}" data-type="location"
               style="--cc:#5D7A3A; --cw:${CW}px">
       <div class="cm-strip">📍 Místo</div>
-      <div class="cm-name">${_esc(loc.name)}</div>
+      <div class="cm-name">${esc(loc.name)}</div>
       <div class="cm-divider"></div>
       ${body}
     </div>`;
@@ -185,7 +185,7 @@ export const CloudMap = (() => {
 
     if (mode === 'frakce') {
       if (c.knowledge >= 2 && c.title) {
-        body += `<div class="cm-fact">${_esc(c.title)}</div>`;
+        body += `<div class="cm-fact">${esc(c.title)}</div>`;
       }
       const rels = Store.getRelationships();
       const cmdOut = rels.filter(r => r.source === c.id && r.type === 'commands');
@@ -195,7 +195,7 @@ export const CloudMap = (() => {
       }
       if (cmdIn.length) {
         const boss = Store.getCharacter(cmdIn[0].source);
-        if (boss) body += `<div class="cm-fact cm-dim">Pod velením: ${_esc(boss.name)}</div>`;
+        if (boss) body += `<div class="cm-fact cm-dim">Pod velením: ${esc(boss.name)}</div>`;
       }
       if (!body) body = `<div class="cm-fact cm-dim">Bez vazeb velení</div>`;
 
@@ -203,7 +203,7 @@ export const CloudMap = (() => {
       const sIcon  = _statusIcon(c.status);
       const sLabel = _statusLabel(c.status);
       const sColor = _statusColor(c.status);
-      body += `<div class="cm-status-row"><span style="color:${sColor}">${sIcon}</span> ${_esc(sLabel)}</div>`;
+      body += `<div class="cm-status-row"><span style="color:${sColor}">${sIcon}</span> ${esc(sLabel)}</div>`;
       const rels = Store.getRelationships().filter(r => r.source === c.id || r.target === c.id);
       body += `<div class="cm-fact cm-dim">${rels.length} ${rels.length === 1 ? 'vazba' : rels.length < 5 ? 'vazby' : 'vazeb'}</div>`;
       if (rels.length) {
@@ -222,7 +222,7 @@ export const CloudMap = (() => {
         const q = (mysteries[0].questions || [])[0] || mysteries[0].name;
         const lines = _wrap(q, FONT_FACT, IW).slice(0, 2);
         const snippet = lines.join(' ') + (lines.length < _wrap(q, FONT_FACT, IW).length ? '…' : '');
-        body += `<div class="cm-fact cm-hint">${_esc(snippet)}</div>`;
+        body += `<div class="cm-fact cm-hint">${esc(snippet)}</div>`;
       }
 
     } else if (mode === 'casova-osa') {
@@ -233,15 +233,15 @@ export const CloudMap = (() => {
       body += `<div class="cm-fact cm-dim">${cnt} ${cnt === 1 ? 'událost' : cnt < 5 ? 'události' : 'událostí'}</div>`;
       if (events.length) {
         const lines = _wrap(events[0].name, FONT_FACT, IW).slice(0, 1);
-        body += `<div class="cm-fact">${_esc(lines[0])}${_wrap(events[0].name, FONT_FACT, IW).length > 1 ? '…' : ''}</div>`;
+        body += `<div class="cm-fact">${esc(lines[0])}${_wrap(events[0].name, FONT_FACT, IW).length > 1 ? '…' : ''}</div>`;
       }
     }
 
     const modClass  = isDead ? ' cm-dead' : '';
     return `<div class="cm-cloud${modClass}" data-id="${c.id}" data-type="character"
               style="--cc:${fColor}; --cw:${CW}px">
-      <div class="cm-strip">${badge} ${_esc(faction)}</div>
-      <div class="cm-name">${deadMark}${_esc(name)}</div>
+      <div class="cm-strip">${badge} ${esc(faction)}</div>
+      <div class="cm-name">${deadMark}${esc(name)}</div>
       <div class="cm-divider"></div>
       ${body}
     </div>`;
@@ -256,14 +256,14 @@ export const CloudMap = (() => {
     if (q) {
       const lines = _wrap(q, FONT_FACT, IW).slice(0, 2);
       const snippet = lines.join(' ') + (lines.length < _wrap(q, FONT_FACT, IW).length ? '…' : '');
-      qHTML = `<div class="cm-fact cm-hint">${_esc(snippet)}</div>`;
+      qHTML = `<div class="cm-fact cm-hint">${esc(snippet)}</div>`;
     }
     return `<div class="cm-cloud cm-mystery" data-id="${m.id}" data-type="mystery"
               style="--cc:#6A1B9A; --cw:${CW}px">
       <div class="cm-strip">❓ Záhada</div>
-      <div class="cm-name">${_esc(m.name)}</div>
+      <div class="cm-name">${esc(m.name)}</div>
       <div class="cm-divider"></div>
-      <div class="cm-fact cm-fact-priority" style="color:${priColor}">⚑ ${_esc(m.priority || 'střední')}</div>
+      <div class="cm-fact cm-fact-priority" style="color:${priColor}">⚑ ${esc(m.priority || 'střední')}</div>
       ${qHTML}
     </div>`;
   }
@@ -275,9 +275,9 @@ export const CloudMap = (() => {
     return `<div class="cm-cloud cm-event" data-id="${e.id}" data-type="event"
               style="--cc:#8B6914; --cw:${CW}px">
       <div class="cm-strip">📜 ${e.sitting ? `Sezení ${e.sitting}` : 'Minulost'}</div>
-      <div class="cm-name">${_esc(e.name)}</div>
+      <div class="cm-name">${esc(e.name)}</div>
       <div class="cm-divider"></div>
-      <div class="cm-fact cm-dim">${_esc(snippet)}</div>
+      <div class="cm-fact cm-dim">${esc(snippet)}</div>
     </div>`;
   }
 
@@ -718,8 +718,26 @@ export const CloudMap = (() => {
   // _sync() call to write.
   let _lastSyncedZoom = NaN;
 
-  // Tunable physics constants. All in node-position units (~px at zoom 1)
-  // per frame. Damping values are multiplicative per frame.
+  // ── Tunable physics constants ────────────────────────────────
+  // All values are in node-position units (~px at zoom 1) per 16ms frame.
+  // Damping values multiply velocity each frame (0..1, lower = more friction).
+  //
+  // Two regimes share these values:
+  //   1. `elastic` (default) — rope-spring CPs + per-node spring back to
+  //      saved equilibrium; loop sleeps when total KE < ENERGY_SLEEP.
+  //   2. `autolayout` — Fruchterman–Reingold force field with temperature
+  //      cooldown over AUTOLAYOUT_MS. Gravity pulls toward the viewport
+  //      centre so disconnected components don't drift to infinity.
+  //
+  // Tweaking guidance:
+  //   - Edges feel too stiff → lower EDGE_SPRING or raise EDGE_DAMP.
+  //   - Nodes feel sluggish during drag → raise COLLISION_KICK.
+  //   - FR layout flies apart → raise GRAVITY.
+  //   - FR collapses inward → lower GRAVITY (or raise k via _runAutoLayout).
+  //
+  // See CLAUDE.md → "CloudMap architecture" → "Physics integrator" for
+  // the full derivation, the rope-bend geometry note, and the list of
+  // tried-and-reverted approaches (do NOT retry without reason).
   const PHYS_K = {
     // Very soft edge spring + extra inertia (less damping). At a typical
     // drag speed of 15 graph-px per frame the edge midpoint lags about
@@ -791,7 +809,7 @@ export const CloudMap = (() => {
           <input type="checkbox" ${_hiddenFactions.has(fId) ? '' : 'checked'}
                  onchange="CloudMap.toggleFaction('${fId}')">
           <div class="legend-dot" style="background:${f.color}"></div>
-          ${f.badge} ${_esc(f.name)}
+          ${f.badge} ${esc(f.name)}
         </label>`).join('');
   }
 
@@ -843,7 +861,7 @@ export const CloudMap = (() => {
     const buildEdgeChip = (t, label, color) => {
       const off = _filters.hiddenEdgeTypes.has(t) ? ' is-off' : '';
       return `<button type="button" class="cm-chip cm-chip-edge${off}" data-edge-type="${t}"
-        onclick="CloudMap.toggleEdgeType('${t}')" style="--chip-color:${color}">${_esc(label)}</button>`;
+        onclick="CloudMap.toggleEdgeType('${t}')" style="--chip-color:${color}">${esc(label)}</button>`;
     };
     if (mode === 'vztahy') {
       edgeChips = [
@@ -869,7 +887,7 @@ export const CloudMap = (() => {
              data-tf-id="cm-filter"
              data-tf-placeholder="🔍 Filtr — napiš a Enter (stav, druh, tag, místo…)"
              data-tf-hint="Víc chipů = AND. Např. „naživu“ + „elf“ → živí elfové."
-             data-tf-value="${_esc(tfValue)}"></div>
+             data-tf-value="${esc(tfValue)}"></div>
         ${edgeChips ? `<div class="cm-chip-group cm-chip-group-edge" title="Skrýt typy vazeb">${edgeChips}</div>` : ''}
         <button type="button" class="cm-focus-toggle${focusOn}"
                 onclick="CloudMap.toggleFocusMode()"
@@ -2200,7 +2218,7 @@ export const CloudMap = (() => {
     _ctxMenu = document.createElement('div');
     _ctxMenu.className = 'cm-ctx-menu';
     _ctxMenu.innerHTML = items.map((it, i) =>
-      `<button type="button" class="cm-ctx-item" data-idx="${i}">${_esc(it.label)}</button>`
+      `<button type="button" class="cm-ctx-item" data-idx="${i}">${esc(it.label)}</button>`
     ).join('');
     _ctxMenu.addEventListener('click', e => {
       const btn = e.target.closest('.cm-ctx-item');

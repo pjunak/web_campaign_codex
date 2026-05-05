@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 //  UTILS — shared helpers used across modules.
-//  Replaces the per-module copies of _esc / _toast and adds
-//  diacritic-insensitive normalization for search.
+//  Single source for esc, escapeRe, norm, debounce, slugify,
+//  extractOutline, humanTime, renderMarkdown, expandWikiLinks.
 // ═══════════════════════════════════════════════════════════════
 
 export function esc(s) {

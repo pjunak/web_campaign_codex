@@ -114,12 +114,24 @@ export const Store = (() => {
       // single 'main' record so it round-trips through the existing
       // PATCH handler (same shape as factions/settings).
       campaign:         { main: { name: 'O Barvách Draků', tagline: '' } },
-      deletedDefaults:  [],
+      // Tombstones for default entries the user has explicitly deleted,
+      // so _mergeDefaults doesn't re-seed them on next load. Keyed by
+      // entity id (or `settings:<cat>:<id>` for settings tombstones).
+      // Kept as an object — round-trips through the keyed-object PATCH
+      // path the same way factions/settings do.
+      deletedDefaults:  {},
     };
   }
 
   function _mergeDefaults() {
-    const deleted  = new Set(_data.deletedDefaults || []);
+    // Coerce legacy array-shaped tombstones to the keyed object shape.
+    if (Array.isArray(_data.deletedDefaults)) {
+      _data.deletedDefaults = Object.fromEntries(_data.deletedDefaults.map(k => [k, true]));
+    }
+    if (!_data.deletedDefaults || typeof _data.deletedDefaults !== 'object') {
+      _data.deletedDefaults = {};
+    }
+    const deleted  = new Set(Object.keys(_data.deletedDefaults));
     const savedIds = new Set(_data.characters.map(c => c.id));
     for (const c of CHARACTERS) {
       if (!savedIds.has(c.id) && !deleted.has(c.id)) {
@@ -177,11 +189,16 @@ export const Store = (() => {
   // unified `attitudes` enum). Map the four legacy ids into the new
   // vocabulary, drop the old field, and remove the stale settings
   // category. Idempotent — safe to re-run.
+  //
+  // Returns `{ touchedLocations: [Location], droppedSettingsCat: bool }`
+  // so `load()` can sync each touched record individually instead of
+  // wiping the whole dataset to the server.
   function _migrateMapStatusToAttitudes() {
-    if (!_data) return false;
-    let changed = false;
+    if (!_data) return { touchedLocations: [], droppedSettingsCat: false };
+    const touched = [];
     const IDMAP = { visited: 'ally', enemy: 'enemy', fog: 'unknown', known: 'neutral' };
     for (const l of _data.locations || []) {
+      let locChanged = false;
       let attitudes = Array.isArray(l.attitudes) ? l.attitudes.slice() : null;
       // Carry legacy mapStatus forward into attitudes if not already set.
       if (l.mapStatus) {
@@ -189,49 +206,42 @@ export const Store = (() => {
         if (!attitudes || !attitudes.length) attitudes = [mapped];
         else if (!attitudes.includes(mapped)) attitudes.push(mapped);
       }
-      if (attitudes) {
-        if (JSON.stringify(l.attitudes || []) !== JSON.stringify(attitudes)) {
-          l.attitudes = attitudes;
-          changed = true;
-        }
+      if (attitudes && JSON.stringify(l.attitudes || []) !== JSON.stringify(attitudes)) {
+        l.attitudes = attitudes;
+        locChanged = true;
       }
       if (l.mapStatus !== undefined) {
         delete l.mapStatus;
-        changed = true;
+        locChanged = true;
       }
+      if (locChanged) touched.push(l);
     }
-    // Remove the stale settings category so the Settings page doesn't
-    // show it. Tombstone it so `_mergeDefaults` doesn't re-seed.
+    let droppedSettingsCat = false;
     if (_data.settings && Array.isArray(_data.settings.mapStatuses)) {
       delete _data.settings.mapStatuses;
-      changed = true;
+      droppedSettingsCat = true;
     }
-    if (!Array.isArray(_data.deletedDefaults)) _data.deletedDefaults = [];
-    for (const oldId of ['visited', 'enemy', 'fog', 'known']) {
-      const key = `settings:mapStatuses:${oldId}`;
-      if (!_data.deletedDefaults.includes(key)) {
-        _data.deletedDefaults.push(key);
-        changed = true;
-      }
-    }
-    return changed;
+    return { touchedLocations: touched, droppedSettingsCat };
   }
 
   // ── One-shot `captured` status migration ──────────────────────
   // Narrowed status enum to alive/dead/unknown; old `captured`
   // characters become alive + circumstances="Zajatý/á" so the
   // information isn't lost. Idempotent — safe to re-run.
+  //
+  // Returns the list of characters whose record changed so `load()`
+  // can sync each via the per-entity PATCH path.
   function _migrateCapturedStatus() {
-    if (!_data || !Array.isArray(_data.characters)) return false;
-    let changed = false;
+    if (!_data || !Array.isArray(_data.characters)) return [];
+    const touched = [];
     for (const c of _data.characters) {
       if (c.status === 'captured') {
         c.status = 'alive';
         if (!c.circumstances) c.circumstances = 'Zajat/a';
-        changed = true;
+        touched.push(c);
       }
     }
-    return changed;
+    return touched;
   }
 
   async function load() {
@@ -243,17 +253,22 @@ export const Store = (() => {
         if (serverData && serverData.characters) {
           _data = serverData;
           _mergeDefaults();
-          // Idempotent data migrations. Re-saves if anything changed.
-          let mutated = false;
-          if (_migrateCapturedStatus())       mutated = true;
-          if (_migrateMapStatusToAttitudes()) mutated = true;
-          if (mutated) _persist();
+          // Idempotent data migrations. Each one returns the entities
+          // it touched so we can sync them via the per-entity PATCH
+          // path instead of POSTing the whole dataset.
+          const capturedTouched = _migrateCapturedStatus();
+          const mapStatus       = _migrateMapStatusToAttitudes();
+          for (const c of capturedTouched)         _sync('characters', 'save', c);
+          for (const l of mapStatus.touchedLocations) _sync('locations', 'save', l);
+          if (mapStatus.droppedSettingsCat)         _sync('settings', 'delete', { id: 'mapStatuses' });
           _reindex();
           return;
         }
+        // Empty server: keep defaults locally; the first user edit
+        // will lazily create files server-side via the per-entity
+        // PATCH path. No bulk wipe necessary.
         _data = _defaults();
         _reindex();
-        _persist();
         return;
       }
     } catch (e) {
@@ -267,19 +282,6 @@ export const Store = (() => {
 
   function init() {
     if (!_data) { _data = _defaults(); _reindex(); }
-  }
-
-  function _persist() {
-    if (!_data || !_serverAvailable) return false;
-    fetch('/api/data', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(_data),
-    }).catch(e => {
-      console.warn('Store: server save failed.', e);
-      window.dispatchEvent(new CustomEvent('store:save-failed'));
-    });
-    return true;
   }
 
   // Serialised write queue — every PATCH waits for the previous one
@@ -449,6 +451,21 @@ export const Store = (() => {
     return entity;
   }
 
+  // Mark a default-id as deleted so `_mergeDefaults` doesn't re-seed
+  // it on next load. Tombstones round-trip through the keyed-object
+  // PATCH path so the server keeps an authoritative `deletedDefaults`
+  // file across restarts.
+  function _tombstone(key) {
+    init();
+    if (!_data.deletedDefaults || typeof _data.deletedDefaults !== 'object'
+        || Array.isArray(_data.deletedDefaults)) {
+      _data.deletedDefaults = {};
+    }
+    if (_data.deletedDefaults[key]) return;
+    _data.deletedDefaults[key] = true;
+    _sync('deletedDefaults', 'save', { id: key, data: true });
+  }
+
   // ── Trash: session-only undo for deletes ──────────────────────
   // Every delete*() helper stores a snapshot keyed by `${kind}:${id}`.
   // `Store.undelete(kind, id)` re-applies the snapshot. Trash lives
@@ -509,10 +526,7 @@ export const Store = (() => {
       });
     }
     if (char?.portrait) deletePortrait(char.portrait);
-    if (CHARACTERS.some(c => c.id === id)) {
-      if (!_data.deletedDefaults) _data.deletedDefaults = [];
-      if (!_data.deletedDefaults.includes(id)) _data.deletedDefaults.push(id);
-    }
+    if (CHARACTERS.some(c => c.id === id)) _tombstone(id);
     _data.characters    = _data.characters.filter(c => c.id !== id);
     _data.relationships = _data.relationships.filter(r => r.source !== id && r.target !== id);
     _data.events        = (_data.events    || []).map(e => ({ ...e, characters: (e.characters    || []).filter(cid => cid !== id) }));
@@ -677,10 +691,7 @@ export const Store = (() => {
     init();
     const s = (_data.species || []).find(x => x.id === id);
     if (s) _trash.set(_trashKey('species', id), { kind:'species', entity: JSON.parse(JSON.stringify(s)) });
-    if (SPECIES.some(s => s.id === id)) {
-      if (!_data.deletedDefaults) _data.deletedDefaults = [];
-      if (!_data.deletedDefaults.includes(id)) _data.deletedDefaults.push(id);
-    }
+    if (SPECIES.some(s => s.id === id)) _tombstone(id);
     _data.species = (_data.species || []).filter(s => s.id !== id);
     return _sync('species', 'delete', { id });
   }
@@ -835,11 +846,7 @@ export const Store = (() => {
     const arr = (_data.settings && _data.settings[cat]) || [];
     _data.settings[cat] = arr.filter(x => x.id !== id);
     const wasDefault = (SETTINGS_DEFAULTS[cat] || []).some(d => d.id === id);
-    if (wasDefault) {
-      if (!_data.deletedDefaults) _data.deletedDefaults = [];
-      const key = `settings:${cat}:${id}`;
-      if (!_data.deletedDefaults.includes(key)) _data.deletedDefaults.push(key);
-    }
+    if (wasDefault) _tombstone(`settings:${cat}:${id}`);
     // Sync: push the full post-delete category array plus persist
     // any collections whose rows were remapped. The latter uses the
     // entity-level save path so each touched record gets its own
@@ -1109,58 +1116,6 @@ export const Store = (() => {
     return (base || 'e') + '_' + suffix;
   }
 
-  function reset() {
-    _data = _defaults();
-    _reindex();
-    _persist();
-  }
-
-  function exportJS() {
-    init();
-    const ts = new Date().toLocaleString('cs-CZ');
-    return [
-      `// O Barvách Draků — Export dat (${ts})`,
-      `// Vlož jako obsah js/data.js`,
-      ``,
-      `const FACTIONS = ${JSON.stringify(_data.factions, null, 2)};`,
-      ``,
-      `const CHARACTERS = ${JSON.stringify(_data.characters, null, 2)};`,
-      ``,
-      `const RELATIONSHIPS = ${JSON.stringify(_data.relationships, null, 2)};`,
-      ``,
-      `const LOCATIONS = ${JSON.stringify(_data.locations, null, 2)};`,
-      ``,
-      `const EVENTS = ${JSON.stringify(_data.events, null, 2)};`,
-      ``,
-      `const MYSTERIES = ${JSON.stringify(_data.mysteries, null, 2)};`,
-      ``,
-      `const SPECIES = ${JSON.stringify(_data.species || [], null, 2)};`,
-      ``,
-      `const PANTHEON = ${JSON.stringify(_data.pantheon || [], null, 2)};`,
-      ``,
-      `const ARTIFACTS = ${JSON.stringify(_data.artifacts || [], null, 2)};`,
-      ``,
-      `const HISTORICAL_EVENTS = ${JSON.stringify(_data.historicalEvents || [], null, 2)};`,
-      ``,
-      `const SETTINGS = ${JSON.stringify(_data.settings || {}, null, 2)};`,
-      ``,
-      `const DELETED_DEFAULTS = ${JSON.stringify(_data.deletedDefaults || [], null, 2)};`,
-    ].join('\n');
-  }
-
-  function importJSON(json) {
-    try {
-      const parsed = JSON.parse(json);
-      if (parsed.characters) _data = { ..._defaults(), ...parsed };
-      else throw new Error('Neplatný formát');
-      _reindex();
-      _persist();
-      return true;
-    } catch(e) {
-      return false;
-    }
-  }
-
   function exportJSON() {
     init();
     const ts = new Date().toLocaleString('cs-CZ');
@@ -1178,7 +1133,7 @@ export const Store = (() => {
       artifacts:        _data.artifacts        || [],
       historicalEvents: _data.historicalEvents || [],
       settings:         _data.settings         || {},
-      deletedDefaults:  _data.deletedDefaults  || [],
+      deletedDefaults:  _data.deletedDefaults  || {},
     }, null, 2);
   }
 
@@ -1214,6 +1169,6 @@ export const Store = (() => {
     saveEnumItem, deleteEnumItem, findEnumUsages, resetEnumCategory,
     getHiddenSidebarPages, setHiddenSidebarPages,
     getCampaign, setCampaign,
-    generateId, reset, exportJS, exportJSON, importJSON,
+    generateId, exportJSON,
   };
 })();

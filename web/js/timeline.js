@@ -13,7 +13,7 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
-import { esc as _esc } from './utils.js';
+import { esc } from './utils.js';
 
 const STACK_THRESHOLD = 4;
 
@@ -62,19 +62,19 @@ export const Timeline = (() => {
   function _cardHTML(e) {
     const charNames = (e.characters || []).slice(0, 4).map(id => {
       const c = _charMap.get(id);
-      return c ? _esc(c.name) : _esc(id);
+      return c ? esc(c.name) : esc(id);
     });
     const charMore = (e.characters || []).length > 4
       ? ` <span class="tl-more">+${(e.characters||[]).length - 4}</span>` : '';
 
     const locNames = (e.locations || []).map(id => {
       const l = _locMap.get(id);
-      return l ? _esc(l.name) : _esc(id);
+      return l ? esc(l.name) : esc(id);
     });
 
     return `
-      <div class="tl-card-name">${_esc(e.name)}</div>
-      ${e.short ? `<div class="tl-card-desc">${_esc(e.short)}</div>` : ''}
+      <div class="tl-card-name">${esc(e.name)}</div>
+      ${e.short ? `<div class="tl-card-desc">${esc(e.short)}</div>` : ''}
       <div class="tl-card-meta">
         ${charNames.length ? `<div class="tl-card-chars">👤 ${charNames.join(', ')}${charMore}</div>` : ''}
         ${locNames.length  ? `<div class="tl-card-loc">📍 ${locNames.join(' → ')}</div>` : ''}
@@ -289,7 +289,7 @@ export const Timeline = (() => {
     // Header
     col.innerHTML = `
       <div class="tl-col-header">
-        <div class="tl-col-title">${_esc(label)}</div>
+        <div class="tl-col-title">${esc(label)}</div>
         <div class="tl-col-count">${events.length || ''}</div>
       </div>
       <div class="tl-col-body"></div>
