@@ -7,7 +7,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
-import { esc } from './utils.js';
+import { EditMode } from './editmode.js';
+import { WorldMap } from './map.js';
+import { esc, dataAction, dataOn } from './utils.js';
 import { SIDEBAR_PAGES } from './constants.js';
 
 export const Settings = (() => {
@@ -58,14 +60,14 @@ export const Settings = (() => {
   function _pageHtml() {
     const enumTabs = CATEGORIES.map(c => `
       <button type="button" class="settings-tab ${c.id===_activeCat?'is-active':''}"
-        onclick="Settings.selectCategory('${c.id}')">
+        ${dataAction('Settings.selectCategory', c.id)}>
         <span class="settings-tab-icon">${c.icon}</span>
         <span class="settings-tab-label">${esc(c.label)}</span>
         <span class="settings-tab-count">${Store.getEnum(c.id).length}</span>
       </button>`).join('');
     const specialTabs = SPECIAL_TABS.map(t => `
       <button type="button" class="settings-tab ${t.id===_activeCat?'is-active':''}"
-        onclick="Settings.selectCategory('${t.id}')">
+        ${dataAction('Settings.selectCategory', t.id)}>
         <span class="settings-tab-icon">${t.icon}</span>
         <span class="settings-tab-label">${esc(t.label)}</span>
       </button>`).join('');
@@ -101,10 +103,10 @@ export const Settings = (() => {
         <h2>${cat.icon} ${esc(cat.label)}</h2>
         <div class="settings-editor-actions">
           <button type="button" class="inline-create-btn"
-            onclick="Settings.startNew()">＋ Přidat</button>
+            ${dataAction('Settings.startNew')}>＋ Přidat</button>
           <button type="button" class="inline-create-btn"
             title="Přidat zpět chybějící výchozí položky"
-            onclick="Settings.resetDefaults()">↺ Doplnit výchozí</button>
+            ${dataAction('Settings.resetDefaults')}>↺ Doplnit výchozí</button>
         </div>
       </div>
       ${addForm}
@@ -132,9 +134,9 @@ export const Settings = (() => {
         <span class="settings-row-usage" title="Použitích">${usageCount > 0 ? usageCount + '×' : '–'}</span>
         <div class="settings-row-actions">
           <button type="button" class="settings-btn-edit"
-            onclick="Settings.startEdit('${esc(item.id)}')">✏</button>
+            ${dataAction('Settings.startEdit', item.id)}>✏</button>
           <button type="button" class="settings-btn-del"
-            onclick="Settings.requestDelete('${esc(item.id)}')">🗑</button>
+            ${dataAction('Settings.requestDelete', item.id)}>🗑</button>
         </div>
       </div>`;
   }
@@ -195,9 +197,9 @@ export const Settings = (() => {
         </div>
         <div class="settings-form-actions">
           <button type="button" class="edit-save-btn"
-            onclick="Settings.commit('${uid}', ${isNew})">💾 Uložit</button>
+            ${dataAction('Settings.commit', uid, isNew)}>💾 Uložit</button>
           <button type="button" class="inline-create-btn"
-            onclick="Settings.cancelEdit()">Zrušit</button>
+            ${dataAction('Settings.cancelEdit')}>Zrušit</button>
         </div>
       </div>`;
   }
@@ -351,10 +353,10 @@ export const Settings = (() => {
         <div class="settings-row-actions">
           <button type="button" class="settings-btn-edit"
                   title="Přejmenovat nebo změnit ikonu"
-                  onclick="Settings.renameMapView('${esc(v.id)}')">✏</button>
+                  ${dataAction('Settings.renameMapView', v.id)}>✏</button>
           <button type="button" class="settings-btn-del"
                   title="Smazat pohled"
-                  onclick="Settings.deleteMapView('${esc(v.id)}')">🗑</button>
+                  ${dataAction('Settings.deleteMapView', v.id)}>🗑</button>
         </div>
       </div>`;
   }
@@ -371,9 +373,7 @@ export const Settings = (() => {
     render();
     _flash('Pohled upraven');
     // Mirror the change onto the live map toolbar if it's visible.
-    if (window.WorldMap && typeof window.WorldMap.refreshPresetButtons === 'function') {
-      try { window.WorldMap.refreshPresetButtons(); } catch (_) {}
-    }
+    try { WorldMap.refreshPresetButtons?.(); } catch (_) {}
   }
 
   function deleteMapView(id) {
@@ -384,9 +384,7 @@ export const Settings = (() => {
     Store.deleteEnumItem('mapViews', id, { force: true });
     render();
     _flash('Pohled smazán');
-    if (window.WorldMap && typeof window.WorldMap.refreshPresetButtons === 'function') {
-      try { window.WorldMap.refreshPresetButtons(); } catch (_) {}
-    }
+    try { WorldMap.refreshPresetButtons?.(); } catch (_) {}
   }
 
   // ── Sidebar pages panel ──────────────────────────────────────
@@ -414,7 +412,7 @@ export const Settings = (() => {
           <div class="settings-sidebar-row">
             <label class="settings-sidebar-toggle" title="Zobrazovat v postranním panelu">
               <input type="checkbox" ${isHidden ? '' : 'checked'}
-                onchange="Settings.toggleSidebarPage('${esc(p.route)}', this.checked)">
+                ${dataOn('change', 'Settings.toggleSidebarPage', p.route, '$checked')}>
               <span class="settings-sidebar-toggle-track"></span>
             </label>
             <span class="settings-sidebar-icon">${esc(p.icon)}</span>
@@ -436,7 +434,7 @@ export const Settings = (() => {
         <div class="settings-editor-actions">
           <button type="button" class="inline-create-btn"
             title="Znovu zobrazit všechny stránky"
-            onclick="Settings.showAllSidebarPages()">↺ Zobrazit vše</button>
+            ${dataAction('Settings.showAllSidebarPages')}>↺ Zobrazit vše</button>
         </div>
       </div>
       <div class="settings-panel">
@@ -510,12 +508,12 @@ export const Settings = (() => {
         </p>
         <div class="settings-worldmap-preview">
           <img src="${esc(current)}?v=${Date.now()}" alt=""
-               onerror="this.style.display='none'">
+               ${dataOn('error', 'hide', '$el')}>
         </div>
         <label class="inline-create-btn" style="cursor:pointer;display:inline-block;margin-top:0.8rem">
           📂 Vybrat soubor…
           <input type="file" accept="image/*" style="display:none"
-                 onchange="Settings.uploadWorldMap(this)">
+                 ${dataOn('change', 'Settings.uploadWorldMap', '$el')}>
         </label>
         <span class="settings-hint" style="margin-left:0.8rem">
           Max 40 MB. Doporučený formát JPG/PNG/WebP, min. šířka 2000 px.
@@ -558,12 +556,12 @@ export const Settings = (() => {
             📤 Obnovit ze zálohy…
             <input type="file" accept=".zip,.json,application/zip,application/json"
                    style="display:none"
-                   onchange="Settings.uploadRestore(this)">
+                   ${dataOn('change', 'Settings.uploadRestore', '$el')}>
           </label>
           <button type="button" class="inline-create-btn"
-                  onclick="Settings.createSnapshot()">＋ Vytvořit bod zálohy</button>
+                  ${dataAction('Settings.createSnapshot')}>＋ Vytvořit bod zálohy</button>
           <button type="button" class="inline-create-btn"
-                  onclick="Settings.refreshSnapshots()">↻ Obnovit</button>
+                  ${dataAction('Settings.refreshSnapshots')}>↻ Obnovit</button>
         </div>
       </div>
       <div class="settings-panel">
@@ -581,7 +579,7 @@ export const Settings = (() => {
                    value="1" id="settings-revert-n" style="width:5rem">
           </label>
           <button type="button" class="edit-delete-btn"
-                  onclick="Settings.revertLastN()">↶ Vrátit</button>
+                  ${dataAction('Settings.revertLastN')}>↶ Vrátit</button>
         </div>
         <div class="settings-snapshots">${rows}</div>
       </div>`;
@@ -601,10 +599,10 @@ export const Settings = (() => {
         <div class="settings-row-actions">
           <button type="button" class="settings-btn-edit"
                   title="Obnovit tento stav"
-                  onclick="Settings.restoreSnapshot('${esc(s.id)}')">↶</button>
+                  ${dataAction('Settings.restoreSnapshot', s.id)}>↶</button>
           <button type="button" class="settings-btn-del"
                   title="Smazat bod zálohy"
-                  onclick="Settings.deleteSnapshot('${esc(s.id)}')">🗑</button>
+                  ${dataAction('Settings.deleteSnapshot', s.id)}>🗑</button>
         </div>
       </div>`;
   }
@@ -742,11 +740,11 @@ export const Settings = (() => {
         </div>
         <div class="settings-modal-actions">
           <button type="button" class="edit-save-btn"
-            onclick="Settings.commitDelete('${esc(id)}','replace')">Nahradit &amp; smazat</button>
+            ${dataAction('Settings.commitDelete', id, 'replace')}>Nahradit &amp; smazat</button>
           <button type="button" class="edit-delete-btn"
-            onclick="Settings.commitDelete('${esc(id)}','force')">Smazat i tak</button>
+            ${dataAction('Settings.commitDelete', id, 'force')}>Smazat i tak</button>
           <button type="button" class="inline-create-btn"
-            onclick="Settings.closeModal()">Zrušit</button>
+            ${dataAction('Settings.closeModal')}>Zrušit</button>
         </div>
       </div>`;
     document.body.appendChild(root);
@@ -794,8 +792,8 @@ export const Settings = (() => {
   // Route notifications through EditMode's toast (same visual style
    // as save/delete feedback across the rest of the app).
   function _flash(msg, ok = true) {
-    if (window.EditMode && typeof window.EditMode.toast === 'function') {
-      window.EditMode.toast(msg, ok);
+    if (typeof EditMode.toast === 'function') {
+      EditMode.toast(msg, ok);
     } else {
       console.log('[settings]', msg);
     }

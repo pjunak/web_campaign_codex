@@ -387,6 +387,31 @@ export const EditMode = (() => {
     list.lastElementChild?.querySelector("input")?.focus();
   }
 
+  // ── Helpers for the data-action dispatcher ─────────────────────
+  // Replace inline DOM-manipulation handlers that used to live in
+  // edit_templates.js as multi-statement `onclick="…"` strings.
+  // Naming convention: same as the inline expression they superseded.
+  function clearPortrait(uid, badge) {
+    const preview = document.getElementById('ep-preview-' + uid);
+    const hidden  = document.getElementById('ep-data-' + uid);
+    if (preview) preview.innerHTML = `<span style="font-size:2.5rem">${badge || ''}</span>`;
+    if (hidden)  hidden.value = '';
+  }
+  function updateKnowledgeLabel(uid) {
+    const KNAMES = ["Neznámý","Tušený","Základní","Dobře znám","Plně zmapován"];
+    const range = document.getElementById('ef-knowledge-' + uid);
+    const label = document.getElementById('ef-kl-' + uid);
+    if (!range || !label) return;
+    const v = +range.value;
+    label.textContent = `Znalost (${v}/4) — ${KNAMES[v]}`;
+  }
+  function handlePortraitChange(uid, el) {
+    if (el?.files?.[0]) handlePortraitUpload(el, uid);
+  }
+  function handleLocalMapChange(locId, inputId, el) {
+    if (el?.files?.[0]) uploadLocalMap(locId, el.files[0], inputId);
+  }
+
   // ── Portrait upload ────────────────────────────────────────────
   async function handlePortraitUpload(input, uid) {
     const file = input.files[0];
@@ -1203,6 +1228,8 @@ export const EditMode = (() => {
   return {
     isActive, toggle, isDirty,
     addDynRow, handlePortraitUpload,
+    clearPortrait, updateKnowledgeLabel,
+    handlePortraitChange, handleLocalMapChange,
     addRankChain, addRankRow,
     saveCharacter, deleteCharacter, onGenderChange,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,

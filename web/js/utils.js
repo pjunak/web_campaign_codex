@@ -191,3 +191,24 @@ export function renderMarkdown(src) {
   return finalHtml;
 }
 
+/** Build the attribute string for the click dispatcher in app.js.
+ *  Replaces inline `onclick="Module.method('arg', …)"`. Output starts
+ *  with a leading space so it can be dropped straight into a tag
+ *  template literal: ``<button${dataAction('Wiki.foo', id)}>``.
+ *  Args round-trip via JSON, so strings with quotes / objects / numbers
+ *  all work — the dispatcher in app.js does the matching `JSON.parse`.
+ *  Two sentinels are special-cased by the dispatcher:
+ *    `'$el'`  — replaced with the element that carries the attribute,
+ *    `'$ev'`  — replaced with the original Event object. */
+export function dataAction(method, ...args) {
+  const argAttr = args.length ? ` data-args='${esc(JSON.stringify(args))}'` : '';
+  return ` data-action="${esc(method)}"${argAttr}`;
+}
+
+/** Same shape for non-click events. `kind` is one of `submit`, `change`,
+ *  `input`. The dispatcher reads `data-on-<kind>` + `data-<kind>-args`. */
+export function dataOn(kind, method, ...args) {
+  const argAttr = args.length ? ` data-${kind}-args='${esc(JSON.stringify(args))}'` : '';
+  return ` data-on-${kind}="${esc(method)}"${argAttr}`;
+}
+

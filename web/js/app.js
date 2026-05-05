@@ -13,15 +13,166 @@ import { Widgets } from './widgets/widgets.js';
 import { GlobalSearch } from './search.js';
 import { setWikiLinkResolver, norm } from './utils.js';
 
-// Expose modules to global scope for inline event handlers (onclick="...")
-window.Store = Store;
-window.EditMode = EditMode;
-window.Wiki = Wiki;
-window.CloudMap = CloudMap;
-window.Timeline = Timeline;
-window.WorldMap = WorldMap;
-window.Settings = Settings;
-window.GlobalSearch = GlobalSearch;
+// ── Action dispatcher (replaces inline `onclick="Module.method(...)"`) ──
+// Buttons / anchors carry `data-action="Module.method"` plus an optional
+// `data-args='[json,…]'`. A single capture-phase document listener parses
+// the action, looks up the function via the local registry below (NOT
+// `window.*`), and invokes it. Side effects:
+//   1. Drops the eight global `window.*` exports the inline-onclick model
+//      required — modules stay private to this entry point.
+//   2. Lets the page run under `Content-Security-Policy: script-src 'self'`
+//      because no inline event-handler attributes survive.
+const ACTIONS = {
+  Store, EditMode, Wiki, CloudMap, Timeline, WorldMap, Settings, GlobalSearch,
+};
+// Browser-built-in shortcuts that used to live inline (`history.back()`,
+// `document.getElementById(slug).scrollIntoView(…)`, etc.). Element- /
+// event-aware builtins pull what they need via the `$el` / `$ev`
+// sentinels in the call site's args list — no per-handler magic.
+const BUILTIN_ACTIONS = {
+  back:           () => history.back(),
+  scrollTo:       (slug) => document.getElementById(slug)?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+  reload:         () => window.location.reload(),
+  hashGoto:       (hash) => { window.location.hash = hash; },
+  // Remove an ancestor of the dispatch element. Pass `$el` plus an
+  // optional CSS selector; without a selector it removes the parent.
+  removeAncestor: (el, selector) => (selector ? el?.closest(selector) : el?.parentElement)?.remove(),
+  // Mirror one input's value into another by id. Replaces the colour-
+  // picker / hex-text two-way binding that used inline oninput.
+  copyValue:      (srcId, dstId) => {
+    const src = document.getElementById(srcId);
+    const dst = document.getElementById(dstId);
+    if (src && dst) dst.value = src.value;
+  },
+  // Defer the call by one tick — used when navigating then asking the
+  // newly-mounted view to do something (was `setTimeout(()=>X(),0)`).
+  deferred:       (action, ...args) => setTimeout(() => _runAction(action, ...args), 0),
+  // Enter inside a contenteditable blurs (and prevents a stray newline).
+  // Replaces `onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"`.
+  enterBlurs:     (ev) => {
+    if (ev?.key === 'Enter') { ev.preventDefault(); ev.target?.blur(); }
+  },
+  // Hide an element. Used as `data-on-error="hide"` on <img> previews
+  // whose source might 404. Replaces `onerror="this.style.display='none'"`.
+  hide:           (el) => { if (el) el.style.display = 'none'; },
+  // Toggle / remove a class on document.body. Mobile drawer + map-sheet
+  // toggles in index.html used inline body.classList ops.
+  bodyToggleClass: (cls) => document.body.classList.toggle(cls),
+  bodyRemoveClass: (cls) => document.body.classList.remove(cls),
+  // Kompendium sidebar collapsible — multi-step (toggle button class,
+  // toggle list class, set aria, persist to localStorage). Was an inline
+  // multi-statement onclick; lifted here so the markup is clean.
+  toggleKompendium: () => {
+    const btn  = document.getElementById('sidebar-kompendium-toggle');
+    const list = document.getElementById('sidebar-kompendium');
+    if (!btn || !list) return;
+    const open = btn.classList.toggle('is-open');
+    list.classList.toggle('is-open');
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    try { localStorage.setItem('sidebar_kompendium_open', open ? '1' : '0'); } catch (_) {}
+  },
+};
+// Args may contain placeholder sentinels:
+//   `$el`      → the element that carries the data-action
+//   `$ev`      → the original Event
+//   `$value`   → el.value (covers `this.value` in inline `onchange`/`oninput`)
+//   `$text`    → el.textContent?.trim() (for contenteditable nodes)
+//   `$checked` → el.checked (for checkbox / radio handlers)
+// Lets templates pass the element / event / value to handlers that
+// previously relied on inline `this` / `event` references.
+function _resolveArgs(rawArgs, el, ev) {
+  return rawArgs.map(a =>
+    a === '$el'      ? el :
+    a === '$ev'      ? ev :
+    a === '$value'   ? el?.value :
+    a === '$text'    ? el?.textContent?.trim() :
+    a === '$checked' ? !!el?.checked :
+    a
+  );
+}
+function _runAction(actionStr, ...args) {
+  if (!actionStr) return;
+  const dot = actionStr.indexOf('.');
+  if (dot > 0) {
+    const mod = ACTIONS[actionStr.slice(0, dot)];
+    const fn  = mod?.[actionStr.slice(dot + 1)];
+    if (typeof fn === 'function') return fn.apply(mod, args);
+  } else {
+    const fn = BUILTIN_ACTIONS[actionStr];
+    if (typeof fn === 'function') return fn(...args);
+  }
+  console.warn('Unknown data-action:', actionStr);
+}
+function _dispatch(el, ev, attr, argsAttr, opts = {}) {
+  const action = el.dataset[attr];
+  if (!action) return;
+  let raw = [];
+  const argsJson = el.dataset[argsAttr];
+  if (argsJson !== undefined) {
+    try { raw = JSON.parse(argsJson); }
+    catch (err) { console.warn('Bad JSON on', el, argsJson, err); return; }
+  }
+  const args = _resolveArgs(raw, el, ev);
+  // Click + submit get default preventDefault — most converted onclick
+  // handlers wanted that. Change/input/blur/keydown don't, so typing
+  // and form-validation fire-and-go behaviour stays intact; if the
+  // handler needs to suppress, it asks via `$ev` and `.preventDefault()`.
+  if (opts.preventDefault) ev.preventDefault();
+  _runAction(action, ...args);
+}
+// Capture-phase so we run before component-level handlers AND before
+// the dirty-form click guard in editmode.js (which only checks `<a>`
+// hash navigations — data-action triggers never reach hash routing).
+//
+// preventDefault rule:
+//   - <button> and <a href="#"> / <a href="#anchor"> → suppress default
+//     (the action fully replaces the link's intent — most converted
+//     onclick handlers ended in `event.preventDefault()`).
+//   - <a href="#/route"> → KEEP default, so hash-routing still fires
+//     after the action runs (e.g. close-panel + navigate to detail).
+//   - Modifier-click on a real href → fall through to the browser
+//     entirely, so middle-click / Ctrl-click open in a new tab.
+document.addEventListener('click', (ev) => {
+  const el = ev.target.closest('[data-action]');
+  if (!el) return;
+  const href = el.tagName === 'A' ? el.getAttribute('href') : null;
+  if (href && (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1)) return;
+  const isHashRoute = !!(href && href.startsWith('#/'));
+  _dispatch(el, ev, 'action', 'args', { preventDefault: !isHashRoute });
+}, true);
+
+// Convention for non-click events. Each pair is `data-on-<kind>` +
+// `data-<kind>-args` (JSON array of args, with `$el`/`$ev`/`$value`
+// sentinels). Listeners use `focusout` instead of `blur` because
+// `blur` doesn't bubble and we need a single document-level listener.
+document.addEventListener('submit',   (ev) => {
+  const el = ev.target.closest('[data-on-submit]');
+  if (el) _dispatch(el, ev, 'onSubmit', 'submitArgs', { preventDefault: true });
+}, true);
+document.addEventListener('change',   (ev) => {
+  const el = ev.target.closest('[data-on-change]');
+  if (el) _dispatch(el, ev, 'onChange', 'changeArgs');
+}, true);
+document.addEventListener('input',    (ev) => {
+  const el = ev.target.closest('[data-on-input]');
+  if (el) _dispatch(el, ev, 'onInput', 'inputArgs');
+}, true);
+document.addEventListener('focusout', (ev) => {
+  const el = ev.target.closest('[data-on-blur]');
+  if (el) _dispatch(el, ev, 'onBlur', 'blurArgs');
+}, true);
+document.addEventListener('keydown',  (ev) => {
+  const el = ev.target.closest('[data-on-keydown]');
+  if (el) _dispatch(el, ev, 'onKeydown', 'keydownArgs');
+}, true);
+// Error events don't bubble, so capture phase is the only way to catch
+// `<img onerror="…">` via delegation. Used by the world-map preview to
+// hide a broken thumbnail.
+document.addEventListener('error',    (ev) => {
+  const el = ev.target;
+  if (el?.dataset?.onError) _dispatch(el, ev, 'onError', 'errorArgs');
+}, true);
+
 
 (function () {
 

@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { Store } from './store.js';
-import { norm, debounce, esc } from './utils.js';
+import { norm, debounce, esc, dataAction, dataOn } from './utils.js';
 import { REL_TYPES, getRelType } from './data.js';
 
 export const CloudMap = (() => {
@@ -807,7 +807,7 @@ export const CloudMap = (() => {
       .map(([fId, f]) => `
         <label class="legend-item legend-filter" data-faction="${fId}">
           <input type="checkbox" ${_hiddenFactions.has(fId) ? '' : 'checked'}
-                 onchange="CloudMap.toggleFaction('${fId}')">
+                 ${dataOn('change', 'CloudMap.toggleFaction', fId)}>
           <div class="legend-dot" style="background:${f.color}"></div>
           ${f.badge} ${esc(f.name)}
         </label>`).join('');
@@ -830,10 +830,10 @@ export const CloudMap = (() => {
           <a href="#/mapa/frakce"    class="map-mode-btn ${mode==='frakce'    ?'active':''}">Frakce</a>
           <a href="#/mapa/vztahy"    class="map-mode-btn ${mode==='vztahy'    ?'active':''}">Vztahy</a>
           <a href="#/mapa/tajemstvi" class="map-mode-btn ${mode==='tajemstvi' ?'active':''}">Záhady</a>
-          <button class="map-mode-btn cm-save-pos" onclick="CloudMap.runAutoLayout()" title="Animovaně přeuspořádá uzly do matematicky ideálních pozic (Fruchterman–Reingold) — minimalizuje křížení vazeb a drží mapu kompaktní">✨ Auto rozložení</button>
-          <button class="map-mode-btn cm-save-pos cm-undo-layout" onclick="CloudMap.undoLayout()" title="Vrátí poslední automatické přeuspořádání">↶ Zpět rozložení</button>
-          <button class="map-mode-btn cm-save-pos" onclick="CloudMap.resetLayout()" title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
-          <button class="map-mode-btn cm-save-pos" onclick="CloudMap.savePositions()" title="Uloží aktuální pozice uzlů">💾 Uložit pozice</button>
+          <button class="map-mode-btn cm-save-pos"${dataAction('CloudMap.runAutoLayout')} title="Animovaně přeuspořádá uzly do matematicky ideálních pozic (Fruchterman–Reingold) — minimalizuje křížení vazeb a drží mapu kompaktní">✨ Auto rozložení</button>
+          <button class="map-mode-btn cm-save-pos cm-undo-layout"${dataAction('CloudMap.undoLayout')} title="Vrátí poslední automatické přeuspořádání">↶ Zpět rozložení</button>
+          <button class="map-mode-btn cm-save-pos"${dataAction('CloudMap.resetLayout')} title="Vymaže uložené pozice a znovu rozloží uzly automaticky">⟳ Rozložení</button>
+          <button class="map-mode-btn cm-save-pos"${dataAction('CloudMap.savePositions')} title="Uloží aktuální pozice uzlů">💾 Uložit pozice</button>
           <span class="map-hint">Klik = detail · Táhni = pohyb · Scroll = zoom</span>
         </div>
         ${_buildFilterBar(mode)}
@@ -861,7 +861,7 @@ export const CloudMap = (() => {
     const buildEdgeChip = (t, label, color) => {
       const off = _filters.hiddenEdgeTypes.has(t) ? ' is-off' : '';
       return `<button type="button" class="cm-chip cm-chip-edge${off}" data-edge-type="${t}"
-        onclick="CloudMap.toggleEdgeType('${t}')" style="--chip-color:${color}">${esc(label)}</button>`;
+        ${dataAction('CloudMap.toggleEdgeType', t)} style="--chip-color:${color}">${esc(label)}</button>`;
     };
     if (mode === 'vztahy') {
       edgeChips = [
@@ -890,14 +890,14 @@ export const CloudMap = (() => {
              data-tf-value="${esc(tfValue)}"></div>
         ${edgeChips ? `<div class="cm-chip-group cm-chip-group-edge" title="Skrýt typy vazeb">${edgeChips}</div>` : ''}
         <button type="button" class="cm-focus-toggle${focusOn}"
-                onclick="CloudMap.toggleFocusMode()"
+                ${dataAction('CloudMap.toggleFocusMode')}
                 title="Klik na uzel zaměří jeho okolí místo otevření detailu">🎯 Fokus</button>
         <span class="cm-focus-hops" ${_focusMode ? '' : 'hidden'}>
           <input type="range" min="1" max="4" step="1" value="${_filters.focusHops}"
-                 oninput="CloudMap.setFocusHops(this.value)">
+                 ${dataOn('input', 'CloudMap.setFocusHops', '$value')}>
           <span class="cm-focus-hops-val">${_filters.focusHops}</span> hop
         </span>
-        <button type="button" class="cm-clear-filters" onclick="CloudMap.clearFilters()"
+        <button type="button" class="cm-clear-filters"${dataAction('CloudMap.clearFilters')}
                 title="Vymazat všechny filtry">⨯</button>
       </div>`;
   }

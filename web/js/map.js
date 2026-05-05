@@ -1,6 +1,6 @@
 import { Store } from './store.js';
 import { Widgets } from './widgets/widgets.js';
-import { esc } from './utils.js';
+import { esc, dataAction, dataOn } from './utils.js';
 
 export const PIN_TYPES = {
   major_city:  { icon: '🏙',  label: 'Velké město',  color: '#D4A017' },
@@ -179,21 +179,21 @@ export const WorldMap = (() => {
           <div class="sc-title">${titleHtml}</div>
           <input type="search" class="sc-search" id="sc-search"
                  placeholder="🔍 Najít místo…" autocomplete="off"
-                 oninput="WorldMap.onSearchInput(this.value)"
-                 onkeydown="if(event.key==='Enter'){WorldMap.jumpToFirstMatch();event.preventDefault();}">
+                 ${dataOn('input', 'WorldMap.onSearchInput', '$value')}
+                 ${dataOn('keydown', 'WorldMap.handleSearchKey', '$ev')}>
           <div class="sc-search-results" id="sc-search-results" hidden></div>
-          <button class="sc-btn edit-only-inline ${_addMode ? 'active' : ''}" id="sc-add-btn" onclick="WorldMap.toggleAddMode()">
+          <button class="sc-btn edit-only-inline ${_addMode ? 'active' : ''}" id="sc-add-btn"${dataAction('WorldMap.toggleAddMode')}>
             ${_addMode ? '✕ Zrušit' : '+ Přidat místo'}
           </button>
-          <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn" onclick="WorldMap.toggleEventPaths()" title="Zobraz trasy událostí a přiblíž k aktuálnímu dění">
+          <button class="sc-btn ${_eventPathsVisible ? 'active' : ''}" id="sc-event-btn"${dataAction('WorldMap.toggleEventPaths')} title="Zobraz trasy událostí a přiblíž k aktuálnímu dění">
             📜 Trasy událostí
           </button>
           <span class="sc-zoom-presets" id="sc-zoom-presets">
-            <button class="sc-btn" onclick="WorldMap.zoomFitAll()" title="Oddálit na celou mapu">🌐 Celá</button>
+            <button class="sc-btn"${dataAction('WorldMap.zoomFitAll')} title="Oddálit na celou mapu">🌐 Celá</button>
             ${_presetButtonsHtml()}
-            <button class="sc-btn edit-only-inline" onclick="WorldMap.captureCurrentView()" title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
+            <button class="sc-btn edit-only-inline"${dataAction('WorldMap.captureCurrentView')} title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
           </span>
-          <button class="sc-btn edit-only-inline" onclick="WorldMap.showSettings()">⚙ Mapa</button>
+          <button class="sc-btn edit-only-inline"${dataAction('WorldMap.showSettings')}>⚙ Mapa</button>
           <span class="sc-hint">${_addMode
             ? 'Klikni na mapu pro přidání nového místa'
             : 'Klik = detail místa · Kolečko = zoom · Táhni = pohyb'
@@ -205,7 +205,7 @@ export const WorldMap = (() => {
 
       <!-- Pin detail / edit panel -->
       <div class="sc-panel" id="sc-panel" hidden>
-        <button class="sc-panel-close" onclick="WorldMap.closePanel()">✕</button>
+        <button class="sc-panel-close"${dataAction('WorldMap.closePanel')}>✕</button>
         <div id="sc-panel-content"></div>
       </div>
 
@@ -221,13 +221,13 @@ export const WorldMap = (() => {
           <label class="sc-label">Nahrát ze souboru</label>
           <label class="sc-btn" style="cursor:pointer;display:inline-block;margin-bottom:0.8rem">
             📂 Vybrat soubor…
-            <input type="file" accept="image/*" style="display:none" onchange="WorldMap.handleMapFileUpload(this)">
+            <input type="file" accept="image/*" style="display:none"${dataOn('change', 'WorldMap.handleMapFileUpload', '$el')}>
           </label>
           <label class="sc-label">— nebo zadat URL obrázku —</label>
           <input class="sc-input" id="sc-img-url" type="text" value="${esc(_getImgUrl().startsWith('data:') ? '' : _getImgUrl())}">
           <div class="sc-dialog-actions">
-            <button class="sc-btn ok" onclick="WorldMap.applySettings()">✓ Použít URL</button>
-            <button class="sc-btn" onclick="WorldMap.closeSettings()">Zrušit</button>
+            <button class="sc-btn ok"${dataAction('WorldMap.applySettings')}>✓ Použít URL</button>
+            <button class="sc-btn"${dataAction('WorldMap.closeSettings')}>Zrušit</button>
           </div>
         </div>
       </div>
@@ -462,7 +462,7 @@ export const WorldMap = (() => {
           Nahraj obrázek mapy přes <strong>⚙ Mapa → Vybrat soubor</strong>, nebo ho ulož na server jako
           <code>data/maps/swordcoast/sword_coast.jpg</code>.
         </div>
-        <button class="sc-btn" style="margin-top:1.2rem" onclick="WorldMap.showSettings()">⚙ Otevřít nastavení</button>
+        <button class="sc-btn" style="margin-top:1.2rem"${dataAction('WorldMap.showSettings')}>⚙ Otevřít nastavení</button>
       </div>`;
   }
 
@@ -595,7 +595,7 @@ export const WorldMap = (() => {
     return views.map(v => {
       const icon  = esc(v.icon || '📍');
       const label = esc(v.label || '—');
-      return `<button class="sc-btn" onclick="WorldMap.applyMapView('${esc(v.id)}')"
+      return `<button class="sc-btn"${dataAction('WorldMap.applyMapView', v.id)}
                  title="${esc(v.label || '')}">${icon} ${label}</button>`;
     }).join('');
   }
@@ -605,9 +605,9 @@ export const WorldMap = (() => {
     if (!host) return;
     // Rebuild just the preset buttons between "Celá" and "Uložit pohled".
     host.innerHTML = `
-      <button class="sc-btn" onclick="WorldMap.zoomFitAll()" title="Oddálit na celou mapu">🌐 Celá</button>
+      <button class="sc-btn"${dataAction('WorldMap.zoomFitAll')} title="Oddálit na celou mapu">🌐 Celá</button>
       ${_presetButtonsHtml()}
-      <button class="sc-btn edit-only-inline" onclick="WorldMap.captureCurrentView()" title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
+      <button class="sc-btn edit-only-inline"${dataAction('WorldMap.captureCurrentView')} title="Uložit aktuální pohled jako předvolbu">✚ Uložit pohled</button>
     `;
   }
 
@@ -674,7 +674,7 @@ export const WorldMap = (() => {
     const subCount = loc ? Store.getSubLocations(loc.id).length : 0;
     const hasLocalMap = !!(loc && loc.localMap);
     const localMapBtn = hasLocalMap
-      ? `<button class="sc-btn ok" onclick="WorldMap.openLocalMap('${loc.id}')">🗺 Místní mapa</button>`
+      ? `<button class="sc-btn ok"${dataAction('WorldMap.openLocalMap', loc.id)}>🗺 Místní mapa</button>`
       : '';
     const subInfo = subCount
       ? `<div class="sc-pin-meta" style="margin-top:0.4rem">⛬ ${subCount} dílčí ${subCount === 1 ? 'místo' : 'míst(a)'}</div>`
@@ -696,7 +696,7 @@ export const WorldMap = (() => {
         ${subInfo}
       </div>`;
     const header = loc
-      ? `<a class="sc-pin-header sc-pin-header-link" href="#/misto/${loc.id}" onclick="WorldMap.closePanel()">${headerInner}</a>`
+      ? `<a class="sc-pin-header sc-pin-header-link" href="#/misto/${loc.id}"${dataAction('WorldMap.closePanel')}>${headerInner}</a>`
       : `<div class="sc-pin-header">${headerInner}</div>`;
 
     document.getElementById('sc-panel-content').innerHTML = `
@@ -763,9 +763,9 @@ export const WorldMap = (() => {
         <label class="sc-label">Popis / Poznámky na mapě</label>
         <textarea class="sc-input" id="spf-notes" rows="3" placeholder="Krátký popis...">${esc(pin.notes||'')}</textarea>
         <div class="sc-pin-actions">
-          <button class="sc-btn ok" onclick="WorldMap.savePin(${isNew}, ${pin.x||0}, ${pin.y||0})">💾 Uložit</button>
+          <button class="sc-btn ok"${dataAction('WorldMap.savePin', isNew, pin.x||0, pin.y||0)}>💾 Uložit</button>
           ${!isNew ? `<a class="sc-btn" href="#/misto/${pin.locationId}">📖 Otevřít místo</a>` : ''}
-          ${!isNew ? `<button class="sc-btn err" onclick="WorldMap.deletePin('${pin.id}')">🗑 Odebrat z mapy</button>` : ''}
+          ${!isNew ? `<button class="sc-btn err"${dataAction('WorldMap.deletePin', pin.id)}>🗑 Odebrat z mapy</button>` : ''}
         </div>
       </div>
     `;
@@ -1135,7 +1135,7 @@ export const WorldMap = (() => {
     if (!hits.length) { el.innerHTML = ''; _hideSearchResults(); return; }
     el.innerHTML = hits.map(p => {
       const pt = PIN_TYPES[p.type] || PIN_TYPES.custom;
-      return `<div class="sc-search-item" onclick="WorldMap.zoomToPin('${p.id}')">
+      return `<div class="sc-search-item"${dataAction('WorldMap.zoomToPin', p.id)}>
         <span class="sc-search-ico">${pt.icon}</span>
         <span class="sc-search-name">${esc(p.name)}</span>
         <span class="sc-search-sub">${esc(pt.label)}</span>
@@ -1148,6 +1148,11 @@ export const WorldMap = (() => {
     const q = document.getElementById('sc-search')?.value;
     const hits = _searchMatches(q);
     if (hits.length) zoomToPin(hits[0].id);
+  }
+  // Bound to the search input's keydown via the data-on-keydown
+  // dispatcher. Replaces the inline `if(event.key==='Enter')…`.
+  function handleSearchKey(ev) {
+    if (ev?.key === 'Enter') { ev.preventDefault(); jumpToFirstMatch(); }
   }
 
   // Zoom to a pin. If the pin lives on a different map (e.g. a sub-pin
@@ -1219,7 +1224,7 @@ export const WorldMap = (() => {
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll,
     applyMapView, captureCurrentView, refreshPresetButtons: _refreshPresetButtons,
-    onSearchInput, jumpToFirstMatch, zoomToPin, showPin,
+    onSearchInput, jumpToFirstMatch, handleSearchKey, zoomToPin, showPin,
     openLocalMap, startPlacingPin,
     startPlacingEventPin, clearEventPin, showEventPin,
   };

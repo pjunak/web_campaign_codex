@@ -6,7 +6,7 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
-import { norm, esc, renderMarkdown, extractOutline, humanTime } from './utils.js';
+import { norm, esc, renderMarkdown, extractOutline, humanTime, dataAction, dataOn } from './utils.js';
 import { PIN_TYPES } from './map.js';
 import { relLabel } from './data.js';
 import { PARTY_FACTION_ID } from './constants.js';
@@ -110,7 +110,7 @@ export const Wiki = (() => {
              data-wl-kind="${kind}"></div>
         <label class="list-sort">
           <span class="list-sort-label">Řadit</span>
-          <select class="list-sort-select" onchange="Wiki.set${Name}Sort(this.value)">
+          <select class="list-sort-select"${dataOn('change', `Wiki.set${Name}Sort`, '$value')}>
             ${opts}
           </select>
         </label>
@@ -181,10 +181,10 @@ export const Wiki = (() => {
   // empty (not filtered-to-empty). Shows a big icon, a short prompt
   // explaining what this collection is for, and a primary CTA that
   // auto-enables edit mode if it isn't already on.
-  function _renderEmptyState({ icon, title, description, ctaLabel, ctaHref, ctaOnClick }) {
-    const onClick = ctaOnClick ? ` onclick="${ctaOnClick}"` : '';
-    const cta = (ctaHref || ctaOnClick) ? `
-      <a class="empty-cta" href="${ctaHref || '#'}"${onClick}>＋ ${esc(ctaLabel || 'Vytvořit první')}</a>` : '';
+  function _renderEmptyState({ icon, title, description, ctaLabel, ctaHref, ctaActionAttr }) {
+    const actionAttr = ctaActionAttr || '';
+    const cta = (ctaHref || actionAttr) ? `
+      <a class="empty-cta" href="${ctaHref || '#'}"${actionAttr}>＋ ${esc(ctaLabel || 'Vytvořit první')}</a>` : '';
     return `
       <div class="empty-state">
         <div class="empty-state-icon">${icon || '✦'}</div>
@@ -249,13 +249,13 @@ export const Wiki = (() => {
         <div class="wiki-outline-title">Obsah</div>
         <ul>
           ${outline.map(h =>
-            `<li data-lvl="${h.level}"><a href="#${h.slug}" onclick="document.getElementById('${h.slug}')?.scrollIntoView({behavior:'smooth',block:'start'});event.preventDefault()">${esc(h.text)}</a></li>`
+            `<li data-lvl="${h.level}"><a href="#${h.slug}"${dataAction('scrollTo', h.slug)}>${esc(h.text)}</a></li>`
           ).join('')}
         </ul>
       </nav>` : '';
 
     return `
-      ${back ? `<button class="back-btn" onclick="history.back()">← Zpět</button>` : ''}
+      ${back ? `<button class="back-btn"${dataAction('back')}>← Zpět</button>` : ''}
       <div class="wiki-article">
         <aside class="wiki-side">
           ${sideCard}
@@ -295,14 +295,14 @@ export const Wiki = (() => {
     // user can't accidentally insert a newline in the title).
     const nameAttrs = editing
       ? `contenteditable="plaintext-only"
-         onblur="Wiki.saveCampaignField('name', this.textContent.trim())"
-         onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+         ${dataOn('blur', 'Wiki.saveCampaignField', 'name', '$text')}
+         ${dataOn('keydown', 'enterBlurs', '$ev')}
          title="Klikni pro úpravu"`
       : '';
     const taglineAttrs = editing
       ? `contenteditable="plaintext-only"
-         onblur="Wiki.saveCampaignField('tagline', this.textContent.trim())"
-         onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+         ${dataOn('blur', 'Wiki.saveCampaignField', 'tagline', '$text')}
+         ${dataOn('keydown', 'enterBlurs', '$ev')}
          title="Klikni pro úpravu"
          data-placeholder="Podtitul kampaně — klikni pro úpravu"`
       : '';
@@ -594,7 +594,7 @@ export const Wiki = (() => {
       const count = allChars.filter(c => c.faction === id).length;
       if (count === 0) return "";
       return `<button class="filter-btn ${filterFaction === id ? "active" : ""}"
-        onclick="Wiki.renderPage('postavy','${id}')">${f.badge} ${esc(f.name)} (${count})</button>`;
+        ${dataAction('Wiki.renderPage', 'postavy', id)}>${f.badge} ${esc(f.name)} (${count})</button>`;
     }).join("");
 
     // Attitude filter chips — quick slice by stance toward the party.
@@ -611,7 +611,7 @@ export const Wiki = (() => {
       const color = a.labelColor || a.bg || '#888';
       return `<button class="filter-btn filter-btn-attitude ${activeAtt === a.id ? 'active' : ''}"
         style="--attitude-color: ${esc(color)}"
-        onclick="Wiki.setPostavyAttitude('${esc(a.id)}')">●&nbsp;${esc(a.label)} (${n})</button>`;
+        ${dataAction('Wiki.setPostavyAttitude', a.id)}>●&nbsp;${esc(a.label)} (${n})</button>`;
     }).filter(Boolean).join('');
 
     const shown = _postavyApply(filterFaction);
@@ -622,11 +622,11 @@ export const Wiki = (() => {
         <div class="subtitle">${shown.length} / ${allChars.length} záznamů${filterFaction ? " · " + factions[filterFaction]?.name : ""}${activeAtt ? " · " + esc(attEnum.find(a=>a.id===activeAtt)?.label || activeAtt) : ""}</div>
       </div>
       <div class="filter-bar">
-        <button class="filter-btn ${!filterFaction ? "active" : ""}" onclick="Wiki.renderPage('postavy','all')">Všechny</button>
+        <button class="filter-btn ${!filterFaction ? "active" : ""}"${dataAction('Wiki.renderPage', 'postavy', 'all')}>Všechny</button>
         ${factionFilters}
       </div>
       ${attFilters ? `<div class="filter-bar filter-bar-attitudes">
-        <button class="filter-btn ${!activeAtt ? 'active' : ''}" onclick="Wiki.setPostavyAttitude('')">Libovolný postoj</button>
+        <button class="filter-btn ${!activeAtt ? 'active' : ''}"${dataAction('Wiki.setPostavyAttitude', '')}>Libovolný postoj</button>
         ${attFilters}
       </div>` : ''}
       ${_listToolbar('postavy', [
@@ -938,7 +938,7 @@ export const Wiki = (() => {
       const color = a.labelColor || a.bg || '#888';
       return `<button class="filter-btn filter-btn-attitude ${activeAtt === a.id ? 'active' : ''}"
         style="--attitude-color: ${esc(color)}"
-        onclick="Wiki.setMistaAttitude('${esc(a.id)}')">●&nbsp;${esc(a.label)} (${count})</button>`;
+        ${dataAction('Wiki.setMistaAttitude', a.id)}>●&nbsp;${esc(a.label)} (${count})</button>`;
     }).filter(Boolean).join('');
 
     return `
@@ -950,7 +950,7 @@ export const Wiki = (() => {
         ${newBtn}
       </div>
       ${attFilters ? `<div class="filter-bar filter-bar-attitudes">
-        <button class="filter-btn ${!activeAtt ? 'active' : ''}" onclick="Wiki.setMistaAttitude('')">Libovolný postoj</button>
+        <button class="filter-btn ${!activeAtt ? 'active' : ''}"${dataAction('Wiki.setMistaAttitude', '')}>Libovolný postoj</button>
         ${attFilters}
       </div>` : ''}
       ${_listToolbar('mista', [
@@ -1023,16 +1023,16 @@ export const Wiki = (() => {
     const mapButtons = [];
     if (placed) {
       mapButtons.push(
-        `<button class="inline-create-btn" onclick="WorldMap.showPin('${l.id}')">🧭 Najít na mapě</button>`
+        `<button class="inline-create-btn"${dataAction('WorldMap.showPin', l.id)}>🧭 Najít na mapě</button>`
       );
     } else if (EditMode.isActive()) {
       mapButtons.push(
-        `<button class="inline-create-btn" onclick="WorldMap.startPlacingPin('${l.id}')">📍 Umístit na mapu</button>`
+        `<button class="inline-create-btn"${dataAction('WorldMap.startPlacingPin', l.id)}>📍 Umístit na mapu</button>`
       );
     }
     if (l.localMap) {
       mapButtons.push(
-        `<a class="inline-create-btn" href="#/mapa/svet" onclick="setTimeout(()=>WorldMap.openLocalMap('${l.id}'),0)">🗺 Otevřít místní mapu</a>`
+        `<a class="inline-create-btn" href="#/mapa/svet"${dataAction('deferred', 'WorldMap.openLocalMap', l.id)}>🗺 Otevřít místní mapu</a>`
       );
     }
     const mapRow = mapButtons.length
@@ -1040,9 +1040,9 @@ export const Wiki = (() => {
 
     const inlineCreate = EditMode.isActive() ? `
       <div class="inline-create-row">
-        <button class="inline-create-btn" onclick="EditMode.startNewCharacterInLocation('${l.id}')">＋ Postava zde</button>
-        <button class="inline-create-btn" onclick="EditMode.startNewEvent({locations:['${l.id}']})">＋ Událost zde</button>
-        <button class="inline-create-btn" onclick="EditMode.startNewLocation({parentId:'${l.id}'})">＋ Dílčí místo</button>
+        <button class="inline-create-btn"${dataAction('EditMode.startNewCharacterInLocation', l.id)}>＋ Postava zde</button>
+        <button class="inline-create-btn"${dataAction('EditMode.startNewEvent', { locations: [l.id] })}>＋ Událost zde</button>
+        <button class="inline-create-btn"${dataAction('EditMode.startNewLocation', { parentId: l.id })}>＋ Dílčí místo</button>
       </div>` : "";
 
     const pt = PIN_TYPES[l.pinType] || PIN_TYPES.custom || { icon: '📍', label: l.type || '' };
@@ -1380,7 +1380,7 @@ export const Wiki = (() => {
 
     const inlineCreate = EditMode.isActive() ? `
       <div class="inline-create-row">
-        <button class="inline-create-btn" onclick="EditMode.startNewCharacter({faction:'${id}'})">＋ Nová postava ve frakci</button>
+        <button class="inline-create-btn"${dataAction('EditMode.startNewCharacter', { faction: id })}>＋ Nová postava ve frakci</button>
       </div>` : "";
 
     const rankCount = (f.rankChains || []).reduce((s, ch) => s + ch.ranks.length, 0);
@@ -1433,14 +1433,14 @@ export const Wiki = (() => {
           title: 'Parta je zatím prázdná',
           description: 'Aktivní hráčské postavy v kampani. Přidej prvního člena — hráči, družina, PCs.',
           ctaLabel: 'Nový člen party',
-          ctaOnClick: `EditMode.startNewCharacter({faction:'${PARTY_FACTION_ID}',knowledge:4,status:'alive'});return false;`,
+          ctaActionAttr: dataAction('EditMode.startNewCharacter', { faction: PARTY_FACTION_ID, knowledge: 4, status: 'alive' }),
         })}`;
     }
 
     const newCard = EditMode.isActive() ? `
       <a class="char-card char-card-new"
          href="#/postava/new"
-         onclick="EditMode.startNewCharacter({faction:'party',knowledge:4,status:'alive'});event.preventDefault();return false;"
+         ${dataAction('EditMode.startNewCharacter', { faction: 'party', knowledge: 4, status: 'alive' })}
          style="text-decoration:none">
         <div class="char-card-new-icon">＋</div>
         <div class="char-card-new-label">Nový člen party</div>

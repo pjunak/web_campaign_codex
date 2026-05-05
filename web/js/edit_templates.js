@@ -1,14 +1,14 @@
 import { Store } from './store.js';
 import { PIN_TYPES } from './map.js';
 import { REL_TYPES } from './data.js';
-import { esc } from './utils.js';
+import { esc, dataAction, dataOn } from './utils.js';
 
 export const EditTemplates = (() => {
 
   function _dynRow(value) {
     return `<div class="dyn-item">
       <input class="edit-input" value="${esc(value)}" placeholder="…">
-      <button class="dyn-remove-btn" onclick="this.parentElement.remove()">×</button>
+      <button class="dyn-remove-btn"${dataAction('removeAncestor', '$el')}>×</button>
     </div>`;
   }
 
@@ -91,23 +91,23 @@ export const EditTemplates = (() => {
     const dirOptions = _dirOpts(type, dir);
     const tgtMount   = _targetMount(type, charId, targetId, prefix);
 
-    const saveAction = isNew
-      ? `EditMode.addRelationship('${charId}')`
-      : `EditMode.updateRelationship('${charId}',${idx})`;
+    const saveAttr = isNew
+      ? dataAction('EditMode.addRelationship', charId)
+      : dataAction('EditMode.updateRelationship', charId, idx);
     const deleteBtn  = isNew ? '' :
       `<button class="rel-delete-btn" title="Smazat"
-         onclick="EditMode.deleteRelationship('${r.source}','${r.target}','${r.type}','${charId}')">×</button>`;
+         ${dataAction('EditMode.deleteRelationship', r.source, r.target, r.type, charId)}>×</button>`;
     const saveLabel  = isNew ? '+ Přidat' : '💾';
     const saveTitle  = isNew ? 'Přidat vazbu' : 'Uložit změny';
 
     return `<div class="rel-edit-row" data-idx="${idx}">
       <select class="edit-select edit-select-sm" id="${prefix}-type"
-        onchange="EditMode.relTypeChanged('${charId}','${prefix}')">${typeOpts}</select>
+        ${dataOn('change', 'EditMode.relTypeChanged', charId, prefix)}>${typeOpts}</select>
       <select class="edit-select edit-select-sm" id="${prefix}-dir">${dirOptions}</select>
       <div class="rel-target-wrap">${tgtMount}</div>
       <input class="edit-input edit-input-sm" id="${prefix}-label" value="${esc(label)}"
         placeholder="${esc(REL_CONFIG[type].label)}">
-      <button class="edit-add-btn" onclick="${saveAction}" title="${saveTitle}">${saveLabel}</button>
+      <button class="edit-add-btn"${saveAttr} title="${saveTitle}">${saveLabel}</button>
       ${deleteBtn}
     </div>`;
   }
@@ -190,13 +190,13 @@ export const EditTemplates = (() => {
       data-cb-on-create="species"></div>`;
 
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová postava" : "✏ " + esc(c.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveCharacter('${c.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteCharacter('${c.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveCharacter', c.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteCharacter', c.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">
@@ -210,10 +210,10 @@ export const EditTemplates = (() => {
               <label class="edit-upload-btn">
                 📷 Nahrát portrét
                 <input type="file" accept="image/*" style="display:none"
-                  onchange="EditMode.handlePortraitUpload(this,'${uid}')">
+                  ${dataOn('change', 'EditMode.handlePortraitChange', uid, '$el')}>
               </label>
               ${c.portrait ? `<button class="edit-remove-portrait-btn"
-                onclick="document.getElementById('ep-preview-${uid}').innerHTML='<span style=\\'font-size:2.5rem\\'>${badge}</span>';document.getElementById('ep-data-${uid}').value=''">
+                ${dataAction('EditMode.clearPortrait', uid, badge)}>
                 × Odebrat
               </button>` : ""}
               <input type="hidden" id="ep-data-${uid}" value="${esc(c.portrait)}">
@@ -251,7 +251,7 @@ export const EditTemplates = (() => {
                 <div class="edit-field">
                   <label class="edit-label">Pohlaví</label>
                   <select class="edit-select" id="ef-gender-${uid}"
-                    onchange="EditMode.onGenderChange('${uid}')">${genderOpts}</select>
+                    ${dataOn('change', 'EditMode.onGenderChange', uid)}>${genderOpts}</select>
                   <input class="edit-input" id="ef-gender-other-${uid}" type="text"
                     placeholder="Specifikuj…"
                     value="${isOtherGender ? esc(c.gender) : ''}"
@@ -269,7 +269,7 @@ export const EditTemplates = (() => {
               <div class="edit-field">
                 <label class="edit-label" id="ef-kl-${uid}">Znalost (${c.knowledge}/4) — ${KNAMES[c.knowledge]}</label>
                 <input type="range" class="edit-range" id="ef-knowledge-${uid}" min="0" max="4" value="${c.knowledge}"
-                  oninput="document.getElementById('ef-kl-${uid}').textContent='Znalost ('+this.value+'/4) — '+['Neznámý','Tušený','Základní','Dobře znám','Plně zmapován'][this.value]">
+                  ${dataOn('input', 'EditMode.updateKnowledgeLabel', uid)}>
                 <div class="edit-range-labels"><span>Neznámý</span><span>Plně zmapován</span></div>
               </div>
             </div>
@@ -277,12 +277,12 @@ export const EditTemplates = (() => {
           <div class="edit-section">
             <div class="edit-section-title">Co víme</div>
             <div class="dyn-list" id="dyn-known-${uid}">${knownRows}</div>
-            <button class="dyn-add-btn" onclick="EditMode.addDynRow('dyn-known-${uid}')">+ Přidat</button>
+            <button class="dyn-add-btn"${dataAction('EditMode.addDynRow', `dyn-known-${uid}`)}>+ Přidat</button>
           </div>
           <div class="edit-section">
             <div class="edit-section-title">Otevřené otázky</div>
             <div class="dyn-list" id="dyn-unknown-${uid}">${unknownRows}</div>
-            <button class="dyn-add-btn" onclick="EditMode.addDynRow('dyn-unknown-${uid}')">+ Přidat</button>
+            <button class="dyn-add-btn"${dataAction('EditMode.addDynRow', `dyn-unknown-${uid}`)}>+ Přidat</button>
           </div>
           ${!isNew ? _relSection(c.id) : `
             <div class="edit-section">
@@ -376,12 +376,12 @@ export const EditTemplates = (() => {
       ? `<div class="edit-hint">Pin lze umístit po prvním uložení místa.</div>`
       : onMap
         ? `<div class="inline-create-row">
-             <button type="button" class="inline-create-btn" onclick="WorldMap.showPin('${l.id}')">🧭 Zobrazit na mapě</button>
-             <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingPin('${l.id}')">📍 Přemístit</button>
-             <button type="button" class="edit-delete-btn" onclick="WorldMap.deletePin('${l.id}')">🗑 Odebrat z mapy</button>
+             <button type="button" class="inline-create-btn"${dataAction('WorldMap.showPin', l.id)}>🧭 Zobrazit na mapě</button>
+             <button type="button" class="inline-create-btn"${dataAction('WorldMap.startPlacingPin', l.id)}>📍 Přemístit</button>
+             <button type="button" class="edit-delete-btn"${dataAction('WorldMap.deletePin', l.id)}>🗑 Odebrat z mapy</button>
            </div>`
         : `<div class="inline-create-row">
-             <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingPin('${l.id}')">📍 Umístit na mapu</button>
+             <button type="button" class="inline-create-btn"${dataAction('WorldMap.startPlacingPin', l.id)}>📍 Umístit na mapu</button>
            </div>`;
 
     const localMapPreview = l.localMap
@@ -389,13 +389,13 @@ export const EditTemplates = (() => {
       : '';
 
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nové místo" : "✏ " + esc(l.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveLocation('${l.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteLocation('${l.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveLocation', l.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteLocation', l.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">
@@ -412,7 +412,7 @@ export const EditTemplates = (() => {
           <div class="edit-field">
             <label class="edit-label">Status</label>
             <select class="edit-input" id="lf-status-${uid}"
-              onchange="EditMode.onLocationStatusChange('${uid}')">${statusOpts}</select>
+              ${dataOn('change', 'EditMode.onLocationStatusChange', uid)}>${statusOpts}</select>
             <input class="edit-input" id="lf-status-custom-${uid}" type="text"
               placeholder="Zadej vlastní status…" style="margin-top:0.4rem;display:none">
           </div>
@@ -443,7 +443,7 @@ export const EditTemplates = (() => {
                 ${!isNew ? `<label class="edit-upload-btn" title="Nahrát obrázek">
                   📤 Nahrát
                   <input type="file" accept="image/*" style="display:none"
-                    onchange="EditMode.uploadLocalMap('${l.id}', this.files[0], 'lf-localmap-${uid}')">
+                    ${dataOn('change', 'EditMode.handleLocalMapChange', l.id, `lf-localmap-${uid}`, '$el')}>
                 </label>` : `<span class="edit-hint" style="align-self:center">(uložte místo, pak nahrajte)</span>`}
               </div>
               ${localMapPreview}
@@ -488,13 +488,13 @@ export const EditTemplates = (() => {
       data-ms-on-create="location"></div>`;
 
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová událost" : "✏ " + esc(e.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveEvent('${e.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteEvent('${e.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveEvent', e.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteEvent', e.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">
@@ -511,7 +511,7 @@ export const EditTemplates = (() => {
           <div class="edit-section" style="margin-top:0">
             <div class="edit-section-title">Zúčastněné postavy
               <button type="button" class="inline-create-btn" style="margin-left:.5rem"
-                onclick="EditMode.addPartyToEvent('evf-chars-${uid}')">🛡 + Naše parta</button>
+                ${dataAction('EditMode.addPartyToEvent', `evf-chars-${uid}`)}>🛡 + Naše parta</button>
             </div>
             ${charPicker}
           </div>
@@ -525,11 +525,11 @@ export const EditTemplates = (() => {
               ? `<div class="edit-hint">Pin lze umístit po prvním uložení události.</div>`
               : (typeof e.mapX === 'number' && typeof e.mapY === 'number')
                 ? `<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
-                    <button type="button" class="inline-create-btn" onclick="WorldMap.showEventPin('${e.id}')">🧭 Zobrazit pin</button>
-                    <button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Přemístit</button>
-                    <button type="button" class="edit-delete-btn" onclick="WorldMap.clearEventPin('${e.id}')">🗑 Odebrat pin</button>
+                    <button type="button" class="inline-create-btn"${dataAction('WorldMap.showEventPin', e.id)}>🧭 Zobrazit pin</button>
+                    <button type="button" class="inline-create-btn"${dataAction('WorldMap.startPlacingEventPin', e.id)}>📍 Přemístit</button>
+                    <button type="button" class="edit-delete-btn"${dataAction('WorldMap.clearEventPin', e.id)}>🗑 Odebrat pin</button>
                   </div>`
-                : `<button type="button" class="inline-create-btn" onclick="WorldMap.startPlacingEventPin('${e.id}')">📍 Umístit pin na mapu</button>`}
+                : `<button type="button" class="inline-create-btn"${dataAction('WorldMap.startPlacingEventPin', e.id)}>📍 Umístit pin na mapu</button>`}
           </div>
         </div>
         <div class="edit-form-split-article">
@@ -556,13 +556,13 @@ export const EditTemplates = (() => {
       data-ms-on-create="character"></div>`;
 
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová záhada" : "✏ " + esc(m.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveMystery('${m.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteMystery('${m.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveMystery', m.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteMystery', m.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">
@@ -595,19 +595,19 @@ export const EditTemplates = (() => {
     const ranksHtml = (chain.ranks || []).map(r => `
       <div class="dyn-item">
         <input class="edit-input" value="${esc(r)}" placeholder="Hodnost">
-        <button class="dyn-remove-btn" onclick="this.parentElement.remove()">×</button>
+        <button class="dyn-remove-btn"${dataAction('removeAncestor', '$el')}>×</button>
       </div>`).join("");
     return `
       <div class="rank-chain-edit" data-chain-id="${esc(chain.id || '')}">
         <div class="rank-chain-edit-header">
           <input class="edit-input edit-input-sm" placeholder="Název řetězce" value="${esc(chain.name || '')}" style="flex:1">
-          <button class="dyn-remove-btn" title="Odebrat řetězec" onclick="this.closest('.rank-chain-edit').remove()">✕</button>
+          <button class="dyn-remove-btn" title="Odebrat řetězec"${dataAction('removeAncestor', '$el', '.rank-chain-edit')}>✕</button>
         </div>
         <div class="dyn-list rank-ranks-list" id="ranks-${uid}-${ci}">
           ${ranksHtml}
         </div>
         <button class="dyn-add-btn" style="margin-top:0.3rem"
-          onclick="EditMode.addRankRow(this.previousElementSibling.id)">+ Přidat hodnost</button>
+          ${dataAction('EditMode.addRankRow', `ranks-${uid}-${ci}`)}>+ Přidat hodnost</button>
       </div>`;
   }
 
@@ -618,13 +618,13 @@ export const EditTemplates = (() => {
     const chainsHtml = (f.rankChains || []).map((ch, ci) => _chainEditHtml(ch, uid, ci)).join("");
 
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form" style="max-width:760px">
         <div class="edit-form-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová frakce" : "✏ " + esc(f.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveFaction('${isNew ? "" : facId}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteFaction('${facId}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveFaction', isNew ? "" : facId)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteFaction', facId)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
 
@@ -644,9 +644,9 @@ export const EditTemplates = (() => {
             <div style="display:flex;gap:0.5rem;align-items:center">
               <input type="color" id="ff-color-${uid}" value="${esc(f.color)}"
                 style="width:44px;height:34px;padding:2px;cursor:pointer;background:none;border:1px solid rgba(212,184,122,0.2);border-radius:4px"
-                oninput="document.getElementById('ff-color-text-${uid}').value=this.value">
+                ${dataOn('input', 'copyValue', `ff-color-${uid}`, `ff-color-text-${uid}`)}>
               <input class="edit-input" id="ff-color-text-${uid}" value="${esc(f.color)}" placeholder="#RRGGBB" style="flex:1"
-                oninput="document.getElementById('ff-color-${uid}').value=this.value">
+                ${dataOn('input', 'copyValue', `ff-color-text-${uid}`, `ff-color-${uid}`)}>
             </div>
           </div>
           <div class="edit-field">
@@ -654,9 +654,9 @@ export const EditTemplates = (() => {
             <div style="display:flex;gap:0.5rem;align-items:center">
               <input type="color" id="ff-textcolor-${uid}" value="${esc(f.textColor)}"
                 style="width:44px;height:34px;padding:2px;cursor:pointer;background:none;border:1px solid rgba(212,184,122,0.2);border-radius:4px"
-                oninput="document.getElementById('ff-textcolor-text-${uid}').value=this.value">
+                ${dataOn('input', 'copyValue', `ff-textcolor-${uid}`, `ff-textcolor-text-${uid}`)}>
               <input class="edit-input" id="ff-textcolor-text-${uid}" value="${esc(f.textColor)}" placeholder="#RRGGBB" style="flex:1"
-                oninput="document.getElementById('ff-textcolor-${uid}').value=this.value">
+                ${dataOn('input', 'copyValue', `ff-textcolor-text-${uid}`, `ff-textcolor-${uid}`)}>
             </div>
           </div>
         </div>
@@ -671,7 +671,7 @@ export const EditTemplates = (() => {
           </div>
           <div id="chains-${uid}">${chainsHtml}</div>
           <button class="dyn-add-btn" style="margin-top:0.5rem"
-            onclick="EditMode.addRankChain('chains-${uid}','${uid}')">+ Přidat řetězec</button>
+            ${dataAction('EditMode.addRankChain', `chains-${uid}`, uid)}>+ Přidat řetězec</button>
         </div>
 
       </div>
@@ -701,13 +701,13 @@ export const EditTemplates = (() => {
     if (isNew) s = { id:'', name:'', description:'' };
     const uid = s.id || 'new_sp';
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nový druh" : "✏ " + esc(s.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveSpecies('${s.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteSpecies('${s.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveSpecies', s.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteSpecies', s.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">
@@ -731,13 +731,13 @@ export const EditTemplates = (() => {
     if (isNew) g = { id:'', name:'', domain:'', alignment:'', symbol:'', description:'', tags:[] };
     const uid = g.id || 'new_god';
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nový bůh / bohyně" : "✏ " + esc(g.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveBuh('${g.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteBuh('${g.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveBuh', g.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteBuh', g.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">
@@ -800,13 +800,13 @@ export const EditTemplates = (() => {
       data-cb-on-create="location"></div>`;
 
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nový artefakt" : "✏ " + esc(a.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveArtifact('${a.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteArtifact('${a.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveArtifact', a.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteArtifact', a.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">
@@ -864,13 +864,13 @@ export const EditTemplates = (() => {
       data-ms-on-create="location"></div>`;
 
     return `
-      <button class="back-btn" onclick="history.back()">← Zpět</button>
+      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
           <h2 class="edit-form-title">${isNew ? "✦ Nová historická událost" : "✏ " + esc(h.name)}</h2>
           <div class="edit-hdr-actions">
-            <button class="edit-save-btn" onclick="EditMode.saveHistoricalEvent('${h.id}')">💾 Uložit</button>
-            ${!isNew ? `<button class="edit-delete-btn" onclick="EditMode.deleteHistoricalEvent('${h.id}')">🗑 Smazat</button>` : ""}
+            <button class="edit-save-btn"${dataAction('EditMode.saveHistoricalEvent', h.id)}>💾 Uložit</button>
+            ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteHistoricalEvent', h.id)}>🗑 Smazat</button>` : ""}
           </div>
         </div>
         <div class="edit-form-split-fields">

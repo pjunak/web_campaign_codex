@@ -13,7 +13,7 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
-import { esc } from './utils.js';
+import { esc, dataAction } from './utils.js';
 
 const STACK_THRESHOLD = 4;
 
@@ -245,7 +245,7 @@ export const Timeline = (() => {
         <div class="tl-toolbar">
           <div class="tl-title">⏳ Časová Osa</div>
           <span class="tl-hint">Klik na kartu = detail události${editing ? ' · Táhni kartu = přeskládat' : ''}</span>
-          ${editing ? `<button class="tl-add-btn" onclick="EditMode.startNewEvent()">＋ Nová událost</button>` : ''}
+          ${editing ? `<button class="tl-add-btn"${dataAction('EditMode.startNewEvent')}>＋ Nová událost</button>` : ''}
         </div>
         <div class="tl-board-viewport">
           <div class="tl-board" id="tl-board"></div>
