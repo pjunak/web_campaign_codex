@@ -143,21 +143,36 @@ export const SETTINGS_DEFAULTS = {
     { id: 'nízká',    label: 'Nízká',    color: '#689F38' },
   ],
 
-  // Unified attitude palette — used BOTH on character cards (single
-  // value via `character.attitude`) AND on location cards / map pins
-  // (array via `location.attitudes[]`, rendered as a split ring when
-  // more than one). Replaces the old `mapStatuses` category. Party
-  // members (faction==='party') render white regardless of any
-  // attitude value, so the `party` id is primarily used for pins on
-  // our strongholds. `bg` = solid fill, `fg` = text/icon contrast,
-  // `labelColor` = readable chip color on dark UI.
+  // Unified "Postoje k partě" palette — shared by characters,
+  // locations and factions. Each entity carries an `attitudes` array
+  // of `{id, strength: 0..1}` objects; renderers stack a colored
+  // `drop-shadow` per entry on the entity's icon (portrait, pin
+  // emoji, faction badge), so multiple stances mix into one halo and
+  // strength controls glow intensity. Empty array = "unknown" (no
+  // glow). The `party` id is reserved for our strongholds — characters
+  // with `faction==='party'` render with this palette automatically.
+  // `bg` = solid pin fill, `fg` = icon contrast on the pin,
+  // `labelColor` = readable chip/glow color on dark UI.
   attitudes: [
     { id: 'ally',    label: 'Spojenec',   bg: '#2E7D32', fg: '#ffffff', labelColor: '#4CAF50' },
     { id: 'enemy',   label: 'Nepřítel',   bg: '#C62828', fg: '#ffffff', labelColor: '#EF5350' },
-    { id: 'hostile', label: 'Nebezpečný', bg: '#1a1410', fg: '#E8E0C4', labelColor: '#9E9E9E' },
+    { id: 'hostile', label: 'Nebezpečný', bg: '#7E1F1F', fg: '#ffffff', labelColor: '#FF7043' },
     { id: 'neutral', label: 'Neutrální',  bg: '#1565C0', fg: '#ffffff', labelColor: '#64B5F6' },
-    { id: 'unknown', label: 'Neznámý',    bg: '#6A1B9A', fg: '#ffffff', labelColor: '#BA68C8' },
     { id: 'party',   label: 'Parta',      bg: '#F5F0E4', fg: '#1a1410', labelColor: '#F0E6C8' },
+  ],
+
+  // Physical state of a place — separate from `attitudes` (which is
+  // about the party's stance). Free-text dropdowns were promoted to
+  // this managed enum so the GM can recolor / reicon them in Settings,
+  // and `_migrateLocationStatusToManaged` in store.js auto-imports any
+  // pre-existing free-text values on first load.
+  locationStatuses: [
+    { id: 'aktivni',      label: 'Aktivní',      icon: '●',  color: '#4CAF50' },
+    { id: 'opustene',     label: 'Opuštěné',     icon: '🌫', color: '#9E9E9E' },
+    { id: 'polorozpadle', label: 'Polorozpadlé', icon: '🏚', color: '#FFA000' },
+    { id: 'v_plamenech',  label: 'V plamenech',  icon: '🔥', color: '#E64A19' },
+    { id: 'zniceno',      label: 'Zničeno',      icon: '⚰',  color: '#424242' },
+    { id: 'tajne',        label: 'Tajné',        icon: '🤫', color: '#6A1B9A' },
   ],
 
   // User-defined map view presets. Each entry captures the bounds
@@ -173,17 +188,22 @@ export const SETTINGS_DEFAULTS = {
  *  `Store.findEnumUsages(cat, id)` walks these bindings. Defined here
  *  so the mapping is co-located with the defaults.
  *
- *  `attitudes` has two bindings: character.attitude (single value) and
- *  location.attitudes (array). findEnumUsages handles both shapes.    */
+ *  `attitudes` is bound on three collections — characters, locations
+ *  and factions — and stored as an array of `{id, strength}` objects
+ *  in every case. `findEnumUsages` / `deleteEnumItem` recognise that
+ *  shape and look up by entry.id. `factions` is a keyed-object
+ *  collection (Object.values), the others are arrays.                  */
 export const SETTINGS_USAGE_MAP = {
   relationshipTypes: [{ collection: 'relationships', field: 'type' }],
   genders:           [{ collection: 'characters',    field: 'gender' }],
   pinTypes:          [{ collection: 'locations',     field: 'pinType' }],
   artifactStates:    [{ collection: 'artifacts',     field: 'state' }],
   characterStatuses: [{ collection: 'characters',    field: 'status' }],
+  locationStatuses:  [{ collection: 'locations',     field: 'status' }],
   eventPriorities:   [{ collection: 'events',        field: 'priority' }],
   attitudes:         [
-    { collection: 'characters', field: 'attitude'  },
+    { collection: 'characters', field: 'attitudes' },
     { collection: 'locations',  field: 'attitudes' },
+    { collection: 'factions',   field: 'attitudes' },
   ],
 };

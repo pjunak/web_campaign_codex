@@ -26,11 +26,19 @@ export const Settings = (() => {
       fields: ['label', 'icon', 'color', 'priority'] },
     { id: 'characterStatuses', label: 'Stavy postav',          icon: '●',
       fields: ['label', 'icon', 'color'] },
+    { id: 'locationStatuses',  label: 'Stavy míst',            icon: '🏚',
+      fields: ['label', 'icon', 'color'] },
     { id: 'artifactStates',    label: 'Stavy artefaktů',       icon: '🗝',
       fields: ['label', 'icon', 'color'] },
     { id: 'eventPriorities',   label: 'Priority událostí',     icon: '⚑',
       fields: ['label', 'color'] },
-    { id: 'mapStatuses',       label: 'Stavy na mapě',         icon: '🗺',
+    // "Postoje k partě" — unified palette used on character / location /
+    // faction glows. The intensity (`strength`) lives on each entity's
+    // attitude entry, NOT on the enum item, so this editor only manages
+    // colours + label. `bg` drives map-pin fill, `fg` is the icon contrast
+    // on the pin, `labelColor` is the readable colour on dark UI (chip
+    // text, glow, legend).
+    { id: 'attitudes',         label: 'Postoje k partě',       icon: '🤝',
       fields: ['label', 'bg', 'fg', 'labelColor'] },
   ];
 

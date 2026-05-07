@@ -445,6 +445,20 @@ export const EditMode = (() => {
       .map(cb => cb.value);
   }
 
+  // Read-back delegated to EditTemplates so the chip-row HTML and the
+  // matching parser stay co-located (and map.js's pin form can reuse
+  // the same parser without duplicating the DOM walk).
+  const _readAttitudeChipRow = EditTemplates.readAttitudeChipRow;
+
+  /** Live readout next to the strength slider as the user drags. */
+  function updateStrengthReadout(rangeEl) {
+    if (!rangeEl) return;
+    const out = rangeEl.parentElement?.querySelector('.attitude-chip-strength-readout');
+    if (!out) return;
+    const v = parseFloat(rangeEl.value);
+    out.textContent = `${Math.round((isFinite(v) ? v : 0) * 100)}%`;
+  }
+
   // ══════════════════════════════════════════════════════════════
   //  CHARACTER EDITOR
   // ══════════════════════════════════════════════════════════════
@@ -509,7 +523,7 @@ export const EditMode = (() => {
       gender = document.getElementById(`ef-gender-other-${uid}`)?.value.trim() || "";
     }
 
-    const ok = Store.saveCharacter({
+    const next = {
       // Preserve all fields from existing record first, then overwrite editable ones
       ...existing,
       id:          newId,
@@ -517,7 +531,9 @@ export const EditMode = (() => {
       title:       document.getElementById(`ef-title-${uid}`)?.value.trim()        || "",
       faction:     document.getElementById(`ef-faction-${uid}`)?.value             || "neutral",
       status:      document.getElementById(`ef-status-${uid}`)?.value              || "alive",
-      attitude:    document.getElementById(`ef-attitude-${uid}`)?.value             || "",
+      // Multi-attitude chip row + per-attitude strength slider. Empty
+      // array = no own stance (renderer falls back to faction).
+      attitudes:   _readAttitudeChipRow(`ef-attitudes-${uid}`),
       species:     document.getElementById(`ef-species-${uid}`)?.value.trim()      || "",
       gender,
       age:         document.getElementById(`ef-age-${uid}`)?.value.trim()          || "",
@@ -530,7 +546,12 @@ export const EditMode = (() => {
       portrait,
       known:       _dynVals(`dyn-known-${uid}`),
       unknown:     _dynVals(`dyn-unknown-${uid}`),
-    });
+    };
+    // Defensive: if a pre-migration record still carries the legacy
+    // singular `attitude` field, scrub it out now that we always
+    // write the array form.
+    delete next.attitude;
+    const ok = Store.saveCharacter(next);
     if (ok === false) {
       _toast("⚠ Uložení selhalo – úložiště je plné.", false);
       return;
@@ -691,18 +712,12 @@ export const EditMode = (() => {
     const pinTypeDef = pinTypeKey ? PIN_TYPES[pinTypeKey] : null;
     const typeLabel  = pinTypeDef ? pinTypeDef.label : "";
 
-    // Status dropdown: "__custom__" switches to the inline input, anything
-    // else is the selected value.
-    let statusVal = document.getElementById(`lf-status-${uid}`)?.value || "";
-    if (statusVal === "__custom__") {
-      statusVal = document.getElementById(`lf-status-custom-${uid}`)?.value.trim() || "";
-    }
+    // Status dropdown — managed `locationStatuses` enum. Empty = unset.
+    const statusVal = document.getElementById(`lf-status-${uid}`)?.value || "";
 
-    // Attitude chips (multi-select). Read every checked input inside
-    // the chip row; empty array = no attitude set (rendered as unknown).
-    const attitudes = Array.from(
-      document.querySelectorAll(`#lf-attitudes-${uid} input[type="checkbox"]:checked`)
-    ).map(i => i.value);
+    // Attitude chips: multi-select with per-attitude strength.
+    // Empty array = no own stance (rendered with no glow).
+    const attitudes = _readAttitudeChipRow(`lf-attitudes-${uid}`);
 
     Store.saveLocation({
       ...existing,
@@ -722,21 +737,8 @@ export const EditMode = (() => {
     _refreshTo(`#/misto/${newId}`);
   }
 
-  // ── Location status dropdown ──────────────────────────────────
-  // Toggles the inline custom-status input when the user picks
-  // "✎ Vlastní…" from the dropdown.
-  function onLocationStatusChange(uid) {
-    const sel    = document.getElementById(`lf-status-${uid}`);
-    const custom = document.getElementById(`lf-status-custom-${uid}`);
-    if (!sel || !custom) return;
-    if (sel.value === '__custom__') {
-      custom.style.display = '';
-      custom.focus();
-    } else {
-      custom.style.display = 'none';
-      custom.value = '';
-    }
-  }
+  // (Legacy `onLocationStatusChange` removed — `location.status` is
+  // now a managed enum chosen via Settings → Stavy míst.)
 
   // ── Local map upload ──────────────────────────────────────────
   async function uploadLocalMap(locId, file, inputId) {
@@ -957,9 +959,13 @@ export const EditMode = (() => {
       return { id: chainId, name: chainName, ranks };
     }).filter(ch => ch.name);
 
+    // Faction-level attitudes — character renderers fall back to these
+    // when a member has no own attitudes set.
+    const attitudes = _readAttitudeChipRow(`ff-attitudes-${uid}`);
+
     // Preserve any fields not in the editor (e.g., if faction had extra properties)
     const existing = originalId ? (Store.getFaction(originalId) || {}) : {};
-    Store.saveFaction(newId, { ...existing, name, color, textColor, badge, description: desc, rankChains });
+    Store.saveFaction(newId, { ...existing, name, color, textColor, badge, description: desc, rankChains, attitudes });
     _toast("✓ Frakce uložena");
     _markClean();
     _refreshTo(`#/frakce/${newId}`);
@@ -1233,7 +1239,8 @@ export const EditMode = (() => {
     addRankChain, addRankRow,
     saveCharacter, deleteCharacter, onGenderChange,
     addRelationship, updateRelationship, deleteRelationship, relTypeChanged,
-    saveLocation, deleteLocation, uploadLocalMap, onLocationStatusChange,
+    saveLocation, deleteLocation, uploadLocalMap,
+    updateStrengthReadout,
     saveEvent, deleteEvent, addPartyToEvent,
     saveMystery, deleteMystery,
     saveFaction, deleteFaction,

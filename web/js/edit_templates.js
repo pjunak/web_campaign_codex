@@ -12,6 +12,44 @@ export const EditTemplates = (() => {
     </div>`;
   }
 
+  /** Multi-select chip row for "Postoje k partě" (attitudes).
+   *  Each chip toggles on/off; when on, an inline 0–100% slider sets
+   *  this entity's per-attitude `strength`. Read back via
+   *  `EditMode._readAttitudeChipRow(rowId)`. CSS shows the slider
+   *  only when the chip is checked (via `:has(input:checked)`). */
+  function _attitudeChipRow(rowId, currentEntries) {
+    const enums = Store.getEnum('attitudes') || [];
+    // Tolerate the legacy string-array shape so the editor doesn't
+    // wipe data if someone hits Save before migrations finish on a
+    // very fresh install.
+    const byId = {};
+    for (const e of (currentEntries || [])) {
+      if (typeof e === 'string') byId[e] = 1.0;
+      else if (e && e.id)        byId[e.id] = (typeof e.strength === 'number') ? e.strength : 1.0;
+    }
+    const items = enums.map(a => {
+      const checked  = a.id in byId;
+      const strength = checked ? byId[a.id] : 1.0;
+      const pct      = Math.round(strength * 100);
+      const color    = a.labelColor || a.bg || '#888';
+      return `
+        <div class="attitude-chip-item" data-att-id="${esc(a.id)}" style="--attitude-color: ${esc(color)}">
+          <label class="attitude-chip">
+            <input type="checkbox" value="${esc(a.id)}" ${checked ? 'checked' : ''}>
+            <span class="attitude-chip-dot"></span>
+            <span class="attitude-chip-label">${esc(a.label)}</span>
+          </label>
+          <div class="attitude-chip-strength">
+            <input type="range" class="attitude-chip-strength-slider"
+              min="0" max="1" step="0.1" value="${strength}"
+              ${dataOn('input', 'EditMode.updateStrengthReadout', '$el')}>
+            <span class="attitude-chip-strength-readout">${pct}%</span>
+          </div>
+        </div>`;
+    }).join('');
+    return `<div class="attitude-chip-row" id="${rowId}">${items}</div>`;
+  }
+
   /** Sort characters by faction order then alphabetically, with faction badge prefix.
    *  Returns the sorted array (does not mutate the original). */
   function _sortedChars(chars) {
@@ -147,16 +185,12 @@ export const EditTemplates = (() => {
       `<option value="${id}" ${c.faction===id?"selected":""}>${f.badge} ${f.name}</option>`).join("");
     const sOpts = Object.entries(statusMap).map(([id,s]) =>
       `<option value="${id}" ${c.status===id?"selected":""}>${s.icon} ${s.label}</option>`).join("");
-    // Attitude (single-pick for characters — one stance toward the party).
-    // Party members implicitly carry the `party` color via faction, so the
-    // field stays optional; blank = display as `unknown` with no ring color.
-    const attitudeEnum = Store.getEnum('attitudes') || [];
-    const aOpts = [
-      `<option value="" ${!c.attitude ? 'selected' : ''}>— neznámý —</option>`,
-      ...attitudeEnum
-        .filter(a => a.id !== 'party')  // party auto-derived from faction
-        .map(a => `<option value="${esc(a.id)}" ${c.attitude===a.id?'selected':''}>${esc(a.label)}</option>`),
-    ].join('');
+    // Attitudes (multi-pick chip row + per-chip strength slider).
+    // Empty = no stance set; renderer falls back to the character's
+    // faction. Party members (faction==='party') always render with the
+    // `party` palette regardless of this field, so it's safe to leave
+    // blank for PCs.
+    const attitudeChipRowHtml = _attitudeChipRow(`ef-attitudes-${c.id || 'new'}`, c.attitudes || []);
     const knownRows   = (c.known   || []).map(_dynRow).join("");
     const unknownRows = (c.unknown || []).map(_dynRow).join("");
     const badge = factions[c.faction]?.badge || "👤";
@@ -229,7 +263,7 @@ export const EditTemplates = (() => {
                   <input class="edit-input" id="ef-title-${uid}" value="${esc(c.title)}" placeholder="Titul nebo profese">
                 </div>
               </div>
-              <div class="edit-row-3">
+              <div class="edit-row-2">
                 <div class="edit-field">
                   <label class="edit-label">Frakce</label>
                   <select class="edit-select" id="ef-faction-${uid}">${fOpts}</select>
@@ -238,10 +272,10 @@ export const EditTemplates = (() => {
                   <label class="edit-label">Status</label>
                   <select class="edit-select" id="ef-status-${uid}">${sOpts}</select>
                 </div>
-                <div class="edit-field">
-                  <label class="edit-label" title="Jak se postava staví k partě">Postoj k partě</label>
-                  <select class="edit-select" id="ef-attitude-${uid}">${aOpts}</select>
-                </div>
+              </div>
+              <div class="edit-field">
+                <label class="edit-label" title="Jak se postava staví k partě a s jakou intenzitou">Postoje k partě <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— prázdné = převezme od frakce</span></label>
+                ${attitudeChipRowHtml}
               </div>
               <div class="edit-row-3">
                 <div class="edit-field">
@@ -335,14 +369,15 @@ export const EditTemplates = (() => {
         .map(([k, v]) => `<option value="${esc(k)}" ${selectedPinType===k?'selected':''}>${v.icon} ${esc(v.label)}</option>`)
         .join('');
 
-    // Status dropdown: existing non-empty statuses across all Locations,
-    // plus a blank option. New status values can still be introduced by
-    // editing an existing one in-place (next user picks it up here).
-    const existingStatuses = [...new Set(Store.getLocations().map(x => x.status).filter(Boolean))];
-    if (l.status && !existingStatuses.includes(l.status)) existingStatuses.push(l.status);
+    // Status dropdown: managed `locationStatuses` enum from settings.
+    // New entries are added via Settings → Stavy míst (the migration
+    // auto-imported any pre-existing free-text values, so nothing was
+    // lost when this moved from free-text to managed).
+    const locStatusEnum = Store.getEnum('locationStatuses') || [];
     const statusOpts = `<option value="" ${!l.status?'selected':''}>— neurčeno —</option>` +
-      existingStatuses.map(s => `<option value="${esc(s)}" ${l.status===s?'selected':''}>${esc(s)}</option>`).join('') +
-      `<option value="__custom__">✎ Vlastní…</option>`;
+      locStatusEnum.map(s =>
+        `<option value="${esc(s.id)}" ${l.status===s.id?'selected':''}>${esc(s.icon || '●')} ${esc(s.label)}</option>`
+      ).join('');
 
     // Subplace hierarchy: parent picker excludes self (and could exclude
     // descendants but a deep cycle check belongs in save).
@@ -355,17 +390,11 @@ export const EditTemplates = (() => {
       data-cb-empty-label="— žádné (samostatné místo) —"
       data-cb-placeholder="Vyber rodičovské místo…"></div>`;
 
-    // Attitudes toward the party (multi-select). A place can hold a
-    // mixed stance: "Chrám je spojenec, ale v kryptě žijí nepřátelé."
-    // Stored as an array; the location card renders a split ring.
-    const locAttitudes = Array.isArray(l.attitudes) ? l.attitudes : [];
-    const locAttitudeEnum = Store.getEnum('attitudes') || [];
-    const attitudeChips = locAttitudeEnum.map(a => `
-      <label class="attitude-chip" style="--attitude-color: ${esc(a.labelColor || a.bg || '#888')}">
-        <input type="checkbox" value="${esc(a.id)}" ${locAttitudes.includes(a.id) ? 'checked' : ''}>
-        <span class="attitude-chip-dot"></span>
-        <span class="attitude-chip-label">${esc(a.label)}</span>
-      </label>`).join('');
+    // Attitudes toward the party (multi-select with per-attitude
+    // strength). A place can hold a mixed stance — "Chrám je z 80%
+    // spojenec, ale z 50% nebezpečný" — and renderers stack a glow
+    // halo per active attitude scaled to its strength.
+    const attitudeChipRowHtml = _attitudeChipRow(`lf-attitudes-${uid}`, l.attitudes || []);
 
     const onMap = (typeof l.x === 'number' && typeof l.y === 'number');
     const mapBadge = onMap
@@ -410,15 +439,12 @@ export const EditTemplates = (() => {
             </div>
           </div>
           <div class="edit-field">
-            <label class="edit-label">Status</label>
-            <select class="edit-input" id="lf-status-${uid}"
-              ${dataOn('change', 'EditMode.onLocationStatusChange', uid)}>${statusOpts}</select>
-            <input class="edit-input" id="lf-status-custom-${uid}" type="text"
-              placeholder="Zadej vlastní status…" style="margin-top:0.4rem;display:none">
+            <label class="edit-label">Stav místa <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— spravuje se v Nastavení → Stavy míst</span></label>
+            <select class="edit-input" id="lf-status-${uid}">${statusOpts}</select>
           </div>
           <div class="edit-field">
-            <label class="edit-label">Postoje k partě <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— vyber jeden nebo víc; karta pak ukáže rozdělený prstenec</span></label>
-            <div class="attitude-chip-row" id="lf-attitudes-${uid}">${attitudeChips}</div>
+            <label class="edit-label">Postoje k partě <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— víc postojů s nastavitelnou silou (např. 100% neutrální + 50% nebezpečný)</span></label>
+            ${attitudeChipRowHtml}
           </div>
           <div class="edit-field">
             <label class="edit-label">Záhadné poznámky</label>
@@ -613,9 +639,12 @@ export const EditTemplates = (() => {
 
   function renderFactionEditor(f, facId) {
     const isNew = !f || facId === "new";
-    if (isNew) f = { name:"", color:"#555555", textColor:"#E0E0E0", badge:"⚐", description:"", rankChains:[] };
+    if (isNew) f = { name:"", color:"#555555", textColor:"#E0E0E0", badge:"⚐", description:"", rankChains:[], attitudes:[] };
     const uid = (isNew ? "new_fac" : facId).replace(/[^a-z0-9_]/gi, "_");
     const chainsHtml = (f.rankChains || []).map((ch, ci) => _chainEditHtml(ch, uid, ci)).join("");
+    // Faction-level attitudes — members with empty own-attitudes
+    // inherit from here (live fallback in Store.getEffectiveAttitudes).
+    const factionAttRowHtml = _attitudeChipRow(`ff-attitudes-${uid}`, f.attitudes || []);
 
     return `
       <button class="back-btn"${dataAction('back')}>← Zpět</button>
@@ -663,6 +692,10 @@ export const EditTemplates = (() => {
         <div class="edit-field">
           <label class="edit-label">Popis frakce (volitelný)</label>
           ${_mdTextarea(`ff-desc-${uid}`, f.description || '', 6, 'Historie, cíle, struktura — Markdown')}
+        </div>
+        <div class="edit-field">
+          <label class="edit-label">Postoje k partě <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— členové bez vlastních postojů zdědí tyhle</span></label>
+          ${factionAttRowHtml}
         </div>
 
         <div class="edit-section">
@@ -914,6 +947,30 @@ export const EditTemplates = (() => {
       </div>`;
   }
 
+  /** Read the attitude chip row built by `_attitudeChipRow`.
+   *  Returns `[{id, strength: 0..1}]`. Skips items whose checkbox is
+   *  unchecked. Used by EditMode (character/location/faction save)
+   *  AND by map.js's pin-form save, so the read-back logic lives next
+   *  to the HTML template instead of being duplicated. */
+  function _readAttitudeChipRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (!row) return [];
+    const items = row.querySelectorAll('.attitude-chip-item');
+    const out = [];
+    items.forEach(item => {
+      const cb = item.querySelector('input[type="checkbox"]');
+      if (!cb || !cb.checked) return;
+      const id = cb.value;
+      if (!id) return;
+      const range = item.querySelector('input[type="range"]');
+      let s = range ? parseFloat(range.value) : 1.0;
+      if (!isFinite(s)) s = 1.0;
+      if (s < 0) s = 0; if (s > 1) s = 1;
+      out.push({ id, strength: s });
+    });
+    return out;
+  }
+
   return {
     renderCharacterEditor,
     renderLocationEditor,
@@ -931,6 +988,8 @@ export const EditTemplates = (() => {
     getRelConfig: () => REL_CONFIG,
     getChainEditHtml: _chainEditHtml,
     getMdTextareaHtml: _mdTextarea,
+    attitudeChipRow:     _attitudeChipRow,
+    readAttitudeChipRow: _readAttitudeChipRow,
   };
 
 })();

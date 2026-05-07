@@ -4,6 +4,7 @@ import {
   SETTINGS_DEFAULTS, SETTINGS_USAGE_MAP,
 } from './data.js';
 import { norm, clearMarkdownCache } from './utils.js';
+import { PARTY_FACTION_ID } from './constants.js';
 
 export const Store = (() => {
   let _data            = null;
@@ -244,6 +245,148 @@ export const Store = (() => {
     return touched;
   }
 
+  // ── Promote attitudes to `[{id, strength}]` shape ─────────────
+  // Earlier the field was `string[]` (locations only) plus a single
+  // `attitude: string` on characters. This migration coerces both
+  // shapes into a uniform `attitudes: [{id, strength: 0..1}]` array
+  // on characters, locations and factions, and strips the legacy
+  // `unknown` id (now expressed as an empty array). Idempotent.
+  //
+  // Returns `{ characters[], locations[], factions: [{id, fac}] }` —
+  // each entry needs its own PATCH on first migration boot.
+  function _migrateAttitudesToObjectShape() {
+    if (!_data) return { characters: [], locations: [], factions: [] };
+    const out = { characters: [], locations: [], factions: [] };
+
+    // Returns a normalised array if any change is needed; null when
+    // the input is already in canonical shape (so the caller can
+    // skip a no-op sync).
+    const normalize = (arr) => {
+      if (!Array.isArray(arr)) return null;
+      let changed = false;
+      const seen = new Set();
+      const next = [];
+      for (const e of arr) {
+        if (typeof e === 'string') {
+          changed = true;
+          if (e === 'unknown' || !e) continue;
+          if (seen.has(e)) continue;
+          seen.add(e);
+          next.push({ id: e, strength: 1.0 });
+        } else if (e && typeof e === 'object' && typeof e.id === 'string') {
+          if (e.id === 'unknown') { changed = true; continue; }
+          if (seen.has(e.id))      { changed = true; continue; }
+          seen.add(e.id);
+          let s = (typeof e.strength === 'number') ? e.strength : 1.0;
+          if (s < 0) s = 0;
+          if (s > 1) s = 1;
+          if (e.strength !== s) changed = true;
+          // Keep extra fields (forward-compatibility) but normalise core ones.
+          next.push({ ...e, id: e.id, strength: s });
+        } else {
+          changed = true; // drop garbage
+        }
+      }
+      return changed ? next : null;
+    };
+
+    for (const c of _data.characters || []) {
+      let touched = false;
+      // Legacy single `attitude` field → array form.
+      if ('attitude' in c) {
+        const legacy = c.attitude;
+        if (typeof legacy === 'string' && legacy && legacy !== 'unknown'
+            && (!Array.isArray(c.attitudes) || c.attitudes.length === 0)) {
+          c.attitudes = [{ id: legacy, strength: 1.0 }];
+        }
+        delete c.attitude;
+        touched = true;
+      }
+      const norm = normalize(c.attitudes);
+      if (norm) { c.attitudes = norm; touched = true; }
+      else if (!Array.isArray(c.attitudes)) { c.attitudes = []; touched = true; }
+      if (touched) out.characters.push(c);
+    }
+
+    for (const l of _data.locations || []) {
+      const norm = normalize(l.attitudes);
+      if (norm) { l.attitudes = norm; out.locations.push(l); }
+      else if (!Array.isArray(l.attitudes)) { l.attitudes = []; out.locations.push(l); }
+    }
+
+    for (const [id, f] of Object.entries(_data.factions || {})) {
+      if (!f || typeof f !== 'object') continue;
+      if (!Array.isArray(f.attitudes)) {
+        f.attitudes = [];
+        out.factions.push({ id, fac: f });
+      } else {
+        const norm = normalize(f.attitudes);
+        if (norm) { f.attitudes = norm; out.factions.push({ id, fac: f }); }
+      }
+    }
+
+    return out;
+  }
+
+  // Drop the legacy `unknown` row from settings.attitudes — empty
+  // `attitudes` is now itself the "no stance" baseline. Tombstoned so
+  // _mergeDefaults doesn't re-seed. Idempotent.
+  function _dropUnknownFromAttitudesEnum() {
+    if (!_data?.settings?.attitudes) return false;
+    const before = _data.settings.attitudes.length;
+    _data.settings.attitudes = _data.settings.attitudes.filter(a => a.id !== 'unknown');
+    if (_data.settings.attitudes.length === before) return false;
+    if (!_data.deletedDefaults || typeof _data.deletedDefaults !== 'object') {
+      _data.deletedDefaults = {};
+    }
+    _data.deletedDefaults['settings:attitudes:unknown'] = true;
+    return true;
+  }
+
+  // Promote location.status (free-text dropdown) to a managed enum.
+  // Existing free-text values become `locationStatuses` items so
+  // nothing the GM wrote is lost. Each touched location's `status` is
+  // rewritten to the new managed id. Idempotent.
+  //
+  // Returns `{ touchedLocations[], settingsTouched }` so load() can
+  // sync each location and the new settings category individually.
+  function _migrateLocationStatusToManaged() {
+    if (!_data) return { touchedLocations: [], settingsTouched: false };
+    if (!_data.settings) _data.settings = {};
+    if (!Array.isArray(_data.settings.locationStatuses)) _data.settings.locationStatuses = [];
+    const cat    = _data.settings.locationStatuses;
+    const byId   = new Map(cat.map(s => [s.id, s]));
+    // Match existing labels so seeded defaults catch legacy free-text
+    // (e.g. "Aktivní" lines up with the seeded `aktivni` id).
+    const byLabel = new Map(cat.map(s => [norm(s.label || ''), s.id]));
+
+    const touched = [];
+    let settingsTouched = false;
+    const _slug = (s) => String(s).toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'status';
+
+    for (const l of _data.locations || []) {
+      const v = l.status;
+      if (!v || typeof v !== 'string') continue;
+      if (byId.has(v)) continue;                          // already managed
+      const matched = byLabel.get(norm(v));
+      if (matched) { l.status = matched; touched.push(l); continue; }
+      // Auto-create a managed item from the free-text value.
+      const baseId = _slug(v);
+      let unique = baseId, n = 2;
+      while (byId.has(unique)) unique = `${baseId}_${n++}`;
+      const item = { id: unique, label: v, icon: '●', color: '#9E9E9E' };
+      cat.push(item);
+      byId.set(unique, item);
+      byLabel.set(norm(v), unique);
+      settingsTouched = true;
+      l.status = unique;
+      touched.push(l);
+    }
+    return { touchedLocations: touched, settingsTouched };
+  }
+
   async function load() {
     try {
       const res = await fetch('/api/data');
@@ -258,9 +401,24 @@ export const Store = (() => {
           // path instead of POSTing the whole dataset.
           const capturedTouched = _migrateCapturedStatus();
           const mapStatus       = _migrateMapStatusToAttitudes();
-          for (const c of capturedTouched)         _sync('characters', 'save', c);
+          // Run the mapStatus → attitudes migration BEFORE the shape
+          // upgrade so the `unknown` ids it inserts get stripped here.
+          const attShape        = _migrateAttitudesToObjectShape();
+          const droppedUnknown  = _dropUnknownFromAttitudesEnum();
+          const locStatus       = _migrateLocationStatusToManaged();
+          for (const c of capturedTouched)            _sync('characters', 'save', c);
           for (const l of mapStatus.touchedLocations) _sync('locations', 'save', l);
-          if (mapStatus.droppedSettingsCat)         _sync('settings', 'delete', { id: 'mapStatuses' });
+          if (mapStatus.droppedSettingsCat)           _sync('settings', 'delete', { id: 'mapStatuses' });
+          for (const c of attShape.characters)        _sync('characters', 'save', c);
+          for (const l of attShape.locations)         _sync('locations',  'save', l);
+          for (const { id, fac } of attShape.factions) _sync('factions',  'save', { id, data: fac });
+          if (droppedUnknown || locStatus.settingsTouched) {
+            // Push the post-migration settings category arrays.
+            if (droppedUnknown) _sync('settings', 'save', { id: 'attitudes',        data: _data.settings.attitudes });
+            if (locStatus.settingsTouched)
+              _sync('settings', 'save', { id: 'locationStatuses', data: _data.settings.locationStatuses });
+          }
+          for (const l of locStatus.touchedLocations) _sync('locations', 'save', l);
           _reindex();
           return;
         }
@@ -761,6 +919,31 @@ export const Store = (() => {
     return { id: id || '', label: id || '—', _orphan: true, color: '#555', icon: '?' };
   }
 
+  /** Resolve the attitudes that should drive an entity's glow.
+   *  Returns `[{id, strength}]`. Rules:
+   *    1. Party PCs (`faction === PARTY_FACTION_ID`) always render with
+   *       the parchment `party` palette regardless of any other field.
+   *    2. Otherwise the entity's own `attitudes[]` wins when non-empty.
+   *    3. Characters with empty own-attitudes inherit their faction's
+   *       `attitudes[]` (live fallback — no data duplication).
+   *    4. Empty everywhere returns `[]` — caller renders nothing
+   *       ("unknown" baseline).
+   *
+   *  `kind` is one of `'character'`, `'location'`, `'faction'`. */
+  function getEffectiveAttitudes(entity, kind) {
+    if (!entity) return [];
+    if (kind === 'character' && entity.faction === PARTY_FACTION_ID) {
+      return [{ id: 'party', strength: 1.0 }];
+    }
+    const own = Array.isArray(entity.attitudes) ? entity.attitudes : [];
+    if (own.length) return own;
+    if (kind === 'character' && entity.faction) {
+      const f = _data?.factions?.[entity.faction];
+      if (f && Array.isArray(f.attitudes) && f.attitudes.length) return f.attitudes;
+    }
+    return [];
+  }
+
   /** Upsert an enum item by id. New ids slugified by the caller.
    *  Sends the whole category array over the wire — `settings` is a
    *  keyed object (one doc) on the server, not a per-entity list, so
@@ -781,7 +964,14 @@ export const Store = (() => {
    *    [{ collection, id, name, field }]
    *  where `collection` is the lowercase collection name (e.g.
    *  'characters'), `id` and `name` identify the referring entity,
-   *  and `field` is the property that holds the enum reference. */
+   *  and `field` is the property that holds the enum reference.
+   *
+   *  Handles three storage shapes:
+   *    - scalar (`character.status === 'alive'`)
+   *    - array of strings (legacy `location.attitudes`)
+   *    - array of `{id, strength}` objects (current `*.attitudes`)
+   *  And both array-shaped collections AND keyed-object collections
+   *  (factions). */
   function findEnumUsages(cat, id) {
     init();
     const bindings = SETTINGS_USAGE_MAP[cat] || [];
@@ -789,15 +979,18 @@ export const Store = (() => {
     for (const b of bindings) {
       const coll = _data[b.collection];
       if (!coll) continue;
-      // Collections may be arrays (most) or keyed objects (factions);
-      // currently no enum points at factions, but be defensive.
       const list = Array.isArray(coll) ? coll : Object.values(coll);
       for (const e of list) {
         if (!e) continue;
         const v = e[b.field];
-        // Array-valued fields (e.g. location.attitudes) are a
-        // usage if any element matches. Scalar fields match by equality.
-        const matched = Array.isArray(v) ? v.includes(id) : v === id;
+        let matched = false;
+        if (Array.isArray(v)) {
+          matched = v.some(x =>
+            (typeof x === 'string') ? x === id
+            : (x && typeof x === 'object' && x.id === id));
+        } else {
+          matched = v === id;
+        }
         if (matched) {
           out.push({
             collection: b.collection,
@@ -816,30 +1009,58 @@ export const Store = (() => {
    *    opts.force         — delete even if there are usages (leaves
    *                         orphan references; resolveEnum handles them).
    *  Without either, the call is a no-op when usages > 0.
-   *  Returns `{ ok, usages }`.                                         */
+   *  Returns `{ ok, usages }`.
+   *
+   *  Walks both array collections AND keyed-object collections
+   *  (factions). For arrays of `{id, strength}` objects, id is
+   *  rewritten in place and dedupe collapses duplicates by id while
+   *  keeping the first kept strength.                                  */
   function deleteEnumItem(cat, id, opts = {}) {
     init();
     const usages = findEnumUsages(cat, id);
     if (usages.length > 0 && !opts.force && !opts.replaceWith) {
       return { ok: false, usages };
     }
-    // Remap usages to a replacement if requested.
+
+    // Records touched by the replace-with rewrite — re-synced after
+    // the settings PATCH so the server sees both ends of the change.
+    const touched = [];   // { collection, key, entity }
     if (opts.replaceWith) {
       const bindings = SETTINGS_USAGE_MAP[cat] || [];
       for (const b of bindings) {
         const coll = _data[b.collection];
-        if (!Array.isArray(coll)) continue;
-        coll.forEach(e => {
-          if (!e) return;
+        if (!coll) continue;
+        const records = Array.isArray(coll)
+          ? coll.map(e => ({ entity: e, key: e?.id }))
+          : Object.entries(coll).map(([k, e]) => ({ entity: e, key: k }));
+        for (const rec of records) {
+          const e = rec.entity;
+          if (!e) continue;
           const v = e[b.field];
+          let changed = false;
           if (Array.isArray(v)) {
-            // Array field: replace matching entries, dedupe.
-            const next = v.map(x => x === id ? opts.replaceWith : x);
-            e[b.field] = [...new Set(next)];
+            const seen = new Set();
+            const next = [];
+            for (const x of v) {
+              if (typeof x === 'string') {
+                const newId = (x === id) ? opts.replaceWith : x;
+                if (!seen.has(newId)) { seen.add(newId); next.push(newId); }
+                if (newId !== x) changed = true;
+              } else if (x && typeof x === 'object') {
+                const newId = (x.id === id) ? opts.replaceWith : x.id;
+                if (!seen.has(newId)) {
+                  seen.add(newId);
+                  next.push({ ...x, id: newId });
+                }
+                if (newId !== x.id) changed = true;
+              }
+            }
+            if (changed) { e[b.field] = next; touched.push({ ...rec, b }); }
           } else if (v === id) {
             e[b.field] = opts.replaceWith;
+            touched.push({ ...rec, b });
           }
-        });
+        }
       }
     }
     // Remove the item and tombstone its default so it doesn't reseed.
@@ -848,20 +1069,14 @@ export const Store = (() => {
     const wasDefault = (SETTINGS_DEFAULTS[cat] || []).some(d => d.id === id);
     if (wasDefault) _tombstone(`settings:${cat}:${id}`);
     // Sync: push the full post-delete category array plus persist
-    // any collections whose rows were remapped. The latter uses the
-    // entity-level save path so each touched record gets its own
-    // PATCH (correct audit trail on the server).
+    // every touched record via the entity-level save path so each
+    // gets its own PATCH (correct audit trail on the server).
     _sync('settings', 'save', { id: cat, data: _data.settings[cat] });
-    if (opts.replaceWith) {
-      const bindings = SETTINGS_USAGE_MAP[cat] || [];
-      for (const b of bindings) {
-        const coll = _data[b.collection];
-        if (!Array.isArray(coll)) continue;
-        coll.forEach(e => {
-          if (e && e[b.field] === opts.replaceWith) {
-            _sync(b.collection, 'save', e);
-          }
-        });
+    for (const { entity, key, b } of touched) {
+      if (b.collection === 'factions') {
+        _sync('factions', 'save', { id: key, data: entity });
+      } else {
+        _sync(b.collection, 'save', entity);
       }
     }
     _reindex();
@@ -1165,7 +1380,7 @@ export const Store = (() => {
     saveArtifact, deleteArtifact,
     saveHistoricalEvent, deleteHistoricalEvent,
     undelete,
-    getSettings, getEnum, getEnumValue,
+    getSettings, getEnum, getEnumValue, getEffectiveAttitudes,
     saveEnumItem, deleteEnumItem, findEnumUsages, resetEnumCategory,
     getHiddenSidebarPages, setHiddenSidebarPages,
     getCampaign, setCampaign,

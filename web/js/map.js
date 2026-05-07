@@ -1,5 +1,6 @@
 import { Store } from './store.js';
 import { Widgets } from './widgets/widgets.js';
+import { EditTemplates } from './edit_templates.js';
 import { esc, dataAction, dataOn } from './utils.js';
 
 export const PIN_TYPES = {
@@ -125,9 +126,14 @@ export const WorldMap = (() => {
   let _pendingPinId = null;
 
   // Pin shape derived from a Location. Map code below operates on this
-  // pin-like view; writes go through Store.saveLocation.
+  // pin-like view; writes go through Store.saveLocation. `attitudes`
+  // is now an array of `{id, strength}` (post-migration); pin fill
+  // uses the first entry's id, glow stacks one drop-shadow per entry.
   function _pinFromLocation(l) {
     const attitudes = Array.isArray(l.attitudes) ? l.attitudes : [];
+    const firstId = attitudes[0]
+      ? (typeof attitudes[0] === 'string' ? attitudes[0] : attitudes[0].id)
+      : 'unknown';
     return {
       id:         l.id,
       locationId: l.id,
@@ -137,12 +143,39 @@ export const WorldMap = (() => {
       type:       l.pinType  || 'custom',
       // The marker fill uses the first listed attitude — enough signal
       // at pin size. The side-panel form exposes the full array.
-      status:     attitudes[0] || 'unknown',
+      status:     firstId,
       attitudes,
       priority:   l.priority,
       notes:      l.mapNotes || '',
       parentId:   l.parentId || null,
     };
+  }
+
+  // Glow helpers — one drop-shadow per active attitude, alpha = strength.
+  // Tiny markers use a smaller blur than wiki cards (`blurPx` arg).
+  function _hexToRgba(hex, alpha) {
+    let h = String(hex || '').trim();
+    if (h.startsWith('#')) h = h.slice(1);
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    if (h.length !== 6) return `rgba(136,136,136,${alpha})`;
+    const n = parseInt(h, 16);
+    if (Number.isNaN(n)) return `rgba(136,136,136,${alpha})`;
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  function _attitudeGlowFilter(entries, blurPx = 5) {
+    if (!Array.isArray(entries) || !entries.length) return '';
+    const enums = Store.getEnum('attitudes') || [];
+    const colors = Object.fromEntries(enums.map(a => [a.id, a.labelColor || a.bg || '#888']));
+    const layers = [];
+    for (const e of entries) {
+      if (!e) continue;
+      const id = (typeof e === 'string') ? e : e.id;
+      const s  = (typeof e === 'string') ? 1.0 : ((typeof e.strength === 'number') ? e.strength : 1.0);
+      if (!id || !colors[id] || s <= 0) continue;
+      layers.push(`drop-shadow(0 0 ${blurPx}px ${_hexToRgba(colors[id], s)})`);
+    }
+    return layers.join(' ');
   }
   // All pins for the currently-displayed map (world or a local sub-map).
   function _pinsForCurrent() {
@@ -477,6 +510,10 @@ export const WorldMap = (() => {
     const textShadow = lightBg
       ? '0 0 2px rgba(255,255,255,0.9)'
       : '0 0 2px rgba(0,0,0,0.65)';
+    // Glow halo — one colored drop-shadow per active attitude, blended
+    // additively. Empty array = no filter (no glow).
+    const glow = _attitudeGlowFilter(pin.attitudes || [], 5);
+    const filterAttr = glow ? `filter:${glow};` : '';
     return L.divIcon({
       className: '',
       iconSize:  [size, size],
@@ -487,6 +524,7 @@ export const WorldMap = (() => {
         color:${ps.fg};
         text-shadow:${textShadow};
         font-size:${size*0.55}px;
+        ${filterAttr}
       " title="${esc(pin.name)}">${pt.icon}</div>`,
     });
   }
@@ -681,13 +719,20 @@ export const WorldMap = (() => {
       : '';
 
     // Show every attitude label (comma-joined) so mixed-stance places
-    // read as "Chrám · Spojenec, Nepřítel" rather than just one of them.
-    const attLabels = (pin.attitudes && pin.attitudes.length ? pin.attitudes : [pin.status])
-      .map(id => {
-        const s = statuses[id];
-        return s ? `<span style="color:${s.labelColor}">${esc(s.label)}</span>` : '';
-      })
-      .filter(Boolean).join(', ');
+    // read as "Chrám · Spojenec 100%, Nepřítel 50%" rather than only
+    // surfacing the primary stance. Strength % is omitted at 100%.
+    const attEntries = (pin.attitudes && pin.attitudes.length)
+      ? pin.attitudes
+      : (pin.status ? [{ id: pin.status, strength: 1.0 }] : []);
+    const attLabels = attEntries.map(e => {
+      const id = (typeof e === 'string') ? e : e.id;
+      const strength = (typeof e === 'string') ? 1.0
+        : ((typeof e.strength === 'number') ? e.strength : 1.0);
+      const s = statuses[id];
+      if (!s) return '';
+      const pct = strength === 1.0 ? '' : ` ${Math.round(strength * 100)}%`;
+      return `<span style="color:${s.labelColor}">${esc(s.label)}${esc(pct)}</span>`;
+    }).filter(Boolean).join(', ');
     const headerInner = `
       <span class="sc-pin-icon">${pt.icon}</span>
       <div>
@@ -718,16 +763,14 @@ export const WorldMap = (() => {
     _editPinId = pin.id || null;
     const typeOpts = Object.entries(PIN_TYPES)
       .map(([k, v]) => `<option value="${k}" ${pin.type===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
-    // Pin form exposes the full attitudes array so multi-stance places
-    // can be edited from the map without switching to the wiki editor.
-    const pinAtts   = Array.isArray(pin.attitudes) ? pin.attitudes : (pin.status ? [pin.status] : []);
-    const attEnum   = Store.getEnum('attitudes') || [];
-    const attChips  = attEnum.map(a => `
-      <label class="attitude-chip" style="--attitude-color: ${a.labelColor || a.bg || '#888'}">
-        <input type="checkbox" value="${esc(a.id)}" ${pinAtts.includes(a.id) ? 'checked' : ''}>
-        <span class="attitude-chip-dot"></span>
-        <span class="attitude-chip-label">${esc(a.label)}</span>
-      </label>`).join('');
+    // Pin form exposes the full attitudes array (with per-attitude
+    // strength sliders) so multi-stance places can be edited from the
+    // map without switching to the wiki editor. Same chip-row helper
+    // the location/character editors use.
+    const pinAttEntries = Array.isArray(pin.attitudes) && pin.attitudes.length
+      ? pin.attitudes
+      : (pin.status ? [{ id: pin.status, strength: 1.0 }] : []);
+    const attChipRowHtml = EditTemplates.attitudeChipRow('spf-attitudes', pinAttEntries);
     const currentPri = _priorityOf(pin);
     const priLabels  = { 1: '1 — Vždy viditelné', 2: '2 — Střední zoom', 3: '3 — Detailní zoom' };
     const priOpts = [1, 2, 3].map(p =>
@@ -756,8 +799,8 @@ export const WorldMap = (() => {
         <input class="sc-input" id="spf-name" type="text" value="${esc(pin.name||'')}" placeholder="Waterdeep...">
         <label class="sc-label">Typ</label>
         <select class="sc-input" id="spf-type">${typeOpts}</select>
-        <label class="sc-label">Postoje k partě <span class="sc-hint">(víc = rozdělený prstenec na kartě)</span></label>
-        <div class="attitude-chip-row" id="spf-attitudes">${attChips}</div>
+        <label class="sc-label">Postoje k partě <span class="sc-hint">(víc postojů s nastavitelnou silou)</span></label>
+        ${attChipRowHtml}
         <label class="sc-label">Důležitost (priorita zobrazení)</label>
         <div class="sc-pri-row" id="spf-priority">${priOpts}</div>
         <label class="sc-label">Popis / Poznámky na mapě</label>
@@ -782,11 +825,9 @@ export const WorldMap = (() => {
     const priority = priRaw ? parseInt(priRaw, 10) : undefined;
     const pinType  = document.getElementById('spf-type')?.value   || 'custom';
     const mapNotes = document.getElementById('spf-notes')?.value  || '';
-    // Multi-attitude: read every checked chip. Empty = no stance set,
-    // card renders with no ring.
-    const attitudes = Array.from(
-      document.querySelectorAll('#spf-attitudes input[type="checkbox"]:checked')
-    ).map(i => i.value);
+    // Multi-attitude with per-attitude strength sliders. Empty array
+    // = no stance set, pin renders with no glow halo.
+    const attitudes = EditTemplates.readAttitudeChipRow('spf-attitudes');
 
     let loc = null;
     if (isNew) {

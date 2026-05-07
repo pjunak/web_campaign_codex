@@ -449,32 +449,22 @@
   color: var(--text-muted);
 }
 
-/* ── Attitude ring (character/location cards) ──────────────────
-   The inline `--attitude-ring` is either a solid color or a
-   conic-gradient (split ring for multi-attitude locations). The
-   pseudo-element sits on top of the card at `inset: 0` with 3px
-   padding; the CSS mask-composite trick hollows out the content
-   area so ONLY the 3px padding edge (= the ring) is visible. This
-   lets us survive `overflow: hidden` on card bodies without hacks.
-   pointer-events:none keeps the underlying card clickable. */
-.has-attitude-ring {
-  position: relative;
-}
-.has-attitude-ring::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 3px;
-  background: var(--attitude-ring, transparent);
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
-  pointer-events: none;
-  z-index: 3;
-}
+/* ── Attitude glow (character/location/faction cards) ──────────
+   Replaces the old border-ring approach. The renderer applies an
+   inline `filter: drop-shadow(0 0 7px rgba(...,strength))` per
+   active attitude on the icon-bearing element (portrait wrap,
+   loc-card-icon, faction badge, map pin). Drop-shadow follows the
+   alpha of the source, so the halo precisely hugs the icon shape;
+   stacking multiple shadows blends colors additively for mixed
+   stances. No CSS rule needed here — strength is an inline alpha
+   on each shadow, so an "off" attitude is just a transparent
+   shadow that contributes nothing.
+
+   The parent card keeps `overflow: hidden` for rounded corners,
+   so the glow is visible inside the card and clipped at the edge.
+   That gives a nice "icon glows into the info area" effect on
+   character cards rather than an obtrusive halo around the whole
+   card.                                                          */
 
 /* ── List section grouping (by faction / pinType) ──────────── */
 .list-group { margin-bottom: 1.6rem; }
@@ -499,11 +489,23 @@
   border-radius: 100px;
 }
 
-/* ── Attitude chip rows (editors + pin form) ───────────────── */
+/* ── Attitude chip rows (editors + pin form) ─────────────────
+   Each `.attitude-chip-item` wraps a clickable chip + an inline
+   strength slider. The slider is hidden by default and revealed
+   via `:has()` when the chip's checkbox is checked, so newly-
+   activated attitudes start at 100% by default and only show the
+   slider once they're "on". `--attitude-color` is set inline by
+   the template (item.labelColor || item.bg).                     */
 .attitude-chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.5rem 0.4rem;
+}
+.attitude-chip-item {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: stretch;
 }
 .attitude-chip {
   display: inline-flex;
@@ -530,13 +532,58 @@
   box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
   flex-shrink: 0;
 }
-.attitude-chip:has(input:checked),
-.attitude-chip input:checked + .attitude-chip-dot {
-  /* :has fallback + specific chip styling when checked */
-}
 .attitude-chip:has(input:checked) {
   border-color: var(--attitude-color, var(--accent-gold));
   background: color-mix(in srgb, var(--attitude-color, #888) 12%, transparent);
+}
+
+/* Strength slider — hidden until the chip is checked. Lives below
+   the chip so the row stays scannable when nothing is active.    */
+.attitude-chip-strength {
+  display: none;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.1rem 0.3rem 0.1rem 0.5rem;
+}
+.attitude-chip-item:has(input[type="checkbox"]:checked) .attitude-chip-strength {
+  display: flex;
+}
+.attitude-chip-strength-slider {
+  flex: 1;
+  min-width: 80px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255,255,255,0.12);
+  border-radius: 100px;
+  cursor: pointer;
+  accent-color: var(--attitude-color, var(--accent-gold));
+}
+.attitude-chip-strength-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--attitude-color, var(--accent-gold));
+  border: 1px solid rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+.attitude-chip-strength-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--attitude-color, var(--accent-gold));
+  border: 1px solid rgba(0,0,0,0.4);
+  cursor: pointer;
+}
+.attitude-chip-strength-readout {
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  min-width: 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Attitude filter pills on list pages */

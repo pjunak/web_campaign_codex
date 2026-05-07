@@ -59,12 +59,16 @@ export const Wiki = (() => {
     });
   }
 
-  // ── Attitude ring helpers ──────────────────────────────────────
-  // Cards that represent an entity with an attitude toward the party
-  // get a thin colored ring around them. Single attitude = solid; multi
-  // attitudes (locations) = conic-gradient split evenly. Party members
-  // always get the party color regardless of their own attitude field.
-  // Returns a CSS value (color or gradient), or '' to skip the ring.
+  // ── Attitude glow helpers ──────────────────────────────────────
+  // Entities with attitudes toward the party render a `filter:
+  // drop-shadow(...)` halo around their icon (portrait / location-pin
+  // emoji / faction badge / map-pin marker). Stacking one drop-shadow
+  // per active attitude blends colors additively, so a place that's
+  // 100% neutral + 50% dangerous gets a strong-blue / weak-red mixed
+  // halo for free. Empty array = no filter at all = "unknown" baseline.
+  // Faction inheritance (character with empty own-attitudes uses the
+  // faction's attitudes) lives in Store.getEffectiveAttitudes.
+  const GLOW_BLUR_PX = 7;
   function _attitudeColorMap() {
     const map = {};
     for (const a of Store.getEnum('attitudes') || []) {
@@ -72,23 +76,33 @@ export const Wiki = (() => {
     }
     return map;
   }
-  // `unknown` is intentionally colorless — a character or place whose
-  // allegiance hasn't been established shouldn't draw a ring. The
-  // helpers below skip it so no ring class is added at all.
-  function _characterRing(c, colors) {
-    if (c.faction === PARTY_FACTION_ID) return colors.party || '#F0E6C8';
-    if (c.attitude && c.attitude !== 'unknown' && colors[c.attitude]) return colors[c.attitude];
-    return '';
+  function _hexToRgba(hex, alpha) {
+    let h = String(hex || '').trim();
+    if (h.startsWith('#')) h = h.slice(1);
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    if (h.length !== 6) return `rgba(136,136,136,${alpha})`;
+    const n = parseInt(h, 16);
+    if (Number.isNaN(n)) return `rgba(136,136,136,${alpha})`;
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
   }
-  function _locationRing(l, colors) {
-    const ids = Array.isArray(l.attitudes)
-      ? l.attitudes.filter(x => x !== 'unknown' && colors[x])
-      : [];
-    if (ids.length === 0) return '';
-    if (ids.length === 1) return colors[ids[0]];
-    const step = 100 / ids.length;
-    const segs = ids.map((id, i) => `${colors[id]} ${i*step}% ${(i+1)*step}%`).join(', ');
-    return `conic-gradient(${segs})`;
+  // Returns a CSS filter string ('drop-shadow(...) drop-shadow(...)')
+  // or '' when no entry has positive strength. `blurPx` lets callers
+  // tune the halo size for tiny icons (map pins) vs. large portraits.
+  function _attitudeGlow(entries, colors, blurPx = GLOW_BLUR_PX) {
+    if (!Array.isArray(entries) || !entries.length) return '';
+    const layers = [];
+    for (const e of entries) {
+      if (!e || !e.id) continue;
+      const color = colors[e.id];
+      if (!color) continue;
+      const s = (typeof e.strength === 'number') ? e.strength : 1.0;
+      if (s <= 0) continue;
+      layers.push(`drop-shadow(0 0 ${blurPx}px ${_hexToRgba(color, s)})`);
+    }
+    return layers.join(' ');
   }
 
   // Shared toolbar: TagFilter (name + tags, unified) + sort <select>.
@@ -159,14 +173,21 @@ export const Wiki = (() => {
 
   function relationLabel(type) { return relLabel(type); }
 
-  // ── Portrait wrapper (knowledge + dead overlay) ────────────────
-  function portraitWrap(c, extraClass) {
+  // ── Portrait wrapper (knowledge + dead overlay + attitude glow) ─
+  // The optional `glowFilter` is a CSS `filter:` value built by
+  // `_attitudeGlow(entries, colors)`. It's applied on the wrapper
+  // (not the img) so it composes with the `[data-knowledge="N"]
+  // .portrait-img { filter: url(#sketch-N) }` rule rather than
+  // overriding it. Drop-shadow follows the alpha of whatever's inside
+  // the wrapper, so the glow hugs the portrait silhouette.
+  function portraitWrap(c, extraClass, glowFilter) {
     const factions  = Store.getFactions();
     const deadHtml  = c.status === "dead" ? `<div class="dead-overlay">💀</div>` : "";
     const imgHtml   = c.portrait
       ? `<img class="portrait-img" src="${esc(c.portrait)}" alt="${esc(c.name)}" loading="lazy">`
       : `<div class="portrait-placeholder">${factions[c.faction]?.badge || "👤"}</div>`;
-    return `<div class="portrait-wrap${extraClass ? " "+extraClass : ""}" data-knowledge="${c.knowledge}" data-status="${c.status}">
+    const styleAttr = glowFilter ? ` style="filter: ${glowFilter}"` : '';
+    return `<div class="portrait-wrap${extraClass ? " "+extraClass : ""}" data-knowledge="${c.knowledge}" data-status="${c.status}"${styleAttr}>
       ${imgHtml}${deadHtml}
     </div>`;
   }
@@ -335,6 +356,7 @@ export const Wiki = (() => {
       const l = Store.getLocation(id);
       return l ? l.name : '';
     };
+    const partyColors = _attitudeColorMap();
     const cards = party.map(c => {
       const locName = locNameOf(c.location);
       const locChip = locName
@@ -342,9 +364,10 @@ export const Wiki = (() => {
         : '';
       const titleLine = c.title ? `<div class="dash-party-title">${esc(c.title)}</div>` : '';
       const statusDot = `<span class="dash-party-status" data-status="${esc(c.status||'alive')}"></span>`;
+      const glow = _attitudeGlow(Store.getEffectiveAttitudes(c, 'character'), partyColors);
       return `
         <a class="dash-party-card" href="#/postava/${c.id}">
-          <div class="dash-party-portrait">${portraitWrap(c)}</div>
+          <div class="dash-party-portrait">${portraitWrap(c, '', glow)}</div>
           <div class="dash-party-body">
             <div class="dash-party-name">${statusDot}${esc(c.name)}</div>
             ${titleLine}
@@ -488,12 +511,8 @@ export const Wiki = (() => {
     if (filterFaction) chars = chars.filter(c => c.faction === filterFaction);
     if (s.attitude) {
       const a = s.attitude;
-      chars = chars.filter(c => {
-        // Party members match the 'party' filter via their faction;
-        // otherwise compare against the character's own attitude field.
-        if (a === 'party') return c.faction === PARTY_FACTION_ID;
-        return c.attitude === a;
-      });
+      chars = chars.filter(c =>
+        Store.getEffectiveAttitudes(c, 'character').some(e => e.id === a));
     }
     chars = [...chars];
     switch (s.sort) {
@@ -597,16 +616,17 @@ export const Wiki = (() => {
         ${dataAction('Wiki.renderPage', 'postavy', id)}>${f.badge} ${esc(f.name)} (${count})</button>`;
     }).join("");
 
-    // Attitude filter chips — quick slice by stance toward the party.
-    // Includes the `party` pseudo-attitude (derived from faction).
+    // Attitude filter chips — slice by stance toward the party. Counts
+    // include faction-inherited stances (Store.getEffectiveAttitudes),
+    // so a member of an `enemy` faction with empty own-attitudes shows
+    // up under the Nepřítel filter without any explicit per-character
+    // attitude. Party PCs always carry an effective `party` entry.
     const attEnum = Store.getEnum('attitudes') || [];
     const activeAtt = _listState.postavy.attitude || null;
     const attFilters = attEnum.map(a => {
-      const count = a.id === PARTY_FACTION_ID
-        ? 0 // party handled via the party chip above (legacy id collision)
-        : allChars.filter(c => c.attitude === a.id).length;
-      const partyCount = allChars.filter(c => c.faction === PARTY_FACTION_ID).length;
-      const n = a.id === 'party' ? partyCount : count;
+      const n = allChars.filter(c =>
+        Store.getEffectiveAttitudes(c, 'character').some(e => e.id === a.id)
+      ).length;
       if (n === 0) return "";
       const color = a.labelColor || a.bg || '#888';
       return `<button class="filter-btn filter-btn-attitude ${activeAtt === a.id ? 'active' : ''}"
@@ -675,12 +695,12 @@ export const Wiki = (() => {
 
   function renderCharacterCard(c) {
     const overlay = EditMode.isActive() ? editOverlay(`#/postava/${c.id}`) : "";
-    const ring    = _characterRing(c, _attitudeColorMap());
-    const ringStyle = ring ? ` style="--attitude-ring: ${ring}"` : '';
-    const ringClass = ring ? ' has-attitude-ring' : '';
+    const colors  = _attitudeColorMap();
+    const entries = Store.getEffectiveAttitudes(c, 'character');
+    const glow    = _attitudeGlow(entries, colors);
     return `
-      <a class="char-card${ringClass}" href="#/postava/${c.id}"${ringStyle}>
-        ${portraitWrap(c)}
+      <a class="char-card" href="#/postava/${c.id}">
+        ${portraitWrap(c, '', glow)}
         ${overlay}
         <div class="char-card-info">
           <div class="char-card-name">${c.knowledge >= 1 ? esc(c.name) : "???"}</div>
@@ -742,28 +762,31 @@ export const Wiki = (() => {
       ? `<div class="md-view">${renderMarkdown(c.description)}</div>`
       : `<em>O této postavě toho víme jen velmi málo.</em>`;
 
-    // Attitude chip next to faction + status. Uses the same color as
-    // the ring on the list card. Party PCs implicitly show "Parta".
-    let attitudeChip = '';
+    // Attitude chips: one per active attitude (own or inherited from
+    // faction). Strength % is shown when ≠ 100%. Party PCs always
+    // carry the implicit `party` chip via getEffectiveAttitudes.
+    let attitudeChips = '';
+    const articleEntries = Store.getEffectiveAttitudes(c, 'character');
     if (c.knowledge >= 2) {
       const attEnum = Store.getEnum('attitudes') || [];
-      const isParty = c.faction === PARTY_FACTION_ID;
-      const attId   = isParty ? 'party' : c.attitude;
-      const def     = attEnum.find(a => a.id === attId);
-      if (def) {
+      attitudeChips = articleEntries.map(e => {
+        const def = attEnum.find(a => a.id === e.id);
+        if (!def) return '';
         const color = def.labelColor || def.bg || '#888';
-        attitudeChip = `<span class="badge badge-attitude"
-          style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}</span>`;
-      }
+        const pct = e.strength === 1.0 ? '' : ` ${Math.round(e.strength * 100)}%`;
+        return `<span class="badge badge-attitude"
+          style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}${esc(pct)}</span>`;
+      }).filter(Boolean).join(' ');
     }
+    const articleGlow = _attitudeGlow(articleEntries, _attitudeColorMap());
 
     return _articleShell({
-      visual:   portraitWrap(c),
+      visual:   portraitWrap(c, '', articleGlow),
       title:    c.knowledge >= 1 ? esc(c.name) : 'Neznámá Postava',
       subtitle: c.knowledge >= 2 && c.title ? esc(c.title) : '',
       chips:    [
         factionBadge(c.faction),
-        attitudeChip,
+        attitudeChips,
         statusBadge(c.status),
         knowledgeBadge(c.knowledge),
         ...profileBits,
@@ -817,7 +840,8 @@ export const Wiki = (() => {
         `${l.name||''} ${l.type||''} ${l.region||''} ${(l.tags||[]).join(' ')} ${l.description||''} ${l.status||''}`));
     }
     if (s.attitude) {
-      locs = locs.filter(l => Array.isArray(l.attitudes) && l.attitudes.includes(s.attitude));
+      locs = locs.filter(l =>
+        Store.getEffectiveAttitudes(l, 'location').some(e => e.id === s.attitude));
     }
     locs = [...locs];
     switch (s.sort) {
@@ -844,12 +868,16 @@ export const Wiki = (() => {
     const region = l.region ? `<div class="loc-card-sub">${esc(l.region)}</div>` : '';
     const editBtn = EditMode.isActive()
       ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
-    const ring = _locationRing(l, colors);
-    const ringStyle = ring ? ` --attitude-ring: ${ring};` : '';
-    const ringClass = ring ? ' has-attitude-ring' : '';
-    return `<a class="loc-card${ringClass}" href="#/misto/${l.id}" style="text-decoration:none;position:relative;${ringStyle}">
+    // Glow follows the pin emoji's silhouette — drop-shadow blurs the
+    // alpha channel of `.loc-card-icon`'s text so thin strokes get the
+    // same halo as the bulk. Multiple attitudes layer additively.
+    const glow = _attitudeGlow(Store.getEffectiveAttitudes(l, 'location'), colors);
+    const iconStyle = glow
+      ? `color:${pt.color};filter:${glow}`
+      : `color:${pt.color}`;
+    return `<a class="loc-card" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
       ${editBtn}
-      <div class="loc-card-icon" style="color:${pt.color}">${pt.icon}</div>
+      <div class="loc-card-icon" style="${iconStyle}">${pt.icon}</div>
       <div class="loc-card-body">
         <div class="loc-card-name">${esc(l.name)}</div>
         <div class="loc-card-type">${esc(typeLabel)}</div>
@@ -928,12 +956,17 @@ export const Wiki = (() => {
     const newBtn = EditMode.isActive() ? `
       <a href="#/misto/new" class="list-item-new" style="text-decoration:none">＋ Nové místo</a>` : "";
 
-    // Attitude chip filter — same pattern as /postavy.
+    // Attitude chip filter — same pattern as /postavy. Counts use
+    // getEffectiveAttitudes so the filter agrees with what the cards
+    // actually render (locations always use their own array; this is
+    // really just a defensive equivalence).
     const attEnum = Store.getEnum('attitudes') || [];
     const activeAtt = _listState.mista.attitude || null;
     const allLocs = Store.getLocations();
     const attFilters = attEnum.map(a => {
-      const count = allLocs.filter(l => Array.isArray(l.attitudes) && l.attitudes.includes(a.id)).length;
+      const count = allLocs.filter(l =>
+        Store.getEffectiveAttitudes(l, 'location').some(e => e.id === a.id)
+      ).length;
       if (count === 0) return '';
       const color = a.labelColor || a.bg || '#888';
       return `<button class="filter-btn filter-btn-attitude ${activeAtt === a.id ? 'active' : ''}"
@@ -1051,12 +1084,32 @@ export const Wiki = (() => {
     if (l.localMap) chips.push(`<span class="profile-chip">🗺 Místní mapa</span>`);
     if (typeof l.knowledge === 'number') chips.push(knowledgeBadge(l.knowledge));
 
+    // Attitude chips on the location article — one per active attitude
+    // with strength % when ≠ 100.
+    const locColors  = _attitudeColorMap();
+    const locEntries = Store.getEffectiveAttitudes(l, 'location');
+    const locAttEnum = Store.getEnum('attitudes') || [];
+    for (const e of locEntries) {
+      const def = locAttEnum.find(a => a.id === e.id);
+      if (!def) continue;
+      const color = def.labelColor || def.bg || '#888';
+      const pct = e.strength === 1.0 ? '' : ` ${Math.round(e.strength * 100)}%`;
+      chips.push(`<span class="badge badge-attitude"
+        style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}${esc(pct)}</span>`);
+    }
+    const locGlow = _attitudeGlow(locEntries, locColors);
+
+    // Status — managed `locationStatuses` enum. Resolve id → label
+    // (synthetic orphan when the id was deleted from settings).
+    const statusDef = l.status ? Store.getEnumValue('locationStatuses', l.status) : null;
+    const statusLabel = statusDef ? statusDef.label : '';
+
     const events = Store.getEventsAtLocation(l.id) || [];
 
     return _articleShell({
-      visual:   `<div class="ah-icon">${pt.icon}</div>`,
+      visual:   `<div class="ah-icon"${locGlow ? ` style="filter:${locGlow}"` : ''}>${pt.icon}</div>`,
       title:    esc(l.name),
-      subtitle: `${esc(l.type || '')}${l.type && l.status ? ' · ' : ''}${esc(l.status || '')}`,
+      subtitle: `${esc(l.type || '')}${l.type && statusLabel ? ' · ' : ''}${esc(statusLabel)}`,
       chips,
       facts: [
         { label: 'Region',          value: l.region ? esc(l.region) : '' },
@@ -1388,9 +1441,23 @@ export const Wiki = (() => {
       `<span class="profile-chip">👤 ${chars.length} postav</span>`,
       ...(rankCount ? [`<span class="profile-chip">⚔ ${rankCount} hodností</span>`] : []),
     ];
+    // Faction-level attitude chips + glow on the badge.
+    const facColors  = _attitudeColorMap();
+    const facEntries = Store.getEffectiveAttitudes(f, 'faction');
+    const facAttEnum = Store.getEnum('attitudes') || [];
+    for (const e of facEntries) {
+      const def = facAttEnum.find(a => a.id === e.id);
+      if (!def) continue;
+      const color = def.labelColor || def.bg || '#888';
+      const pct = e.strength === 1.0 ? '' : ` ${Math.round(e.strength * 100)}%`;
+      chips.push(`<span class="badge badge-attitude"
+        style="background:${esc(color)}22;color:${esc(color)};border:1px solid ${esc(color)}66">●&nbsp;${esc(def.label)}${esc(pct)}</span>`);
+    }
+    const facGlow = _attitudeGlow(facEntries, facColors);
+    const visualStyle = `background:${f.color}33;color:${f.textColor}${facGlow ? ';filter:'+facGlow : ''}`;
 
     return _articleShell({
-      visual: `<div class="ah-icon" style="background:${f.color}33;color:${f.textColor}">${f.badge}</div>`,
+      visual: `<div class="ah-icon" style="${visualStyle}">${f.badge}</div>`,
       title: `<span style="color:${f.textColor}">${f.badge} ${esc(f.name)}</span>`,
       subtitle: '',
       chips,
