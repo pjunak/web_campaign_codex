@@ -8,7 +8,7 @@
 import { Store } from './store.js';
 import { EditTemplates } from './edit_templates.js';
 import { Widgets } from './widgets/widgets.js';
-import { PIN_TYPES } from './map.js';
+import { PIN_TYPES, PIN_SIZE_MIN, PIN_SIZE_MAX, PIN_SIZE_DEFAULT } from './map.js';
 import { renderMarkdown } from './utils.js';
 import { PARTY_FACTION_ID } from './constants.js';
 
@@ -696,10 +696,9 @@ export const EditMode = (() => {
     const name = document.getElementById(`lf-name-${uid}`)?.value.trim();
     if (!name) { _toast("Název je povinný", false); return; }
     const newId = originalId || Store.generateId(name);
-    // Preserve map-only fields (x, y, pinType, priority, mapNotes)
-    // that this form doesn't expose. Only the wiki form would clobber them
-    // otherwise; the map's own pin form remains the place to edit them.
-    // Attitudes are now exposed in both forms and stay in sync.
+    // Preserve map-only fields (x, y, pinType, mapNotes) that this
+    // form doesn't expose. Attitudes, status, and size ARE exposed in
+    // both the wiki and the map's pin form, so those stay in sync.
     // Note: location.characters is no longer written here — character.location
     // is the canonical source of truth, managed via the MultiSelect picker.
     const existing = originalId ? (Store.getLocation(originalId) || {}) : {};
@@ -719,18 +718,36 @@ export const EditMode = (() => {
     // Empty array = no own stance (rendered with no glow).
     const attitudes = _readAttitudeChipRow(`lf-attitudes-${uid}`);
 
-    Store.saveLocation({
+    // Marker size — empty input = inherit type default; numeric input
+    // matching the type default also reverts to inheritance so changing
+    // the type default later still moves un-customised places.
+    const sizeRaw = document.getElementById(`lf-size-${uid}`)?.value;
+    const sizeNum = sizeRaw === '' || sizeRaw == null ? null : parseInt(sizeRaw, 10);
+    const typeForSize = pinTypeKey || existing.pinType || '';
+    const typeDefault = (Store.getEnumValue('pinTypes', typeForSize) || {}).size
+      || (PIN_TYPES[typeForSize] && PIN_TYPES[typeForSize].size)
+      || PIN_SIZE_DEFAULT;
+    let size;
+    if (Number.isFinite(sizeNum) && sizeNum >= PIN_SIZE_MIN && sizeNum <= PIN_SIZE_MAX
+        && sizeNum !== typeDefault) {
+      size = sizeNum;
+    }
+
+    const next = {
       ...existing,
       id: newId, name,
       pinType:     pinTypeKey || existing.pinType || undefined,
       type:        typeLabel,
       status:      statusVal,
       attitudes,
+      size,
       description: document.getElementById(`lf-desc-${uid}`)?.value.trim()   || "",
       notes:       document.getElementById(`lf-notes-${uid}`)?.value.trim()  || "",
       parentId:    parentId || undefined,
       localMap:    localMap || undefined,
-    });
+    };
+    if (size === undefined) delete next.size;
+    Store.saveLocation(next);
     _runAfterSave('location', newId);
     _toast("✓ Místo uloženo");
     _markClean();

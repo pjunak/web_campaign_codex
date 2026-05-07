@@ -343,6 +343,45 @@ export const Store = (() => {
     return true;
   }
 
+  // Promote pin priority (1/2/3) to size (px). The legacy
+  // priority drove visibility-by-zoom on the world map; visibility
+  // is being decoupled from priority and will move to per-Pohled
+  // rules instead. Mapping: 1→36, 2→30, 3→26 px (mirroring the new
+  // pinTypes defaults). Idempotent.
+  //
+  // Returns `{ pinTypesTouched, touchedLocations[] }`.
+  function _migratePinPriorityToSize() {
+    if (!_data) return { pinTypesTouched: false, touchedLocations: [] };
+    const SIZE_FROM_PRIORITY = { 1: 36, 2: 30, 3: 26 };
+    let pinTypesTouched = false;
+    const arr = (_data.settings && _data.settings.pinTypes) || [];
+    for (const pt of arr) {
+      if ('priority' in pt) {
+        if (typeof pt.size !== 'number') {
+          pt.size = SIZE_FROM_PRIORITY[pt.priority] || 28;
+        }
+        delete pt.priority;
+        pinTypesTouched = true;
+      } else if (typeof pt.size !== 'number') {
+        // Item that pre-dates both fields — give it a sensible default.
+        pt.size = 28;
+        pinTypesTouched = true;
+      }
+    }
+    const touched = [];
+    for (const l of _data.locations || []) {
+      if ('priority' in l) {
+        if (typeof l.size !== 'number') {
+          const mapped = SIZE_FROM_PRIORITY[l.priority];
+          if (mapped) l.size = mapped;
+        }
+        delete l.priority;
+        touched.push(l);
+      }
+    }
+    return { pinTypesTouched, touchedLocations: touched };
+  }
+
   // Promote location.status (free-text dropdown) to a managed enum.
   // Existing free-text values become `locationStatuses` items so
   // nothing the GM wrote is lost. Each touched location's `status` is
@@ -405,6 +444,7 @@ export const Store = (() => {
           // upgrade so the `unknown` ids it inserts get stripped here.
           const attShape        = _migrateAttitudesToObjectShape();
           const droppedUnknown  = _dropUnknownFromAttitudesEnum();
+          const pinSize         = _migratePinPriorityToSize();
           const locStatus       = _migrateLocationStatusToManaged();
           for (const c of capturedTouched)            _sync('characters', 'save', c);
           for (const l of mapStatus.touchedLocations) _sync('locations', 'save', l);
@@ -412,12 +452,13 @@ export const Store = (() => {
           for (const c of attShape.characters)        _sync('characters', 'save', c);
           for (const l of attShape.locations)         _sync('locations',  'save', l);
           for (const { id, fac } of attShape.factions) _sync('factions',  'save', { id, data: fac });
-          if (droppedUnknown || locStatus.settingsTouched) {
+          if (droppedUnknown || locStatus.settingsTouched || pinSize.pinTypesTouched) {
             // Push the post-migration settings category arrays.
-            if (droppedUnknown) _sync('settings', 'save', { id: 'attitudes',        data: _data.settings.attitudes });
-            if (locStatus.settingsTouched)
-              _sync('settings', 'save', { id: 'locationStatuses', data: _data.settings.locationStatuses });
+            if (droppedUnknown)            _sync('settings', 'save', { id: 'attitudes',        data: _data.settings.attitudes });
+            if (locStatus.settingsTouched) _sync('settings', 'save', { id: 'locationStatuses', data: _data.settings.locationStatuses });
+            if (pinSize.pinTypesTouched)   _sync('settings', 'save', { id: 'pinTypes',         data: _data.settings.pinTypes });
           }
+          for (const l of pinSize.touchedLocations)   _sync('locations', 'save', l);
           for (const l of locStatus.touchedLocations) _sync('locations', 'save', l);
           _reindex();
           return;
@@ -1179,14 +1220,16 @@ export const Store = (() => {
     init(); return _idxMysteriesByChar.get(charId) || [];
   }
   // Legacy alias — pin metadata now lives directly on the Location.
+  // Returns a stripped-down view for any external caller; map.js's
+  // own renderer reads the location record directly.
   function getPinForLocation(locId) {
     init();
     const l = _data.locations.find(x => x.id === locId);
     if (!l || typeof l.x !== 'number' || typeof l.y !== 'number') return null;
     return {
       id: l.id, name: l.name, x: l.x, y: l.y,
-      type: l.pinType, status: l.mapStatus,
-      priority: l.priority, locationId: l.id,
+      type: l.pinType, attitudes: l.attitudes || [],
+      size: l.size, locationId: l.id,
       notes: l.mapNotes || '',
     };
   }

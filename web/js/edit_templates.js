@@ -1,5 +1,5 @@
 import { Store } from './store.js';
-import { PIN_TYPES } from './map.js';
+import { PIN_TYPES, PIN_SIZE_MIN, PIN_SIZE_MAX } from './map.js';
 import { REL_TYPES } from './data.js';
 import { esc, dataAction, dataOn } from './utils.js';
 
@@ -456,6 +456,13 @@ export const EditTemplates = (() => {
             <div class="edit-field">
               <label class="edit-label">Pin na mapě</label>
               ${mapControls}
+            </div>
+            <div class="edit-field">
+              <label class="edit-label">Velikost značky <span class="edit-hint" style="font-weight:normal;margin-left:0.5rem">— prázdné = výchozí podle typu místa (${PIN_SIZE_MIN}–${PIN_SIZE_MAX} px)</span></label>
+              <input class="edit-input" type="number" id="lf-size-${uid}"
+                min="${PIN_SIZE_MIN}" max="${PIN_SIZE_MAX}" step="2"
+                value="${typeof l.size === 'number' ? l.size : ''}"
+                placeholder="(výchozí podle typu)">
             </div>
             <div class="edit-field">
               <label class="edit-label">Rodičovské místo (volitelné — pro dílčí mapy)</label>

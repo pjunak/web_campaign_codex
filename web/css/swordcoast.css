@@ -77,21 +77,45 @@
   border-color: rgba(212,184,122,0.25) !important;
 }
 
-/* Pin icon — solid affiliation fill + universal rim + drop shadow */
+/* Pin icon — bare emoji glyph with attitude glow + a multi-direction
+   text-shadow stroke baked into the inline style for legibility on
+   any tile. The solid-fill plate + 1px rim were retired together
+   with the priority system; attitudes show through `filter:
+   drop-shadow(...)` on the inline style. */
 .sc-pin {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
-  /* 1px dark rim separates pin from any map color; soft shadow lifts it */
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.55);
+  transition: transform 0.15s;
+  line-height: 1;
 }
 .sc-pin:hover {
   transform: scale(1.25);
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.7);
   z-index: 1000;
+}
+
+/* Pin form — paired range + number input for marker size. */
+.sc-pin-size-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+.sc-pin-size-row input[type="range"] {
+  flex: 1;
+  min-width: 100px;
+  accent-color: var(--accent-gold);
+}
+.sc-pin-size-row input[type="number"] {
+  width: 5rem;
+  padding: 0.25rem 0.4rem;
+  background: var(--bg-raised);
+  color: var(--text-parchment);
+  border: 1px solid rgba(212,184,122,0.25);
+  border-radius: 4px;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Side panel */

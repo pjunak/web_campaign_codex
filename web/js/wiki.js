@@ -900,12 +900,14 @@ export const Wiki = (() => {
       return `<div class="loc-grid"><div class="list-empty">Žádné místo neodpovídá hledání.</div>${newCard}</div>`;
     }
 
-    // Group by pinType when the default grouped-sort is active. pinTypes
-    // settings carry a `priority` (1-3) so major cities head the page,
-    // smaller settlements/wild places follow, then an "Ostatní" bucket.
+    // Group by pinType when the default grouped-sort is active.
+    // Group order follows the pinType's default `size` (bigger first
+    // = more prominent place types head the page), with an "Ostatní"
+    // bucket pinned to the end. Falls back to PIN_TYPES constant when
+    // settings hasn't been edited.
     if (s.sort === 'type') {
       const pinEnum = Store.getEnum('pinTypes') || [];
-      const prioMap = new Map(pinEnum.map(p => [p.id, Number(p.priority) || 3]));
+      const sizeMap = new Map(pinEnum.map(p => [p.id, Number(p.size) || 0]));
       const byType = new Map();
       for (const l of locs) {
         const k = l.pinType || '__other__';
@@ -916,9 +918,9 @@ export const Wiki = (() => {
       keys.sort((a, b) => {
         if (a === '__other__') return 1;
         if (b === '__other__') return -1;
-        const pa = prioMap.get(a) ?? 3;
-        const pb = prioMap.get(b) ?? 3;
-        if (pa !== pb) return pa - pb;
+        const sa = sizeMap.get(a) ?? (PIN_TYPES[a]?.size ?? 28);
+        const sb = sizeMap.get(b) ?? (PIN_TYPES[b]?.size ?? 28);
+        if (sa !== sb) return sb - sa;  // bigger size first
         const la = (PIN_TYPES[a]?.label) || a;
         const lb = (PIN_TYPES[b]?.label) || b;
         return _czCompare(la, lb);

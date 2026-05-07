@@ -15,15 +15,16 @@ import { SIDEBAR_PAGES } from './constants.js';
 export const Settings = (() => {
 
   // Shape of each category: which fields to expose in the editor form.
-  // `priority` is only meaningful for pinTypes. `icon` / `color` are
-  // shown as side-by-side inputs when declared.
+  // `size` is only meaningful for pinTypes (default px size for new
+  // places of that type). `icon` / `color` are shown as side-by-side
+  // inputs when declared.
   const CATEGORIES = [
     { id: 'relationshipTypes', label: 'Vazby mezi postavami', icon: '🔗',
       fields: ['label', 'color', 'style'] },
     { id: 'genders',           label: 'Pohlaví',              icon: '⚥',
       fields: ['label'] },
     { id: 'pinTypes',          label: 'Typy míst',             icon: '📍',
-      fields: ['label', 'icon', 'color', 'priority'] },
+      fields: ['label', 'icon', 'color', 'size'] },
     { id: 'characterStatuses', label: 'Stavy postav',          icon: '●',
       fields: ['label', 'icon', 'color'] },
     { id: 'locationStatuses',  label: 'Stavy míst',            icon: '🏚',
@@ -104,7 +105,7 @@ export const Settings = (() => {
     const items = Store.getEnum(_activeCat);
     const rows = items.map(it => _rowHtml(cat, it)).join('');
     const addForm = _editingId === '__new__'
-      ? _formHtml(cat, { id:'', label:'', color:'#888', icon:'', priority:3, style:'solid' }, true)
+      ? _formHtml(cat, { id:'', label:'', color:'#888', icon:'', size:28, style:'solid' }, true)
       : '';
     return `
       <div class="settings-editor-head">
@@ -174,18 +175,18 @@ export const Settings = (() => {
             `<option value="${s}" ${item.style===s?'selected':''}>${s}</option>`).join('')}
         </select>
       </label>`;
-    const priorityField = () => `
+    const sizeField = () => `
       <label class="settings-field">
-        <span class="settings-field-label">Priorita (1 vždy, 3 detail)</span>
-        <select class="edit-select" id="sf-${uid}-priority">
-          ${[1,2,3].map(n => `<option value="${n}" ${Number(item.priority)===n?'selected':''}>${n}</option>`).join('')}
-        </select>
+        <span class="settings-field-label">Výchozí velikost (px)</span>
+        <input class="edit-input" type="number" id="sf-${uid}-size"
+          min="14" max="64" step="2"
+          value="${Number(item.size) || 28}">
       </label>`;
 
     const inputs = (cat.fields || []).map(name => {
       if (name === 'color' || name === 'bg' || name === 'fg' || name === 'labelColor') return colorField(name);
       if (name === 'style')                                                            return styleField();
-      if (name === 'priority')                                                         return priorityField();
+      if (name === 'size')                                                             return sizeField();
       return field(name, name === 'icon' ? 'Emoji nebo znak' : 'Text');
     }).join('');
 
@@ -215,7 +216,7 @@ export const Settings = (() => {
   function _fieldLabel(name) {
     return {
       label: 'Název', icon: 'Ikona', color: 'Barva',
-      style: 'Styl', priority: 'Priorita',
+      style: 'Styl', size: 'Velikost',
       bg: 'Pozadí', fg: 'Popředí', labelColor: 'Barva textu',
     }[name] || name;
   }
@@ -269,7 +270,7 @@ export const Settings = (() => {
     for (const f of cat.fields) {
       const v = getVal(f);
       if (v !== '' && v != null) {
-        item[f] = (f === 'priority') ? Number(v) : v;
+        item[f] = (f === 'size') ? Number(v) : v;
       }
     }
     Store.saveEnumItem(_activeCat, item);

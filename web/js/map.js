@@ -3,36 +3,46 @@ import { Widgets } from './widgets/widgets.js';
 import { EditTemplates } from './edit_templates.js';
 import { esc, dataAction, dataOn } from './utils.js';
 
+// `size` is the default marker pixel size for new places of this
+// type. Kept in sync with SETTINGS_DEFAULTS.pinTypes in data.js so
+// that fresh-installs match what the settings editor shows. The
+// runtime size lookup prefers `Store.getEnumValue('pinTypes', id)`
+// (user-editable) and falls back to this constant.
 export const PIN_TYPES = {
-  major_city:  { icon: '🏙',  label: 'Velké město',  color: '#D4A017' },
-  city:        { icon: '🏛',  label: 'Město',         color: '#C0A060' },
-  town:        { icon: '🏘',  label: 'Městečko',      color: '#A0B080' },
-  village:     { icon: '🏠',  label: 'Vesnice',       color: '#80A070' },
-  fortress:    { icon: '🏰',  label: 'Pevnost',       color: '#9090A0' },
-  castle:      { icon: '🏯',  label: 'Hrad',          color: '#9A9AA8' },
-  tower:       { icon: '🗼',  label: 'Věž',           color: '#A8A098' },
-  temple:      { icon: '🛕',  label: 'Chrám',         color: '#C0A088' },
-  shrine:      { icon: '⛩',  label: 'Svatyně',       color: '#80A0B0' },
-  tavern:      { icon: '🍺',  label: 'Hospoda',       color: '#C89050' },
-  market:      { icon: '🏪',  label: 'Trh',           color: '#C8A050' },
-  academy:     { icon: '🎓',  label: 'Akademie',      color: '#A890C0' },
-  port:        { icon: '⚓',  label: 'Přístav',       color: '#6090A0' },
-  bridge:      { icon: '🌉',  label: 'Most',          color: '#909090' },
-  camp:        { icon: '⛺',  label: 'Tábor',         color: '#B88040' },
-  dungeon:     { icon: '⚠',   label: 'Dungeon',       color: '#A06040' },
-  cave:        { icon: '🕳',  label: 'Jeskyně',       color: '#706050' },
-  ruin:        { icon: '🏚',  label: 'Ruina',         color: '#888070' },
-  graveyard:   { icon: '🪦',  label: 'Hřbitov',       color: '#808080' },
-  battlefield: { icon: '⚔',   label: 'Bojiště',       color: '#A04040' },
-  landmark:    { icon: '🗿',  label: 'Bod zájmu',     color: '#80A0B0' },
-  forest:      { icon: '🌲',  label: 'Les',           color: '#4A7A4A' },
-  mountain:    { icon: '⛰',   label: 'Hora',          color: '#8A7A6A' },
-  lake:        { icon: '🏞',  label: 'Jezero',        color: '#5A90B0' },
-  curiosity:   { icon: '✨',  label: 'Zajímavost',    color: '#C8A040' },
-  region:      { icon: '🗺',  label: 'Oblast',        color: '#708090' },
-  enemy:       { icon: '💀',  label: 'Nepřátelské',   color: '#B04040' },
-  custom:      { icon: '📌',  label: 'Vlastní',       color: '#8A5CC8' },
+  major_city:  { icon: '🏙',  label: 'Velké město',  color: '#D4A017', size: 38 },
+  city:        { icon: '🏛',  label: 'Město',         color: '#C0A060', size: 32 },
+  town:        { icon: '🏘',  label: 'Městečko',      color: '#A0B080', size: 28 },
+  village:     { icon: '🏠',  label: 'Vesnice',       color: '#80A070', size: 26 },
+  fortress:    { icon: '🏰',  label: 'Pevnost',       color: '#9090A0', size: 36 },
+  castle:      { icon: '🏯',  label: 'Hrad',          color: '#9A9AA8', size: 36 },
+  tower:       { icon: '🗼',  label: 'Věž',           color: '#A8A098', size: 26 },
+  temple:      { icon: '🛕',  label: 'Chrám',         color: '#C0A088', size: 28 },
+  shrine:      { icon: '⛩',  label: 'Svatyně',       color: '#80A0B0', size: 26 },
+  tavern:      { icon: '🍺',  label: 'Hospoda',       color: '#C89050', size: 24 },
+  market:      { icon: '🏪',  label: 'Trh',           color: '#C8A050', size: 24 },
+  academy:     { icon: '🎓',  label: 'Akademie',      color: '#A890C0', size: 30 },
+  port:        { icon: '⚓',  label: 'Přístav',       color: '#6090A0', size: 30 },
+  bridge:      { icon: '🌉',  label: 'Most',          color: '#909090', size: 24 },
+  camp:        { icon: '⛺',  label: 'Tábor',         color: '#B88040', size: 24 },
+  dungeon:     { icon: '⚠',   label: 'Dungeon',       color: '#A06040', size: 28 },
+  cave:        { icon: '🕳',  label: 'Jeskyně',       color: '#706050', size: 24 },
+  ruin:        { icon: '🏚',  label: 'Ruina',         color: '#888070', size: 26 },
+  graveyard:   { icon: '🪦',  label: 'Hřbitov',       color: '#808080', size: 24 },
+  battlefield: { icon: '⚔',   label: 'Bojiště',       color: '#A04040', size: 28 },
+  landmark:    { icon: '🗿',  label: 'Bod zájmu',     color: '#80A0B0', size: 26 },
+  forest:      { icon: '🌲',  label: 'Les',           color: '#4A7A4A', size: 26 },
+  mountain:    { icon: '⛰',   label: 'Hora',          color: '#8A7A6A', size: 30 },
+  lake:        { icon: '🏞',  label: 'Jezero',        color: '#5A90B0', size: 28 },
+  curiosity:   { icon: '✨',  label: 'Zajímavost',    color: '#C8A040', size: 24 },
+  region:      { icon: '🗺',  label: 'Oblast',        color: '#708090', size: 32 },
+  enemy:       { icon: '💀',  label: 'Nepřátelské',   color: '#B04040', size: 28 },
+  custom:      { icon: '📌',  label: 'Vlastní',       color: '#8A5CC8', size: 26 },
 };
+
+// Marker size bounds used by inputs and the size-resolver below.
+export const PIN_SIZE_MIN = 14;
+export const PIN_SIZE_MAX = 64;
+export const PIN_SIZE_DEFAULT = 28;
 
 export const WorldMap = (() => {
 
@@ -70,27 +80,32 @@ export const WorldMap = (() => {
     return map;
   }
 
-  // ── Pin priority (1 = always visible, 3 = needs high zoom) ────
-  // Derive from pin.priority if set, else infer from pin.type so existing
-  // data needs no migration.
-  const PRIORITY_BY_TYPE = {
-    major_city: 1, fortress: 1, castle: 1,
-    city: 2, town: 2, region: 2, port: 2, academy: 2,
-    village: 3, dungeon: 3, landmark: 3, shrine: 3, temple: 3, ruin: 3,
-    camp: 3, curiosity: 3, enemy: 3, custom: 3, tower: 3, tavern: 3,
-    market: 3, cave: 3, graveyard: 3, battlefield: 3, forest: 3,
-    mountain: 3, lake: 3, bridge: 3,
-  };
-  function _priorityOf(pin) {
-    if (pin.priority === 1 || pin.priority === 2 || pin.priority === 3) return pin.priority;
-    return PRIORITY_BY_TYPE[pin.type] || 3;
-  }
-  // Returns the highest priority value visible at this zoom level.
-  // Higher zoom = more pins. Calibrated for the typical fit zoom near -3.
-  function _thresholdForZoom(z) {
-    if (z <= -4) return 1;
-    if (z <= -2) return 2;
-    return 3;
+  // ── Marker size resolver ──────────────────────────────────────
+  // Per-pin override wins; otherwise the user-edited pinTypes
+  // settings entry; otherwise the constant default in PIN_TYPES;
+  // finally a global PIN_SIZE_DEFAULT. Clamped to [PIN_SIZE_MIN,
+  // PIN_SIZE_MAX] so a stale settings value can't blow up the map.
+  //
+  // TODO (future): per-Pohled visibility rules. The legacy
+  // `priority` field used to gate pin visibility by zoom level — that
+  // got dropped in favour of an upcoming system where each Pohled
+  // (map view preset) can carry rules like "hide pins of type X" or
+  // "only show pins with attitude Y". When that lands, plug it in
+  // here / `_pinsForCurrent` rather than re-introducing priority.
+  function _resolvePinSize(pin) {
+    if (typeof pin.size === 'number' && pin.size > 0) {
+      return Math.max(PIN_SIZE_MIN, Math.min(PIN_SIZE_MAX, pin.size));
+    }
+    const fromSettings = (Store.getEnum && Store.getEnum('pinTypes') || [])
+      .find(p => p.id === pin.type);
+    if (fromSettings && typeof fromSettings.size === 'number' && fromSettings.size > 0) {
+      return Math.max(PIN_SIZE_MIN, Math.min(PIN_SIZE_MAX, fromSettings.size));
+    }
+    const fromConst = PIN_TYPES[pin.type];
+    if (fromConst && typeof fromConst.size === 'number' && fromConst.size > 0) {
+      return fromConst.size;
+    }
+    return PIN_SIZE_DEFAULT;
   }
 
   let _map       = null;
@@ -108,7 +123,6 @@ export const WorldMap = (() => {
   // the event (mapX/mapY + mapParentId) so sessions can be pinned to the
   // map even when the party didn't visit a named Location.
   let _placeForEventId = null;
-  let _hiddenCount = 0;  // tracked by _applyPinVisibility for the legend
   let _modeObserver    = null;
   let _resizeObserver  = null;
   let _eventPathsVisible = false;
@@ -145,7 +159,9 @@ export const WorldMap = (() => {
       // at pin size. The side-panel form exposes the full array.
       status:     firstId,
       attitudes,
-      priority:   l.priority,
+      // Per-pin size override (px); _resolvePinSize falls back to
+      // settings.pinTypes[type].size when this is missing.
+      size:       (typeof l.size === 'number' && l.size > 0) ? l.size : undefined,
       notes:      l.mapNotes || '',
       parentId:   l.parentId || null,
     };
@@ -381,12 +397,8 @@ export const WorldMap = (() => {
   function _wirePostInit(container) {
     _markers = {};
     _pinsForCurrent().forEach(_placePin);
-    _applyPinVisibility();
 
-    _map.on('zoomend', () => {
-      _applyPinVisibility();
-      _renderLegend();
-    });
+    _map.on('zoomend', () => { _renderLegend(); });
 
     _map.on('click', evt => {
       if (!_addMode) return;
@@ -435,9 +447,6 @@ export const WorldMap = (() => {
       Object.values(_markers).forEach(m => {
         if (m.dragging) editable ? m.dragging.enable() : m.dragging.disable();
       });
-      // In edit mode, hidden pins fade in (so DM can still drag/edit);
-      // out of edit mode, they hide outright. Re-apply on mode change.
-      _applyPinVisibility();
       _renderLegend();
     });
     _modeObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
@@ -500,30 +509,35 @@ export const WorldMap = (() => {
   }
 
   function _pinIcon(pin) {
-    const pt       = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
-    const statuses = _pinStatuses();
-    const ps       = statuses[pin.status] || statuses.unknown;
-    const size = pin.type === 'major_city' ? 28 : 22;
-    // The `party` attitude uses a parchment fill — switch to a light
-    // emoji shadow so the icon stays readable on the bright background.
-    const lightBg    = pin.status === 'party';
-    const textShadow = lightBg
-      ? '0 0 2px rgba(255,255,255,0.9)'
-      : '0 0 2px rgba(0,0,0,0.65)';
+    const pt   = PIN_TYPES[pin.type]  || PIN_TYPES.custom;
+    const size = _resolvePinSize(pin);
+    // 1px multi-direction dark stroke + soft halo so the bare emoji
+    // stays legible on any tile colour. Replaces the old "solid pin
+    // fill" approach — attitudes show via the colored drop-shadow
+    // glow below; pins without attitudes have no glow at all (per
+    // the convention that "no stance set" = "not yet meaningful").
+    const textShadow = [
+      '-1px 0 0 rgba(0,0,0,0.75)',
+      '1px 0 0 rgba(0,0,0,0.75)',
+      '0 -1px 0 rgba(0,0,0,0.75)',
+      '0 1px 0 rgba(0,0,0,0.75)',
+      '0 0 4px rgba(0,0,0,0.55)',
+    ].join(', ');
     // Glow halo — one colored drop-shadow per active attitude, blended
     // additively. Empty array = no filter (no glow).
-    const glow = _attitudeGlowFilter(pin.attitudes || [], 5);
+    const glow = _attitudeGlowFilter(pin.attitudes || [], Math.max(4, Math.round(size * 0.18)));
     const filterAttr = glow ? `filter:${glow};` : '';
+    // Slightly larger emoji-to-box ratio (was 0.55) since there's no
+    // background plate eating the vertical space anymore.
+    const fontPx = Math.round(size * 0.85);
     return L.divIcon({
       className: '',
       iconSize:  [size, size],
       iconAnchor:[size/2, size/2],
       html: `<div class="sc-pin sc-pin-${pin.status}" style="
         width:${size}px;height:${size}px;
-        background:${ps.bg};
-        color:${ps.fg};
         text-shadow:${textShadow};
-        font-size:${size*0.55}px;
+        font-size:${fontPx}px;
         ${filterAttr}
       " title="${esc(pin.name)}">${pt.icon}</div>`,
     });
@@ -555,40 +569,11 @@ export const WorldMap = (() => {
     if (!pin) return;
     if (_markers[pinId]) { _markers[pinId].remove(); delete _markers[pinId]; }
     _placePin(pin);
-    _applyPinVisibility();
   }
 
-  // ── Importance-based visibility ────────────────────────────────
-  // Hide markers above the current zoom's priority threshold. In edit
-  // mode, fade them instead so the DM can still see, drag and edit them.
-  function _applyPinVisibility() {
-    if (!_map) return;
-    const z         = _map.getZoom();
-    const threshold = _thresholdForZoom(z);
-    const editable  = document.body.classList.contains('edit-mode');
-    const pinsById  = Object.fromEntries(_pinsForCurrent().map(p => [p.id, p]));
-    let hidden = 0;
-    for (const [id, marker] of Object.entries(_markers)) {
-      const pin = pinsById[id];
-      if (!pin) continue;
-      const tooLowPriority = _priorityOf(pin) > threshold;
-      const el = marker.getElement?.();
-      if (tooLowPriority) hidden++;
-      if (editable) {
-        // Always on map, fade if hidden by zoom
-        if (el) el.style.opacity = tooLowPriority ? '0.35' : '1';
-        if (el) el.style.pointerEvents = tooLowPriority ? 'none' : '';
-      } else {
-        // Truly hide off-priority markers
-        if (el) {
-          el.style.opacity = '1';
-          el.style.pointerEvents = '';
-          el.style.display = tooLowPriority ? 'none' : '';
-        }
-      }
-    }
-    _hiddenCount = hidden;
-  }
+  // (`_applyPinVisibility`/`_priorityOf`/`_thresholdForZoom` were
+  // removed when the legacy priority field was retired. Per-Pohled
+  // visibility rules will replace that gating in a future iteration.)
 
   // ── Preset zoom buttons ────────────────────────────────────────
   function zoomFitAll() {
@@ -771,12 +756,12 @@ export const WorldMap = (() => {
       ? pin.attitudes
       : (pin.status ? [{ id: pin.status, strength: 1.0 }] : []);
     const attChipRowHtml = EditTemplates.attitudeChipRow('spf-attitudes', pinAttEntries);
-    const currentPri = _priorityOf(pin);
-    const priLabels  = { 1: '1 — Vždy viditelné', 2: '2 — Střední zoom', 3: '3 — Detailní zoom' };
-    const priOpts = [1, 2, 3].map(p =>
-      `<label class="sc-pri-opt">
-        <input type="radio" name="spf-priority" value="${p}" ${currentPri===p?'checked':''}> ${priLabels[p]}
-      </label>`).join('');
+    // Marker pixel size — defaults to the pin type's size from
+    // settings, overridable per-place. Number input + range slider
+    // pair; both `oninput` write into each other so the readout
+    // stays in sync without a dedicated handler.
+    const currentSize  = _resolvePinSize(pin);
+    const inheritsSize = !(typeof pin.size === 'number' && pin.size > 0);
 
     // For NEW pins on the world map: optional Combobox to drop an EXISTING
     // location onto the map (sets x/y on it). Otherwise a fresh place is
@@ -801,8 +786,14 @@ export const WorldMap = (() => {
         <select class="sc-input" id="spf-type">${typeOpts}</select>
         <label class="sc-label">Postoje k partě <span class="sc-hint">(víc postojů s nastavitelnou silou)</span></label>
         ${attChipRowHtml}
-        <label class="sc-label">Důležitost (priorita zobrazení)</label>
-        <div class="sc-pri-row" id="spf-priority">${priOpts}</div>
+        <label class="sc-label">Velikost značky <span class="sc-hint">${inheritsSize ? '(výchozí podle typu)' : '(vlastní)'}</span></label>
+        <div class="sc-pin-size-row">
+          <input type="range" id="spf-size-range" min="${PIN_SIZE_MIN}" max="${PIN_SIZE_MAX}" step="2" value="${currentSize}"
+            ${dataOn('input', 'WorldMap.syncSizeFromRange')}>
+          <input type="number" id="spf-size" min="${PIN_SIZE_MIN}" max="${PIN_SIZE_MAX}" step="2" value="${currentSize}"
+            ${dataOn('input', 'WorldMap.syncSizeFromNumber')}>
+          <span class="sc-hint">px</span>
+        </div>
         <label class="sc-label">Popis / Poznámky na mapě</label>
         <textarea class="sc-input" id="spf-notes" rows="3" placeholder="Krátký popis...">${esc(pin.notes||'')}</textarea>
         <div class="sc-pin-actions">
@@ -821,13 +812,16 @@ export const WorldMap = (() => {
   function savePin(isNew, x, y) {
     const name = document.getElementById('spf-name')?.value.trim();
     if (!name) { alert('Název je povinný.'); return; }
-    const priRaw = document.querySelector('#spf-priority input[name="spf-priority"]:checked')?.value;
-    const priority = priRaw ? parseInt(priRaw, 10) : undefined;
     const pinType  = document.getElementById('spf-type')?.value   || 'custom';
     const mapNotes = document.getElementById('spf-notes')?.value  || '';
     // Multi-attitude with per-attitude strength sliders. Empty array
     // = no stance set, pin renders with no glow halo.
     const attitudes = EditTemplates.readAttitudeChipRow('spf-attitudes');
+    // Marker size — only persist when it actually differs from the
+    // pin type's default, so changing the type's default later still
+    // moves places that were never explicitly customised.
+    const sizeRaw = document.getElementById('spf-size')?.value;
+    const sizeNum = sizeRaw === '' || sizeRaw == null ? null : parseInt(sizeRaw, 10);
 
     let loc = null;
     if (isNew) {
@@ -847,14 +841,40 @@ export const WorldMap = (() => {
     loc.pinType    = pinType;
     loc.attitudes  = attitudes;
     loc.mapNotes   = mapNotes;
-    if (priority === 1 || priority === 2 || priority === 3) loc.priority = priority;
-    else delete loc.priority;
+    // Decide whether to write a per-place size override.
+    const typeDefault = (Store.getEnumValue('pinTypes', pinType) || {}).size
+      || (PIN_TYPES[pinType] && PIN_TYPES[pinType].size)
+      || PIN_SIZE_DEFAULT;
+    if (Number.isFinite(sizeNum) && sizeNum >= PIN_SIZE_MIN && sizeNum <= PIN_SIZE_MAX
+        && sizeNum !== typeDefault) {
+      loc.size = sizeNum;
+    } else {
+      delete loc.size;  // matches the type default → live fallback
+    }
     // Drop any legacy mapStatus so old data doesn't shadow the new
     // attitudes[] field once this location is saved.
     delete loc.mapStatus;
     Store.saveLocation(loc);
     _refreshPin(loc.id);
     _openPinPanel(loc.id);
+  }
+
+  // Slider ↔ number-input mirrors for the pin form's size control.
+  // Each writes to the other so the visible value stays in sync.
+  function syncSizeFromRange() {
+    const r = document.getElementById('spf-size-range');
+    const n = document.getElementById('spf-size');
+    if (r && n) n.value = r.value;
+  }
+  function syncSizeFromNumber() {
+    const n = document.getElementById('spf-size');
+    const r = document.getElementById('spf-size-range');
+    if (!n || !r) return;
+    let v = parseInt(n.value, 10);
+    if (!Number.isFinite(v)) return;
+    if (v < PIN_SIZE_MIN) v = PIN_SIZE_MIN;
+    if (v > PIN_SIZE_MAX) v = PIN_SIZE_MAX;
+    r.value = v;
   }
 
   function openPinPanel(pinId) { _openPinPanel(pinId); }
@@ -868,7 +888,7 @@ export const WorldMap = (() => {
     if (!confirm(`Odebrat „${loc.name}" z mapy?\n(Stránka místa zůstane zachována.)`)) return;
     const cleaned = { ...loc };
     delete cleaned.x; delete cleaned.y;
-    delete cleaned.priority;
+    delete cleaned.size;
     delete cleaned.pinType; delete cleaned.mapStatus; delete cleaned.mapNotes;
     // Attitudes describe the place itself, not its pin presence, so they
     // survive an "unplace" action — keep them in the Location record.
@@ -1113,19 +1133,11 @@ export const WorldMap = (() => {
   function _renderLegend() {
     const leg = document.getElementById('sc-legend');
     if (!leg) return;
-    const z         = _map ? _map.getZoom() : null;
-    const threshold = z !== null ? _thresholdForZoom(z) : 3;
-    const priText   = threshold === 1 ? 'priorita 1' : threshold === 2 ? 'priorita 1–2' : 'všechny priority';
-    const hint = _hiddenCount > 0
-      ? `<div class="legend-hint">${_hiddenCount} skryto · přibliž pro více míst</div>`
-      : '';
     leg.innerHTML = `
-      <div class="legend-title">Zoom: ${priText}</div>
-      ${hint}
-      <div class="legend-title" style="margin-top:0.6rem">Postoj k partě</div>
+      <div class="legend-title">Postoj k partě</div>
       ${(Store.getEnum('attitudes') || []).map(v =>
         `<div class="legend-item">
-          <div class="legend-dot" style="background:${v.bg};box-shadow:0 0 0 1px rgba(0,0,0,0.4)"></div>
+          <div class="legend-dot" style="background:${v.labelColor || v.bg};box-shadow:0 0 0 1px rgba(0,0,0,0.4)"></div>
           ${v.label}
         </div>`
       ).join('')}
@@ -1262,6 +1274,7 @@ export const WorldMap = (() => {
     toggleAddMode, closePanel,
     toggleEventPaths,
     openPinPanel, savePin, deletePin,
+    syncSizeFromRange, syncSizeFromNumber,
     showSettings, closeSettings, applySettings, handleMapFileUpload,
     zoomFitAll,
     applyMapView, captureCurrentView, refreshPresetButtons: _refreshPresetButtons,
