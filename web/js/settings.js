@@ -763,60 +763,162 @@ export const Settings = (() => {
   // ── Maps panel ───────────────────────────────────────────────
   // The "Mapy" tab covers both image upload AND per-map config
   // (zoom-scale ratio for now; future per-map knobs would go here).
-  // Top selector picks which map you're editing — 🌐 world or 🗺
-  // any location with a `localMap`. The selected map's panel shows
-  // the current image, an upload button (POSTs to /api/worldmap or
-  // /api/localmap/<locId>), and the config sliders.
-  function _mapsList() {
-    const out = [{
-      id:    'world',
-      label: 'Mapa světa',
-      icon:  '🌐',
-      isWorld: true,
-      imgUrl: '/maps/swordcoast/sword_coast.jpg',
-    }];
-    const locs = (Store.getLocations() || []).filter(l => l && l.localMap);
-    locs.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'cs'));
-    for (const l of locs) {
-      out.push({
-        id:        `local-${l.id}`,
-        locationId: l.id,
-        label:     l.name || l.id,
-        icon:      '🗺',
-        isWorld:   false,
-        imgUrl:    l.localMap,
-      });
+  // Left side renders an explorer-style tree mirroring the location
+  // hierarchy (world root + every location with a `localMap`,
+  // nested under its nearest mapped ancestor). Right side shows
+  // the selected map's preview / upload / settings.
+  //
+  // Locations without a `localMap` aren't in the tree — they appear
+  // there only when a *descendant* has one, in which case they show
+  // up as faint, non-clickable rungs so the lineage is still
+  // visible.
+
+  // Resolve a mapId ('world' or 'local-${locId}') to the same
+  // shape the panel expects: { id, label, icon, isWorld, locationId,
+  // imgUrl }. Returns the world map for unknown ids so the panel
+  // never renders a broken state.
+  function _findMap(mapId) {
+    if (!mapId || mapId === 'world') {
+      return {
+        id: 'world',
+        label: 'Mapa světa',
+        icon: '🌐',
+        isWorld: true,
+        imgUrl: '/maps/swordcoast/sword_coast.jpg',
+      };
     }
-    return out;
+    if (typeof mapId === 'string' && mapId.startsWith('local-')) {
+      const locId = mapId.slice('local-'.length);
+      const loc = Store.getLocation(locId);
+      if (loc) {
+        return {
+          id: mapId,
+          label: loc.name || loc.id,
+          icon: '🗺',
+          isWorld: false,
+          locationId: locId,
+          imgUrl: loc.localMap || '',
+        };
+      }
+    }
+    return _findMap('world');
+  }
+
+  // Build the maps tree. Returns the world root with `children`
+  // populated recursively. Each child is `{ id, label, icon,
+  // locationId, imgUrl, children, ghosts }` where `ghosts` is the
+  // optional list of intermediate ancestor names between this node
+  // and its tree-parent (rendered as a faint breadcrumb so the
+  // lineage stays readable when the user has, e.g., a localMap on
+  // a great-grandchild but nothing in between).
+  function _mapsTree() {
+    const allLocs = Store.getLocations() || [];
+    const byId    = new Map(allLocs.map(l => [l.id, l]));
+    const mapped  = allLocs.filter(l => l && l.localMap);
+
+    // Nearest ancestor with localMap, walking parentId. Returns
+    // `{ ancestor, ghosts }` — `ancestor` is the location (or null
+    // for the world root) and `ghosts` is the list of intermediate
+    // location names skipped.
+    function nearestMapped(loc) {
+      const ghosts = [];
+      const seen = new Set();
+      let cur = loc;
+      while (cur.parentId && !seen.has(cur.parentId)) {
+        seen.add(cur.parentId);
+        const parent = byId.get(cur.parentId);
+        if (!parent) break;
+        if (parent.localMap) return { ancestor: parent, ghosts };
+        ghosts.unshift(parent.name || parent.id);
+        cur = parent;
+      }
+      return { ancestor: null, ghosts };
+    }
+
+    // Group mapped locations by their tree-parent key.
+    const childrenOf = new Map();   // key: 'world' | locId, value: [{loc, ghosts}]
+    childrenOf.set('world', []);
+    for (const loc of mapped) {
+      const { ancestor, ghosts } = nearestMapped(loc);
+      const key = ancestor ? ancestor.id : 'world';
+      if (!childrenOf.has(key)) childrenOf.set(key, []);
+      childrenOf.get(key).push({ loc, ghosts });
+    }
+    // Sort each level alphabetically (Czech collation) for a stable
+    // visual order regardless of save order.
+    for (const arr of childrenOf.values()) {
+      arr.sort((a, b) => (a.loc.name || '').localeCompare(b.loc.name || '', 'cs'));
+    }
+
+    function buildNode(loc, ghosts) {
+      return {
+        id:         `local-${loc.id}`,
+        label:      loc.name || loc.id,
+        icon:       '🗺',
+        locationId: loc.id,
+        imgUrl:     loc.localMap,
+        ghosts,
+        children:   (childrenOf.get(loc.id) || []).map(({ loc: c, ghosts: g }) => buildNode(c, g)),
+      };
+    }
+
+    return {
+      id:       'world',
+      label:    'Mapa světa',
+      icon:     '🌐',
+      isWorld:  true,
+      imgUrl:   '/maps/swordcoast/sword_coast.jpg',
+      children: (childrenOf.get('world') || []).map(({ loc, ghosts }) => buildNode(loc, ghosts)),
+    };
+  }
+
+  function _renderMapNode(node, depth, isLast) {
+    const isActive = node.id === _activeMapId;
+    const indent   = depth * 16;
+    const ghostHtml = (node.ghosts && node.ghosts.length)
+      ? `<span class="settings-map-node-ghost" title="Předkové bez vlastní mapy">${node.ghosts.map(esc).join(' › ')} ›</span>`
+      : '';
+    const guide = depth > 0
+      ? `<span class="settings-map-node-guide">${isLast ? '└' : '├'}</span>`
+      : '';
+    const childRows = (node.children || []).map((c, i, arr) =>
+      _renderMapNode(c, depth + 1, i === arr.length - 1)
+    ).join('');
+    return `
+      <button type="button" class="settings-map-node ${isActive?'is-active':''}"
+        style="padding-left:${indent + 10}px"
+        ${dataAction('Settings.selectMap', node.id)}>
+        ${guide}
+        <span class="settings-map-node-icon">${node.icon}</span>
+        ${ghostHtml}
+        <span class="settings-map-node-label">${esc(node.label)}</span>
+      </button>${childRows}`;
   }
 
   function _worldmapHtml() {
-    const maps = _mapsList();
-    if (!maps.find(m => m.id === _activeMapId)) _activeMapId = 'world';
-    const current = maps.find(m => m.id === _activeMapId);
+    const tree = _mapsTree();
+    // If `_activeMapId` references a location that's been deleted or
+    // un-mapped, fall back to the world root so the panel doesn't
+    // render an empty state forever.
+    const flatIds = (function flatten(n) {
+      return [n.id, ...(n.children || []).flatMap(flatten)];
+    })(tree);
+    if (!flatIds.includes(_activeMapId)) _activeMapId = 'world';
+    const current = _findMap(_activeMapId);
 
-    const selector = maps.map(m => `
-      <button type="button" class="settings-map-tab ${m.id===_activeMapId?'is-active':''}"
-        ${dataAction('Settings.selectMap', m.id)}>
-        <span class="settings-map-tab-icon">${m.icon}</span>
-        <span class="settings-map-tab-label">${esc(m.label)}</span>
-      </button>`).join('');
+    const treeHtml = _renderMapNode(tree, 0, true);
 
     const cfg   = Store.getMapConfig(_activeMapId);
     const ratio = (typeof cfg.zoomScaleRatio === 'number') ? cfg.zoomScaleRatio : 0;
     const ratioPct = Math.round(ratio * 100);
 
-    const uploadAction = current.isWorld ? 'Settings.uploadWorldMap' : 'Settings.uploadSubMap';
-    const uploadHint = current.isWorld
+    const uploadAction  = current.isWorld ? 'Settings.uploadWorldMap' : 'Settings.uploadSubMap';
+    const uploadHint    = current.isWorld
       ? `Uloží se jako <code>/maps/swordcoast/sword_coast.&lt;ext&gt;</code> a server přegeneruje dlaždice na pozadí.`
       : `Uloží se jako <code>/maps/local/${esc(current.locationId)}/map.&lt;ext&gt;</code> a server přegeneruje dlaždice na pozadí.`;
-    const uploadDataset = current.isWorld
-      ? ''
-      : ` data-loc-id="${esc(current.locationId)}"`;
+    const uploadDataset = current.isWorld ? '' : ` data-loc-id="${esc(current.locationId)}"`;
 
-    const previewSrc = current.imgUrl
-      ? `${current.imgUrl}?v=${Date.now()}`
-      : '';
+    const previewSrc  = current.imgUrl ? `${current.imgUrl}?v=${Date.now()}` : '';
     const previewHtml = previewSrc
       ? `<div class="settings-worldmap-preview">
            <img src="${esc(previewSrc)}" alt="" ${dataOn('error', 'hide', '$el')}>
@@ -825,40 +927,53 @@ export const Settings = (() => {
            Tato mapa zatím nemá obrázek. Nahraj ho níže.
          </div>`;
 
+    const headerLabel = current.isWorld
+      ? `🌐 Mapa světa`
+      : `🗺 ${esc(current.label)}`;
+
     return `
       <div class="settings-editor-head">
         <h2>🗺 Mapy</h2>
       </div>
-      <div class="settings-panel">
-        <div class="settings-map-selector" role="tablist">${selector}</div>
-        <p class="settings-hint" style="margin-bottom:0.8rem">${uploadHint}</p>
-        ${previewHtml}
-        <label class="inline-create-btn" style="cursor:pointer;display:inline-block;margin-top:0.8rem">
-          📂 Vybrat soubor…
-          <input type="file" accept="image/*" style="display:none"${uploadDataset}
-                 ${dataOn('change', uploadAction, '$el')}>
-        </label>
-        <span class="settings-hint" style="margin-left:0.8rem">
-          Max 40 MB. Doporučený formát JPG/PNG/WebP, min. šířka 2000 px.
-        </span>
-
-        <hr style="border:none;border-top:1px dashed rgba(212,184,122,0.18);margin:1.2rem 0">
-
-        <div class="settings-mapviews-group-title">Nastavení této mapy</div>
-        <label class="settings-field" style="margin-top:0.6rem">
-          <span class="settings-field-label">Zoom-scale značek
-            <span class="settings-hint" style="font-weight:normal">
-              (0 = ikony mají vždy stejnou velikost; 1 = rostou stejně rychle jako mapa)
-            </span>
+      <div class="settings-maps-shell">
+        <aside class="settings-maps-tree" role="tree">
+          ${treeHtml}
+          <p class="settings-hint settings-maps-tree-hint">
+            Strom zrcadlí hierarchii míst — uvedené jsou pouze ta s nahranou mapou.
+            Pro přidání nové dílčí mapy otevři dané místo a nahraj obrázek v jeho editoru.
+          </p>
+        </aside>
+        <section class="settings-maps-detail">
+          <div class="settings-maps-detail-title">${headerLabel}</div>
+          <p class="settings-hint" style="margin-bottom:0.8rem">${uploadHint}</p>
+          ${previewHtml}
+          <label class="inline-create-btn" style="cursor:pointer;display:inline-block;margin-top:0.8rem">
+            📂 Vybrat soubor…
+            <input type="file" accept="image/*" style="display:none"${uploadDataset}
+                   ${dataOn('change', uploadAction, '$el')}>
+          </label>
+          <span class="settings-hint" style="margin-left:0.8rem">
+            Max 40 MB. Doporučený formát JPG/PNG/WebP, min. šířka 2000 px.
           </span>
-          <div class="settings-strength-row">
-            <input type="range" id="settings-mapconfig-zoomscale"
-              min="0" max="1" step="0.05" value="${ratio}"
-              ${dataOn('input', 'Settings.updateMapZoomRatioReadout', '$el')}
-              ${dataOn('change', 'Settings.commitMapZoomRatio', '$value')}>
-            <output id="settings-mapconfig-zoomscale-out">${ratioPct}%</output>
-          </div>
-        </label>
+
+          <hr style="border:none;border-top:1px dashed rgba(212,184,122,0.18);margin:1.2rem 0">
+
+          <div class="settings-mapviews-group-title">Nastavení této mapy</div>
+          <label class="settings-field" style="margin-top:0.6rem">
+            <span class="settings-field-label">Zoom-scale značek
+              <span class="settings-hint" style="font-weight:normal">
+                (0 = ikony mají vždy stejnou velikost; 1 = rostou stejně rychle jako mapa)
+              </span>
+            </span>
+            <div class="settings-strength-row">
+              <input type="range" id="settings-mapconfig-zoomscale"
+                min="0" max="1" step="0.05" value="${ratio}"
+                ${dataOn('input', 'Settings.updateMapZoomRatioReadout', '$el')}
+                ${dataOn('change', 'Settings.commitMapZoomRatio', '$value')}>
+              <output id="settings-mapconfig-zoomscale-out">${ratioPct}%</output>
+            </div>
+          </label>
+        </section>
       </div>`;
   }
 
@@ -878,16 +993,36 @@ export const Settings = (() => {
     out.textContent = `${Math.round((isFinite(v) ? v : 0) * 100)}%`;
   }
 
+  // Debounced commit. Each `change` on a range slider in some
+  // browsers / input devices fires more than once per drag, and each
+  // call would otherwise PATCH → server broadcast → SSE → re-render
+  // of the Settings page. The re-render replaces the slider DOM
+  // mid-interaction, which is what made the previous version feel
+  // broken when the user dragged. Coalesce into a single write
+  // 350 ms after the last change so the slider DOM stays stable
+  // during the gesture. Pin the captured target id at the moment
+  // commit fires so a switch to a different map mid-debounce
+  // doesn't write the value to the wrong key.
+  let _zoomCommitTimer = null;
+  let _zoomCommitTarget = null;
   function commitMapZoomRatio(value) {
     let n = parseFloat(value);
     if (!isFinite(n)) n = 0;
     if (n < 0) n = 0;
     if (n > 1) n = 1;
-    Store.setMapConfig(_activeMapId, { zoomScaleRatio: n });
-    // If the live map is open and showing this map, push the new
-    // ratio so it rescales markers immediately rather than waiting
-    // for the next zoom event.
-    try { WorldMap.applyZoomScaleRatio?.(_activeMapId); } catch (_) {}
+    _zoomCommitTarget = _activeMapId;
+    if (_zoomCommitTimer) clearTimeout(_zoomCommitTimer);
+    _zoomCommitTimer = setTimeout(() => {
+      _zoomCommitTimer = null;
+      const target = _zoomCommitTarget;
+      _zoomCommitTarget = null;
+      if (!target) return;
+      Store.setMapConfig(target, { zoomScaleRatio: n });
+      // If the live map is open and showing this map, push the new
+      // ratio so it rescales markers immediately rather than waiting
+      // for the next zoom event. No-op when on the Settings page.
+      try { WorldMap.applyZoomScaleRatio?.(target); } catch (_) {}
+    }, 350);
   }
 
   function uploadWorldMap(input) {

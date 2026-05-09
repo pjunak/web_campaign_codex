@@ -548,39 +548,97 @@
   color: var(--text-muted);
 }
 
-/* ── Map selector tabs (Mapy panel) ─────────────────────────── */
-.settings-map-selector {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin-bottom: 1rem;
-  padding-bottom: 0.6rem;
-  border-bottom: 1px solid rgba(212,184,122,0.15);
+/* ── Maps panel — explorer-tree + detail layout ────────────── */
+.settings-maps-shell {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 1.2rem;
+  align-items: start;
 }
-.settings-map-tab {
-  display: inline-flex;
+@media (max-width: 720px) {
+  .settings-maps-shell { grid-template-columns: 1fr; }
+}
+
+.settings-maps-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.4rem;
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(212,184,122,0.15);
+  border-radius: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.settings-maps-tree-hint {
+  margin: 0.6rem 0.3rem 0.1rem;
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+.settings-map-node {
+  display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.4rem 0.7rem;
-  background: rgba(0,0,0,0.18);
-  border: 1px solid rgba(212,184,122,0.18);
-  border-radius: 6px;
+  width: 100%;
+  padding: 0.35rem 0.55rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
   color: var(--text-parchment);
   font-family: var(--font-ui);
   font-size: 0.85rem;
+  text-align: left;
   cursor: pointer;
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.settings-map-tab:hover {
-  background: rgba(200,160,64,0.1);
-  border-color: rgba(212,184,122,0.45);
+.settings-map-node:hover {
+  background: rgba(200,160,64,0.08);
+  border-color: rgba(212,184,122,0.25);
 }
-.settings-map-tab.is-active {
+.settings-map-node.is-active {
   background: rgba(200,160,64,0.18);
   border-color: var(--accent-gold);
   color: var(--accent-gold);
 }
-.settings-map-tab-icon { font-size: 1rem; }
+.settings-map-node-guide {
+  display: inline-block;
+  width: 0.85rem;
+  font-family: monospace;
+  color: rgba(212,184,122,0.4);
+  flex-shrink: 0;
+}
+.settings-map-node-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+.settings-map-node-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Faint breadcrumb of intermediate ancestors that don't have a
+   localMap themselves — surfaces the lineage when, e.g., a
+   localMap was added to a deeply-nested place but no maps exist
+   at its parents. */
+.settings-map-node-ghost {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-right: 0.1rem;
+  white-space: nowrap;
+}
+
+.settings-maps-detail {
+  min-width: 0;
+}
+.settings-maps-detail-title {
+  font-family: var(--font-title);
+  font-size: 1rem;
+  color: var(--accent-gold);
+  margin-bottom: 0.6rem;
+  letter-spacing: 0.02em;
+}
 
 /* ── Map-view preset groups ─────────────────────────────────── */
 .settings-mapviews-group { margin-bottom: 1.1rem; }
