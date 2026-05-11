@@ -276,19 +276,66 @@ export const WorldMap = (() => {
       if (pin) pin.style.transition = value || '';
     }
   }
-  // Counter-scale value applied to `--sc-pin-base-scale` during a
-  // Leaflet animated zoom. Derivation: Leaflet's pane CSS transform
-  // grows from 1 to 2^(z1-z0) during the animation. Visible size of
-  // a marker at any moment is `pane(t) * S(t)`, and we want it to
-  // equal `2^(r * z(t))` where `r = zoomScaleRatio`. Setting S to
-  // its end-of-animation value gives correct start/end values; the
-  // CSS transition (with the same duration + easing as Leaflet's)
-  // tweens through the middle. Linear interpolation in CSS transform
-  // space introduces a small mid-animation discrepancy (~12% bulge
-  // for r=0 on a 1-step zoom), but it's transient (0.125 s) and
-  // dramatically less jarring than the prior "balloon-then-snap".
-  function _animScaleEnd(z0, z1, r) {
-    return Math.pow(2, (r - 1) * z1 + z0);
+  // Cubic-bezier(0, 0, 0.25, 1) — Leaflet's pane animation easing.
+  // Newton-Raphson inverts x(s)=t (5–6 iterations converge); the
+  // closed forms for our control points are
+  //   x(s) = 0.25 s³ + 0.75 s²
+  //   y(s) = -2 s³ + 3 s²
+  // so x'(s) = 0.75 s² + 1.5 s.
+  function _easeLeafletZoom(t) {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    let s = t;
+    for (let i = 0; i < 6; i++) {
+      const x  = 0.25 * s * s * s + 0.75 * s * s;
+      const dx = 0.75 * s * s + 1.5 * s;
+      if (dx < 1e-6) break;
+      s -= (x - t) / dx;
+    }
+    return -2 * s * s * s + 3 * s * s;
+  }
+
+  // rAF-driven marker scale animation during a Leaflet zoom. The
+  // pane's CSS transform tweens linearly in scale-value space from
+  // 1 → 2^(z1-z0); if we naively transitioned the marker scale to
+  // its end value in lock-step, the product pane(t) × marker(t)
+  // would trace a parabola-like curve (visible "bulge then settle"
+  // ~12% off target at mid-animation for r=0, smaller for r>0).
+  // Instead we compute the marker scale each frame so that
+  //   visible(t) = pane(t) × marker(t) = 2^(r · z(t))   exactly.
+  // Solving for marker:
+  //   marker(t) = 2^(r·z0) · pane(t)^(r−1)
+  // which keeps the apparent marker size tracking the apparent
+  // zoom level throughout, with no mid-animation overshoot.
+  let _zoomAnimRaf   = null;
+  let _zoomAnimState = null;
+  function _stepZoomAnim() {
+    const a = _zoomAnimState;
+    if (!a) return;
+    const elapsed = performance.now() - a.start;
+    const t = Math.min(1, elapsed / a.duration);
+    const eased = _easeLeafletZoom(t);
+    const pane  = a.paneStart + eased * (a.paneEnd - a.paneStart);
+    const m     = a.markerBase * Math.pow(pane, a.r - 1);
+    const value = (isFinite(m) && m > 0) ? m.toFixed(4) : '1';
+    for (const marker of Object.values(_markers)) {
+      const el  = marker.getElement && marker.getElement();
+      const pin = el && el.querySelector ? el.querySelector('.sc-pin') : null;
+      if (pin) pin.style.setProperty('--sc-pin-base-scale', value);
+    }
+    if (t < 1) {
+      _zoomAnimRaf = requestAnimationFrame(_stepZoomAnim);
+    } else {
+      _zoomAnimRaf   = null;
+      _zoomAnimState = null;
+    }
+  }
+  function _cancelZoomAnim() {
+    if (_zoomAnimRaf) {
+      cancelAnimationFrame(_zoomAnimRaf);
+      _zoomAnimRaf = null;
+    }
+    _zoomAnimState = null;
   }
   // Suppresses the slider write-back inside `_updateZoomReadout`
   // while the user is actively dragging the thumb. Without this
@@ -807,23 +854,27 @@ export const WorldMap = (() => {
     // buttons via Leaflet shortcut). Slider drags use {animate:false}
     // and skip this entirely, so they keep snapping instantly.
     _map.on('zoomanim', (e) => {
+      _cancelZoomAnim();
       const r  = _currentZoomScaleRatio();
       const z0 = _map.getZoom();
       const z1 = e.zoom;
-      const sEnd = _animScaleEnd(z0, z1, r).toFixed(3);
-      // Match Leaflet's pane animation duration (0.25s) and easing
-      // (cubic-bezier(0,0,0.25,1)) so our marker scale transitions
-      // in lock-step. The pane scale and marker scale multiply each
-      // frame, keeping the visible marker size approximately constant
-      // (or growing per `r`) instead of ballooning then snapping.
-      _setMarkerTransition('transform 0.25s cubic-bezier(0,0,0.25,1)');
-      for (const m of Object.values(_markers)) {
-        const el  = m.getElement && m.getElement();
-        const pin = el && el.querySelector ? el.querySelector('.sc-pin') : null;
-        if (pin) pin.style.setProperty('--sc-pin-base-scale', sEnd);
-      }
+      // No CSS transition — _stepZoomAnim writes the scale every
+      // frame, so any leftover transition would lag those writes.
+      _setMarkerTransition('none');
+      _zoomAnimState = {
+        start:      performance.now(),
+        duration:   250,           // matches Leaflet's pane animation
+        r,
+        paneStart:  1,
+        paneEnd:    Math.pow(2, z1 - z0),
+        markerBase: Math.pow(2, r * z0),
+      };
+      _zoomAnimRaf = requestAnimationFrame(_stepZoomAnim);
     });
     _map.on('zoomend', () => {
+      // Pre-empt any in-flight frame so its scale write doesn't race
+      // with the final _applyMarkerScale below.
+      _cancelZoomAnim();
       // Disable transition so the snap to the final scale is instant
       // — matches Leaflet's instant pane reset at zoomend. Otherwise
       // _applyMarkerScale's write would tween over 0.25s after the
@@ -1268,6 +1319,13 @@ export const WorldMap = (() => {
       </button>`;
     }).join('');
     const currentLabel = (PIN_TYPES[currentType] || PIN_TYPES.custom).label;
+    // Trigger icon mirrors the menu items so the closed dropdown still
+    // shows the visual marker for the currently-selected type, not just
+    // its name. Same resolver and fallback chain as menu rows.
+    const currentTriggerIconUrl = _typeMenuIconUrl(currentType);
+    const currentTriggerIconHtml = currentTriggerIconUrl
+      ? `<img class="spf-type-trigger-icon" src="${esc(currentTriggerIconUrl)}" alt="" draggable="false">`
+      : `<span class="spf-type-trigger-icon spf-type-trigger-icon-emoji">${(PIN_TYPES[currentType] || PIN_TYPES.custom).icon}</span>`;
     // Pin form exposes the full attitudes array (with per-attitude
     // strength sliders) so multi-stance places can be edited from the
     // map without switching to the wiki editor. Same chip-row helper
@@ -1313,6 +1371,7 @@ export const WorldMap = (() => {
               aria-haspopup="listbox"
               aria-expanded="false"
               ${dataAction('WorldMap.toggleTypeMenu')}>
+              ${currentTriggerIconHtml}
               <span class="spf-type-trigger-label">${esc(currentLabel)}</span>
               <span class="spf-type-trigger-chevron" aria-hidden="true">▾</span>
             </button>
@@ -1387,6 +1446,25 @@ export const WorldMap = (() => {
     const label = (PIN_TYPES[typeId] || PIN_TYPES.custom).label;
     const labelSpan = trigger.querySelector('.spf-type-trigger-label');
     if (labelSpan) labelSpan.textContent = label;
+    // Replace the trigger icon in place so img↔emoji-span fallback
+    // toggles cleanly when the new type has no resolvable artwork.
+    const oldIcon = trigger.querySelector('.spf-type-trigger-icon');
+    if (oldIcon) {
+      const url = _typeMenuIconUrl(typeId);
+      let nextIcon;
+      if (url) {
+        nextIcon = document.createElement('img');
+        nextIcon.className = 'spf-type-trigger-icon';
+        nextIcon.src = url;
+        nextIcon.alt = '';
+        nextIcon.draggable = false;
+      } else {
+        nextIcon = document.createElement('span');
+        nextIcon.className = 'spf-type-trigger-icon spf-type-trigger-icon-emoji';
+        nextIcon.textContent = (PIN_TYPES[typeId] || PIN_TYPES.custom).icon;
+      }
+      oldIcon.replaceWith(nextIcon);
+    }
     // Move the .is-active highlight to the freshly-picked row so a
     // re-open shows the right selection state without a full re-render.
     menu.querySelectorAll('.spf-type-menu-item.is-active').forEach(el =>

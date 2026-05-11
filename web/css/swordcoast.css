@@ -303,6 +303,23 @@
   gap: 0.4rem;
   font-family: inherit;
 }
+.spf-type-trigger-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  object-fit: contain;
+  /* Same stacked-shadow legibility outline used on menu items so the
+     white-on-dark game-icons read against the parchment trigger. */
+  filter: drop-shadow(0 0 1px rgba(0,0,0,0.95)) drop-shadow(0 0 1px rgba(0,0,0,0.95));
+}
+.spf-type-trigger-icon-emoji {
+  font-size: 1.1rem;
+  line-height: 1;
+  filter: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .spf-type-trigger-label {
   flex: 1;
   white-space: nowrap;
