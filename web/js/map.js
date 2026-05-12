@@ -232,67 +232,19 @@ export const WorldMap = (() => {
       if (pin) pin.style.transition = value || '';
     }
   }
-  // Cubic-bezier(0, 0, 0.25, 1) — Leaflet's pane animation easing.
-  // Newton-Raphson inverts x(s)=t (5–6 iterations converge); the
-  // closed forms for our control points are
-  //   x(s) = 0.25 s³ + 0.75 s²
-  //   y(s) = -2 s³ + 3 s²
-  // so x'(s) = 0.75 s² + 1.5 s.
-  function _easeLeafletZoom(t) {
-    if (t <= 0) return 0;
-    if (t >= 1) return 1;
-    let s = t;
-    for (let i = 0; i < 6; i++) {
-      const x  = 0.25 * s * s * s + 0.75 * s * s;
-      const dx = 0.75 * s * s + 1.5 * s;
-      if (dx < 1e-6) break;
-      s -= (x - t) / dx;
-    }
-    return -2 * s * s * s + 3 * s * s;
-  }
-
-  // rAF-driven marker scale animation during a Leaflet zoom. The
-  // pane's CSS transform tweens linearly in scale-value space from
-  // 1 → 2^(z1-z0); if we naively transitioned the marker scale to
-  // its end value in lock-step, the product pane(t) × marker(t)
-  // would trace a parabola-like curve (visible "bulge then settle"
-  // ~12% off target at mid-animation for r=0, smaller for r>0).
-  // Instead we compute the marker scale each frame so that
-  //   visible(t) = pane(t) × marker(t) = 2^(r · z(t))   exactly.
-  // Solving for marker:
-  //   marker(t) = 2^(r·z0) · pane(t)^(r−1)
-  // which keeps the apparent marker size tracking the apparent
-  // zoom level throughout, with no mid-animation overshoot.
-  let _zoomAnimRaf   = null;
-  let _zoomAnimState = null;
-  function _stepZoomAnim() {
-    const a = _zoomAnimState;
-    if (!a) return;
-    const elapsed = performance.now() - a.start;
-    const t = Math.min(1, elapsed / a.duration);
-    const eased = _easeLeafletZoom(t);
-    const pane  = a.paneStart + eased * (a.paneEnd - a.paneStart);
-    const m     = a.markerBase * Math.pow(pane, a.r - 1);
-    const value = (isFinite(m) && m > 0) ? m.toFixed(4) : '1';
-    for (const marker of Object.values(_markers)) {
-      const el  = marker.getElement && marker.getElement();
-      const pin = el && el.querySelector ? el.querySelector('.sc-pin') : null;
-      if (pin) pin.style.setProperty('--sc-pin-base-scale', value);
-    }
-    if (t < 1) {
-      _zoomAnimRaf = requestAnimationFrame(_stepZoomAnim);
-    } else {
-      _zoomAnimRaf   = null;
-      _zoomAnimState = null;
-    }
-  }
-  function _cancelZoomAnim() {
-    if (_zoomAnimRaf) {
-      cancelAnimationFrame(_zoomAnimRaf);
-      _zoomAnimRaf = null;
-    }
-    _zoomAnimState = null;
-  }
+  // Leaflet's zoom animation only writes `translate` to the map pane;
+  // the `scale` lives on the tile-level container (a SIBLING of the
+  // marker pane, not an ancestor), so a marker's CSS scale isn't
+  // multiplied by any pane scale — it IS the visible size. Earlier
+  // attempts to counter-scale the marker against the pane (the
+  // `_animScaleEnd` formula, then a per-frame rAF) made markers
+  // visibly travel the wrong direction during the animation before
+  // snapping correct at zoomend (e.g. 1× → 2× → 0.5× for a 2-step
+  // zoom-out at ratio 0.5). The fix is to drop the counter entirely:
+  // at zoomanim we set `--sc-pin-base-scale` directly to the target
+  // value `2^(r·z1)` and let a CSS transition (matching Leaflet's
+  // tile timing — 0.25 s, `cubic-bezier(0,0,0.25,1)`) interpolate
+  // smoothly from the current value.
   // Suppresses the slider write-back inside `_updateZoomReadout`
   // while the user is actively dragging the thumb. Without this
   // guard, a `zoomend` from an in-flight `setZoom` call can fire
@@ -807,38 +759,26 @@ export const WorldMap = (() => {
     // buttons via Leaflet shortcut). Slider drags use {animate:false}
     // and skip this entirely, so they keep snapping instantly.
     _map.on('zoomanim', (e) => {
-      _cancelZoomAnim();
       const r  = _currentZoomScaleRatio();
-      const z0 = _map.getZoom();
       const z1 = e.zoom;
-      // No CSS transition — _stepZoomAnim writes the scale every
-      // frame, so any leftover transition would lag those writes.
-      _setMarkerTransition('none');
-      _zoomAnimState = {
-        start:      performance.now(),
-        duration:   250,           // matches Leaflet's pane animation
-        r,
-        paneStart:  1,
-        paneEnd:    Math.pow(2, z1 - z0),
-        markerBase: Math.pow(2, r * z0),
-      };
-      _zoomAnimRaf = requestAnimationFrame(_stepZoomAnim);
+      const target = _iconScaleAtZoom(z1, r).toFixed(4);
+      // Match Leaflet's tile animation timing/easing so the marker
+      // scale lerps in lock-step with the visible map zoom.
+      _setMarkerTransition('transform 0.25s cubic-bezier(0,0,0.25,1)');
+      for (const m of Object.values(_markers)) {
+        const el  = m.getElement && m.getElement();
+        const pin = el && el.querySelector ? el.querySelector('.sc-pin') : null;
+        if (pin) pin.style.setProperty('--sc-pin-base-scale', target);
+      }
     });
     _map.on('zoomend', () => {
-      // Pre-empt any in-flight frame so its scale write doesn't race
-      // with the final _applyMarkerScale below.
-      _cancelZoomAnim();
-      // Disable transition so the snap to the final scale is instant
-      // — matches Leaflet's instant pane reset at zoomend. Otherwise
-      // _applyMarkerScale's write would tween over 0.25s after the
-      // pane has already reset, reproducing the old "lag" bug.
+      // Snap any in-flight transition off, write the final scale
+      // (same value the transition was heading to, so no visible
+      // jump), then restore the CSS-rule hover transition next frame.
       _setMarkerTransition('none');
       _renderLegend();
       _applyMarkerScale();
       _updateZoomReadout();
-      // Restore the CSS-rule transition (0.15s, used for hover-pop)
-      // on the next frame so the inline `none` override doesn't kill
-      // the smooth hover animation.
       requestAnimationFrame(() => _setMarkerTransition(''));
     });
 
