@@ -39,13 +39,17 @@ app.set('trust proxy', 1);
 // from server-utils.cjs.
 const _isForbiddenKey = isForbiddenKey;
 
-const DATA_DIR       = path.join(__dirname, 'data');
-const PORTRAITS_DIR  = path.join(__dirname, 'data', 'portraits');
-const MAPS_DIR       = path.join(__dirname, 'data', 'maps');
+// All on-disk paths derive from these two roots so integration tests
+// can override CODEX_DATA_DIR / CODEX_SNAPSHOTS_DIR to a tempdir and
+// run the server against an isolated dataset.
+const DATA_DIR       = process.env.CODEX_DATA_DIR
+                       || path.join(__dirname, 'data');
+const PORTRAITS_DIR  = path.join(DATA_DIR, 'portraits');
+const MAPS_DIR       = path.join(DATA_DIR, 'maps');
 const LOCAL_MAPS_DIR = path.join(MAPS_DIR, 'local');
 const TILES_DIR      = path.join(MAPS_DIR, 'tiles');
 const SWORDCOAST_DIR = path.join(MAPS_DIR, 'swordcoast');
-const ICONS_DIR      = path.join(__dirname, 'data', 'icons');
+const ICONS_DIR      = path.join(DATA_DIR, 'icons');
 // Snapshots live OUTSIDE data/ so:
 //   - the data hash and the backup zip don't have to keep stepping
 //     around them (they used to be at data/snapshots/).
@@ -53,7 +57,8 @@ const ICONS_DIR      = path.join(__dirname, 'data', 'icons');
 //     legitimate snapshot via _safeJoinDataDir.
 //   - "data/" stays a clean reflection of the campaign content.
 // One-time migration below moves any pre-existing data/snapshots/* up.
-const SNAPSHOTS_DIR  = path.join(__dirname, 'data-snapshots');
+const SNAPSHOTS_DIR  = process.env.CODEX_SNAPSHOTS_DIR
+                       || path.join(__dirname, 'data-snapshots');
 const LEGACY_SNAPSHOTS_DIR = path.join(DATA_DIR, 'snapshots');
 const WEB_DIR        = path.join(__dirname, 'web');
 
@@ -1519,8 +1524,11 @@ async function _backgroundTileSweep() {
   }
 }
 
-app.listen(PORT, async () => {
-  console.log(`TTRPG Codex running on http://localhost:${PORT}`);
+// Bootstrap: await the visibility migration BEFORE accepting any
+// connections, so no client can ever see un-stamped data. Tile sweep
+// stays fire-and-forget (it can take seconds on a large map and the
+// fallback overlay covers any in-flight requests anyway).
+async function _bootstrap() {
   // Loud warnings about password configuration. The codebase is open-
   // source so anyone can compute SHA256(...) — a deployment that left
   // DM_PASSWORD unset (or set to the default "123") would be world-
@@ -1545,15 +1553,17 @@ app.listen(PORT, async () => {
     console.warn('     Unauthenticated visitors see only public content (same view as a player).');
     console.warn('');
   }
-  // Run visibility-model migration before any client sees data —
-  // stamps `visibility: 'public'` + `secrets: {}` on every record
-  // missing them. Idempotent; cheap on subsequent boots.
   try {
     await runVisibilityMigration();
   } catch (e) {
     console.warn('[migration] visibility migration failed:', e.message);
   }
-  // Fire-and-forget — sweep can take seconds for large maps; don't
-  // block the listen callback.
-  _backgroundTileSweep().catch(e => console.warn('[tiles] sweep failed:', e.message));
+  app.listen(PORT, () => {
+    console.log(`TTRPG Codex running on http://localhost:${PORT}`);
+    _backgroundTileSweep().catch(e => console.warn('[tiles] sweep failed:', e.message));
+  });
+}
+_bootstrap().catch(e => {
+  console.error('[bootstrap] fatal:', e);
+  process.exit(1);
 });
