@@ -46,6 +46,72 @@ export function norm(s) {
 }
 
 /**
+ * Jaro\u2013Winkler string similarity, scaled to 0..1 (1 = identical).
+ *
+ * Standard short-string fuzzy-matching metric \u2014 favours strings that
+ * share characters in close positions and gives a small prefix bonus
+ * (so "Frulam" matches "Frulam Mondath" more strongly than "Mondath
+ * Frulam"). Used by the DM twin picker to rank candidate entities by
+ * name similarity.
+ *
+ * Both inputs are normalised first via `norm()` (lowercase + diacritic
+ * strip) so "K\u0159esava" and "kresava" score 1.0.
+ *
+ * @param {*} a - Any stringifiable value.
+ * @param {*} b - Any stringifiable value.
+ * @returns {number} Score in [0, 1]; 0 when either input is empty
+ *                   (after normalisation), 1 when equal.
+ */
+export function jaroWinkler(a, b) {
+  const s1 = norm(a);
+  const s2 = norm(b);
+  if (!s1 || !s2)   return 0;
+  if (s1 === s2)    return 1;
+
+  // Jaro: count "matching" characters (same char within a window of
+  // floor(max(|s1|,|s2|)/2) - 1 positions) and "transpositions".
+  const matchWindow = Math.max(0, Math.floor(Math.max(s1.length, s2.length) / 2) - 1);
+  const s1Matches = new Array(s1.length).fill(false);
+  const s2Matches = new Array(s2.length).fill(false);
+
+  let matches = 0;
+  for (let i = 0; i < s1.length; i++) {
+    const start = Math.max(0, i - matchWindow);
+    const end   = Math.min(i + matchWindow + 1, s2.length);
+    for (let j = start; j < end; j++) {
+      if (s2Matches[j])          continue;
+      if (s1[i] !== s2[j])       continue;
+      s1Matches[i] = true;
+      s2Matches[j] = true;
+      matches++;
+      break;
+    }
+  }
+  if (matches === 0) return 0;
+
+  // Count transpositions: half the number of matched chars that
+  // appear in a different order between s1 and s2.
+  let t = 0, k = 0;
+  for (let i = 0; i < s1.length; i++) {
+    if (!s1Matches[i]) continue;
+    while (!s2Matches[k]) k++;
+    if (s1[i] !== s2[k]) t++;
+    k++;
+  }
+  const m = matches;
+  const jaro = (m / s1.length + m / s2.length + (m - t / 2) / m) / 3;
+
+  // Winkler prefix bonus: up to 4 leading matching characters,
+  // scaled by 0.1 per char. Boosts names that share a prefix.
+  let prefix = 0;
+  for (let i = 0; i < Math.min(4, s1.length, s2.length); i++) {
+    if (s1[i] === s2[i]) prefix++;
+    else break;
+  }
+  return jaro + prefix * 0.1 * (1 - jaro);
+}
+
+/**
  * Trailing-edge debounce. Wraps `fn` so rapid consecutive calls collapse
  * into one invocation `ms` milliseconds after the last call.
  *

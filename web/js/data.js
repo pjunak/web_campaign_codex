@@ -158,19 +158,21 @@ export const SETTINGS_DEFAULTS = {
   // 0..1) lives on each enum item below, NOT on the entity, so
   // editing an attitude's strength in Settings updates every place
   // it's used at once. Renderers stack a colored `drop-shadow` per
-  // entry on the entity's icon (portrait, pin emoji, faction badge);
+  // entry on the entity's icon (portrait, pin emoji, faction palette);
   // multi-attitude map markers stripe the slabs vertically rather
   // than blending. Empty array = no stance set ("unknown" baseline,
-  // no glow). The `party` id is reserved for our strongholds —
-  // characters with `faction==='party'` render with this palette
-  // automatically. `bg` = solid pin fill, `fg` = icon contrast on
-  // the pin, `labelColor` = readable chip/glow color on dark UI.
+  // no glow).
+  //
+  // **`party` is no longer in this enum** — party membership is its
+  // own concept now, edited via Settings → Naše parta. The renderer
+  // synthesizes a `party` entry from `settings.playerParty.color` on
+  // the fly when a PC carries the implicit `{id:'party'}` from
+  // Store.getEffectiveAttitudes.
   attitudes: [
     { id: 'ally',    label: 'Spojenec',   bg: '#2E7D32', fg: '#ffffff', labelColor: '#4CAF50', strength: 1.0 },
     { id: 'enemy',   label: 'Nepřítel',   bg: '#C62828', fg: '#ffffff', labelColor: '#EF5350', strength: 1.0 },
     { id: 'hostile', label: 'Nebezpečný', bg: '#7E1F1F', fg: '#ffffff', labelColor: '#FF7043', strength: 0.7 },
     { id: 'neutral', label: 'Neutrální',  bg: '#1565C0', fg: '#ffffff', labelColor: '#64B5F6', strength: 0.7 },
-    { id: 'party',   label: 'Parta',      bg: '#F5F0E4', fg: '#1a1410', labelColor: '#F0E6C8', strength: 1.0 },
   ],
 
   // User-defined map view presets. Each entry captures the bounds

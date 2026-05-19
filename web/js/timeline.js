@@ -233,7 +233,8 @@ export const Timeline = (() => {
    * phantom "Nové sezení N+1" column when edit mode is active.
    */
   function render() {
-    const events = Store.getEvents();
+    // Dedupe twin pairs so each event shows once on the timeline.
+    const events = Store.dedupeShadowTwins('events', Store.getEvents());
 
     _charMap = new Map(Store.getCharacters().map(c => [c.id, c]));
     _locMap  = new Map(Store.getLocations().map(l => [l.id, l]));

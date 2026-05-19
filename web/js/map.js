@@ -129,6 +129,14 @@ export const WorldMap = (() => {
   }
   const _bundledDefaultUrl = bundledDefaultUrl;
 
+  /** List of bundled default icon ids — exposed so Settings can render
+   *  a default-icon picker for user-created pin types (which otherwise
+   *  fall through to the emoji glyph). Sorted by the order they appear
+   *  in PIN_TYPES so the picker matches the rest of the UI. */
+  function getBundledDefaultIconIds() {
+    return Object.keys(PIN_TYPES).filter(id => BUNDLED_DEFAULT_ICONS.has(id));
+  }
+
   /**
    * Resolve the icon URL for a wiki Location record using the same
    * fallback chain as the map (uploaded → bundled → null), so wiki
@@ -160,18 +168,27 @@ export const WorldMap = (() => {
   }
 
   function _resolveIconUrl(pin) {
-    const types  = (Store.getEnum && Store.getEnum('pinTypes')) || [];
-    const cfg    = types.find(t => t.id === pin.type)?.iconConfig;
-    const bundled = _bundledDefaultUrl(pin.type);
-    if (!cfg || !Array.isArray(cfg.files) || !cfg.files.length) return bundled;
-
-    const files = cfg.files;
-    if (cfg.strategy === 'random') {
-      const idx = _hashStr(pin.id || pin.locationId || '') % files.length;
-      return files[idx].url;
+    const types = (Store.getEnum && Store.getEnum('pinTypes')) || [];
+    const pt    = types.find(t => t.id === pin.type);
+    const cfg   = pt?.iconConfig;
+    // Uploaded files (iconConfig) always win when present.
+    if (cfg && Array.isArray(cfg.files) && cfg.files.length) {
+      const files = cfg.files;
+      if (cfg.strategy === 'random') {
+        const idx = _hashStr(pin.id || pin.locationId || '') % files.length;
+        return files[idx].url;
+      }
+      return files[0].url;
     }
-    // 'single' (default) — first file wins.
-    return files[0].url;
+    // User-picked default icon from the bundled set (lets user-created
+    // pin types ride on the bundled-defaults SVG palette instead of
+    // falling through to an emoji glyph).
+    if (pt && pt.defaultIconId && _bundledDefaultUrl(pt.defaultIconId)) {
+      return _bundledDefaultUrl(pt.defaultIconId);
+    }
+    // Per-type bundled default — only resolves for the seed pin-type
+    // ids that ship an SVG under /icons-defaults/.
+    return _bundledDefaultUrl(pin.type);
   }
 
   function _resolvePinSize(pin) {
@@ -440,6 +457,13 @@ export const WorldMap = (() => {
     if (!Array.isArray(entries) || !entries.length) return [];
     const enums  = Store.getEnum('attitudes') || [];
     const byId   = Object.fromEntries(enums.map(a => [a.id, a]));
+    // Synthetic 'party' meta — pulled from settings.playerParty so
+    // PC markers + party-faction pins still glow with the right
+    // colour even though 'party' is no longer in the attitudes enum.
+    const pp = (Store.getPlayerParty && Store.getPlayerParty()) || null;
+    if (pp && pp.color && !byId.party) {
+      byId.party = { labelColor: pp.color, strength: 1.0 };
+    }
     const out = [];
     for (const e of entries) {
       if (!e) continue;
@@ -1945,6 +1969,7 @@ export const WorldMap = (() => {
     openLocalMap, startPlacingPin,
     startPlacingEventPin, clearEventPin, showEventPin,
     bundledDefaultUrl,
+    getBundledDefaultIconIds,
     resolveIconForLocation,
     zoomSliderInput, zoomReset, zoomStep, applyZoomScaleRatio,
   };

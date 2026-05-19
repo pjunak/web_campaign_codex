@@ -902,8 +902,8 @@ app.post('/api/twin', (req, res) => {
   if (req.realRole !== 'dm') return res.status(403).json({ error: 'Pouze pro DM' });
   withWriteLock(async () => {
     try {
-      const { action, type, sourceId } = req.body || {};
-      if (action !== 'create' && action !== 'unlink') {
+      const { action, type, sourceId, targetId } = req.body || {};
+      if (action !== 'create' && action !== 'unlink' && action !== 'link') {
         return res.status(400).json({ error: `Unknown action: ${action}` });
       }
       if (!VISIBILITY_BEARING.has(type)) {
@@ -955,6 +955,39 @@ app.post('/api/twin', (req, res) => {
         await _maybeSnapshot('save');
         await _broadcastDataChanged();
         return res.json({ ok: true, twinId: twin.id, twin });
+      }
+
+      if (action === 'link') {
+        // Link two EXISTING entities as twins. Used when a player
+        // unknowingly created a duplicate of a DM-only entity (the
+        // typical case the picker resolves) — the DM marries the two
+        // records instead of deleting + recreating.
+        if (typeof targetId !== 'string' || !targetId) {
+          return res.status(400).json({ error: 'Missing targetId' });
+        }
+        if (targetId === sourceId) {
+          return res.status(400).json({ error: 'Source and target must differ.' });
+        }
+        const target = lookup(targetId);
+        if (!target) return res.status(404).json({ error: 'Target entity not found' });
+        if (source.linkedTwinId || target.linkedTwinId) {
+          return res.status(409).json({ error: 'Jedna nebo obě entity už mají twin — odpárujte ho nejprve.' });
+        }
+        const srcVis = source.visibility === 'dm' ? 'dm' : 'public';
+        const tgtVis = target.visibility === 'dm' ? 'dm' : 'public';
+        if (srcVis === tgtVis) {
+          return res.status(400).json({
+            error: 'Twin musí být v opačném prostoru (jeden DM, druhý hráčský).',
+          });
+        }
+        source.linkedTwinId = target.id;
+        target.linkedTwinId = source.id;
+        source.updatedAt = Date.now();
+        target.updatedAt = Date.now();
+        await _atomicWrite(p, JSON.stringify(container, null, 2));
+        await _maybeSnapshot('save');
+        await _broadcastDataChanged();
+        return res.json({ ok: true });
       }
 
       // action === 'unlink'

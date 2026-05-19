@@ -174,6 +174,21 @@ export const Store = (() => {
         }
       }
     }
+    // Player party (Naše parta) — single-object setting (not an enum
+    // array). Seeded once on first install; never overwritten if
+    // already present. Migration from legacy `factions.party` runs
+    // later in load() via `_migratePartyFactionToPlayerParty`.
+    if (!_data.settings.playerParty || typeof _data.settings.playerParty !== 'object'
+        || Array.isArray(_data.settings.playerParty)) {
+      _data.settings.playerParty = {
+        name:      'Naše parta',
+        icon:      '🛡',
+        badge:     '🛡',
+        color:     '#F5F0E4',
+        textColor: '#1a1410',
+      };
+    }
+
     // Campaign metadata (name + tagline, shown on dashboard hero).
     // Keyed-object collection with a single 'main' record.
     if (!_data.campaign || typeof _data.campaign !== 'object' || Array.isArray(_data.campaign)) {
@@ -596,6 +611,88 @@ export const Store = (() => {
   }
 
   /**
+   * Move `factions.party` (legacy regular-faction record for the
+   * player party) into `settings.playerParty`. PCs are still
+   * identified by `character.faction === 'party'` — only the visual
+   * identity moves. Idempotent: if `settings.playerParty` is already
+   * populated, the factions side is dropped without overwrite.
+   *
+   * @returns {{movedFromFactions: boolean, playerPartyChanged: boolean}}
+   */
+  function _migratePartyFactionToPlayerParty() {
+    if (!_data) return { movedFromFactions: false, playerPartyChanged: false };
+    const fac = _data.factions && _data.factions.party;
+    if (!fac) return { movedFromFactions: false, playerPartyChanged: false };
+    // Always import the user's existing party-faction data — defaults
+    // were seeded in _mergeDefaults so settings.playerParty exists,
+    // but we want the real user-customised colours/name/badge to win
+    // on the first migration pass. After this runs, factions.party
+    // is gone so subsequent loads short-circuit at the !fac guard.
+    if (!_data.settings) _data.settings = {};
+    _data.settings.playerParty = {
+      name:      fac.name      || 'Naše parta',
+      icon:      fac.badge     || '🛡',
+      badge:     fac.badge     || '🛡',
+      color:     fac.color     || '#F5F0E4',
+      textColor: fac.textColor || '#1a1410',
+    };
+    delete _data.factions.party;
+    if (!_data.deletedDefaults || typeof _data.deletedDefaults !== 'object') {
+      _data.deletedDefaults = {};
+    }
+    _data.deletedDefaults['factions:party'] = true;
+    return { movedFromFactions: true, playerPartyChanged: true };
+  }
+
+  /**
+   * Remove the legacy `party` entry from the attitudes settings enum
+   * AND strip it from any per-entity `attitudes[]` array. The party
+   * palette is now sourced from `settings.playerParty.color` directly
+   * (see `_attitudeColorMap` consumers); the enum entry is dead
+   * data that would just clutter the Settings → Postoje editor.
+   *
+   * @returns {{enumChanged: boolean, characters: Array, locations: Array, factions: Array}}
+   */
+  function _migrateDropPartyFromAttitudesEnum() {
+    const result = { enumChanged: false, characters: [], locations: [], factions: [] };
+    if (!_data) return result;
+    if (Array.isArray(_data.settings?.attitudes)) {
+      const before = _data.settings.attitudes.length;
+      _data.settings.attitudes = _data.settings.attitudes.filter(a => a.id !== 'party');
+      if (_data.settings.attitudes.length !== before) {
+        result.enumChanged = true;
+        if (!_data.deletedDefaults || typeof _data.deletedDefaults !== 'object') {
+          _data.deletedDefaults = {};
+        }
+        _data.deletedDefaults['settings:attitudes:party'] = true;
+      }
+    }
+    const stripParty = (arr) => arr.filter(e => {
+      if (typeof e === 'string') return e !== 'party';
+      return !(e && e.id === 'party');
+    });
+    for (const c of (_data.characters || [])) {
+      if (Array.isArray(c.attitudes) && c.attitudes.some(e => (typeof e === 'string' ? e === 'party' : e?.id === 'party'))) {
+        c.attitudes = stripParty(c.attitudes);
+        result.characters.push(c);
+      }
+    }
+    for (const l of (_data.locations || [])) {
+      if (Array.isArray(l.attitudes) && l.attitudes.some(e => (typeof e === 'string' ? e === 'party' : e?.id === 'party'))) {
+        l.attitudes = stripParty(l.attitudes);
+        result.locations.push(l);
+      }
+    }
+    for (const [fid, fac] of Object.entries(_data.factions || {})) {
+      if (Array.isArray(fac.attitudes) && fac.attitudes.some(e => (typeof e === 'string' ? e === 'party' : e?.id === 'party'))) {
+        fac.attitudes = stripParty(fac.attitudes);
+        result.factions.push({ id: fid, fac });
+      }
+    }
+    return result;
+  }
+
+  /**
    * Fetch the full dataset from `/api/data`, merge defaults for any
    * collection the server hasn't seeded yet, and run every idempotent
    * schema migration. Each migration's touched records are PATCHed back
@@ -635,6 +732,12 @@ export const Store = (() => {
           const strengthMigrated = _migrateStrengthFromEntityToEnum();
           const partyAtts       = _migratePartyAttitudesEmpty();
           const strengthSeeded  = _seedAttitudeStrength();
+          // Party-faction → settings.playerParty + drop `party`
+          // attitude. Must run before _reindex so the renderers see
+          // the new shape. Idempotent — safe to re-run on subsequent
+          // loads after migration completed.
+          const playerPartyMig = _migratePartyFactionToPlayerParty();
+          const partyAttMig    = _migrateDropPartyFromAttitudesEnum();
           for (const c of capturedTouched)            _sync('characters', 'save', c);
           for (const l of mapStatus.touchedLocations) _sync('locations', 'save', l);
           if (mapStatus.droppedSettingsCat)           _sync('settings', 'delete', { id: 'mapStatuses' });
@@ -655,6 +758,18 @@ export const Store = (() => {
           for (const l of droppedLocStat)             _sync('locations', 'save', l);
           for (const a of droppedArtStat)             _sync('artifacts', 'save', a);
           for (const cat of droppedSettingsCats)      _sync('settings', 'delete', { id: cat });
+          if (playerPartyMig.playerPartyChanged) {
+            _sync('settings', 'save', { id: 'playerParty', data: _data.settings.playerParty });
+          }
+          if (playerPartyMig.movedFromFactions) {
+            _sync('factions', 'delete', { id: 'party' });
+          }
+          if (partyAttMig.enumChanged) {
+            _sync('settings', 'save', { id: 'attitudes', data: _data.settings.attitudes });
+          }
+          for (const c of partyAttMig.characters) _sync('characters', 'save', c);
+          for (const l of partyAttMig.locations)  _sync('locations',  'save', l);
+          for (const { id, fac } of partyAttMig.factions) _sync('factions', 'save', { id, data: fac });
           _reindex();
           return;
         }
@@ -756,22 +871,31 @@ export const Store = (() => {
   // new twin id on success so the caller can navigate to it.
 
   /**
-   * Create a twin for an existing entity in the opposite visibility
-   * space, or unlink an existing twin pair. DM-only.
+   * Twin operations on an entity. DM-only.
    *
-   * @param {'create'|'unlink'} action
-   * @param {string} type      - Collection name (must be in VISIBILITY_BEARING).
-   * @param {string} sourceId  - Id of the source entity.
+   *   - 'create' → spawn a new sibling entity in the opposite space
+   *               with the source's fields copied.
+   *   - 'link'   → marry an existing target entity to the source.
+   *               Requires opposite visibility + neither already
+   *               linked. `targetId` is required.
+   *   - 'unlink' → break the existing pair (entities survive).
+   *
+   * @param {'create'|'link'|'unlink'} action
+   * @param {string} type     - Collection name (must be in VISIBILITY_BEARING).
+   * @param {string} sourceId - Id of the source entity.
+   * @param {string} [targetId] - Required for 'link'; ignored otherwise.
    * @returns {Promise<{ok: boolean, twinId?: string, error?: string}>}
    */
-  async function linkTwin(action, type, sourceId) {
+  async function linkTwin(action, type, sourceId, targetId) {
     if (!_serverAvailable) return { ok: false, error: 'Server není dostupný.' };
     try {
+      const payload = { action, type, sourceId };
+      if (action === 'link') payload.targetId = targetId;
       const res = await fetch('/api/twin', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body:    JSON.stringify({ action, type, sourceId }),
+        body:    JSON.stringify(payload),
       });
       if (res.status === 401 || res.status === 403) {
         window.dispatchEvent(new CustomEvent('store:auth-failed'));
@@ -804,6 +928,62 @@ export const Store = (() => {
       case 'historicalEvents': return getHistoricalEvent(tid);
       default:                 return null;
     }
+  }
+
+  /** Return every entity in a visibility-bearing collection as a
+   *  uniform array (factions is keyed-object → returns Object.values).
+   *  Used by the twin picker to enumerate candidate targets. Returns
+   *  [] for unknown collections. */
+  function getCollection(name) {
+    init();
+    switch (name) {
+      case 'characters':       return _data.characters       || [];
+      case 'locations':        return _data.locations        || [];
+      case 'events':           return _data.events           || [];
+      case 'mysteries':        return _data.mysteries        || [];
+      case 'species':          return _data.species          || [];
+      case 'pantheon':         return _data.pantheon         || [];
+      case 'artifacts':        return _data.artifacts        || [];
+      case 'historicalEvents': return _data.historicalEvents || [];
+      case 'factions':         return Object.values(_data.factions || {});
+      default:                 return [];
+    }
+  }
+
+  /** Twin dedup: when a DM viewer sees BOTH halves of a twin pair we
+   *  hide the public-side entity and surface only the DM-side one
+   *  (DMs spend most of their time on their own annotated copies; the
+   *  public twin is reachable via the twin link in the side card).
+   *
+   *  No-op for player viewers — they only ever receive the public
+   *  half because the server strips DM-visibility records from their
+   *  payload, so there's nothing to dedupe.
+   *
+   *  @param {string} collection - Collection name (see getCollection).
+   *  @param {Array}  list       - Entities to filter (subset of the
+   *                               collection — search results, page
+   *                               filters, etc.).
+   *  @returns {Array} Filtered list with public twins removed when
+   *                   their DM-side counterpart is also present in
+   *                   the underlying collection.
+   */
+  function dedupeShadowTwins(collection, list) {
+    if (!Array.isArray(list) || !list.length) return list || [];
+    const all = getCollection(collection);
+    if (!all.length) return list;
+    const byId = new Map(all.map(e => [e.id, e]));
+    return list.filter(e => {
+      if (!e || e.visibility === 'dm' || !e.linkedTwinId) return true;
+      const twin = byId.get(e.linkedTwinId);
+      // Only hide when the twin actually exists, is DM-side, and points
+      // back at us (defensive: stale linkedTwinId on one side without
+      // reciprocation would otherwise silently disappear the public
+      // entity).
+      if (!twin) return true;
+      if (twin.visibility !== 'dm') return true;
+      if (twin.linkedTwinId !== e.id) return true;
+      return false;
+    });
   }
 
   /**
@@ -1373,6 +1553,54 @@ export const Store = (() => {
     return _sync('artifacts', 'delete', { id });
   }
 
+  // ── Player party (Naše parta) ─────────────────────────────────
+  // Special settings entry replacing the legacy `factions.party`
+  // record. Holds the party's visual identity (name / icon / colors)
+  // that used to live as a real faction. Members are still
+  // identified by `character.faction === PARTY_FACTION_ID` — no
+  // duplicate roster on this object.
+  const PLAYER_PARTY_DEFAULTS = {
+    name:      'Naše parta',
+    icon:      '🛡',
+    badge:     '🛡',
+    color:     '#F5F0E4',
+    textColor: '#1a1410',
+  };
+
+  /**
+   * @returns {{name:string, icon:string, badge:string, color:string,
+   *            textColor:string}} Player-party visual identity, with
+   *   defaults substituted for missing fields so renderers never have
+   *   to null-check.
+   */
+  function getPlayerParty() {
+    init();
+    const pp = (_data.settings && _data.settings.playerParty) || {};
+    return {
+      name:      pp.name      || PLAYER_PARTY_DEFAULTS.name,
+      icon:      pp.icon      || PLAYER_PARTY_DEFAULTS.icon,
+      badge:     pp.badge     || pp.icon || PLAYER_PARTY_DEFAULTS.badge,
+      color:     pp.color     || PLAYER_PARTY_DEFAULTS.color,
+      textColor: pp.textColor || PLAYER_PARTY_DEFAULTS.textColor,
+    };
+  }
+
+  /**
+   * Merge `patch` into the player-party record and persist. The
+   * record lives under `_data.settings.playerParty` and rides through
+   * the same settings PATCH path as other settings categories — the
+   * server's keyed-object branch overwrites `settings.playerParty`
+   * with the new value.
+   */
+  function setPlayerParty(patch) {
+    init();
+    if (!_data.settings) _data.settings = {};
+    const cur = _data.settings.playerParty || {};
+    const next = { ...cur, ...(patch || {}) };
+    _data.settings.playerParty = next;
+    return _sync('settings', 'save', { id: 'playerParty', data: next });
+  }
+
   // ── Campaign metadata (dashboard hero) ────────────────────────
   // Keyed-object collection with a single `main` record (matches the
   // factions PATCH shape on the wire: `{type, action, payload:{id,data}}`).
@@ -1797,15 +2025,18 @@ export const Store = (() => {
     );
   }
   function searchAll(query) {
+    // Dedupe twin pairs so search results don't double-count entities
+    // that have a player + DM half (the DM side is kept; see
+    // dedupeShadowTwins for the rule).
     return {
-      characters:       searchCharacters(query),
-      locations:        searchLocations(query),
-      events:           searchEvents(query),
-      mysteries:        searchMysteries(query),
-      species:          searchSpecies(query),
-      pantheon:         searchPantheon(query),
-      artifacts:        searchArtifacts(query),
-      historicalEvents: searchHistoricalEvents(query),
+      characters:       dedupeShadowTwins('characters',       searchCharacters(query)),
+      locations:        dedupeShadowTwins('locations',        searchLocations(query)),
+      events:           dedupeShadowTwins('events',           searchEvents(query)),
+      mysteries:        dedupeShadowTwins('mysteries',        searchMysteries(query)),
+      species:          dedupeShadowTwins('species',          searchSpecies(query)),
+      pantheon:         dedupeShadowTwins('pantheon',         searchPantheon(query)),
+      artifacts:        dedupeShadowTwins('artifacts',        searchArtifacts(query)),
+      historicalEvents: dedupeShadowTwins('historicalEvents', searchHistoricalEvents(query)),
     };
   }
 
@@ -1908,7 +2139,8 @@ export const Store = (() => {
     load, init,
     uploadPortrait, deletePortrait, uploadLocalMap,
     uploadIcons, deleteIcon, deleteIcons,
-    linkTwin, getTwin,
+    linkTwin, getTwin, getCollection, dedupeShadowTwins,
+    getPlayerParty, setPlayerParty,
     getCharacters, isPartyMember, isVisibleTo, getPartyMembers, getNPCs,
     getRelationships, getLocations, getEvents, getMysteries,
     getFactions, getFaction, getStatusMap,

@@ -44,11 +44,13 @@ export const EditTemplates = (() => {
   }
 
   // ─ DM section (twin-aware) ───────────────────────────────────
-  // Per-entity DM controls: the visibility select (public / DM) and
-  // the twin link row (create / view / unlink). The visibility
-  // select is DISABLED whenever the entity has a linked twin —
-  // flipping visibility on one side would put both sides in the
-  // same space, an incoherent state. The server enforces the same
+  // Per-entity DM controls: only the visibility select (public /
+  // DM) lives at the bottom of the editor. The twin link/unlink
+  // row was promoted to the form header (see `_twinHeaderRow`)
+  // so it's reachable without scrolling. The visibility select is
+  // DISABLED whenever the entity has a linked twin — flipping
+  // visibility on one side would put both sides in the same
+  // space, an incoherent state. The server enforces the same
   // rule (400 on flip with twin set) as defence in depth.
   //
   // The legacy per-field `secrets` toggles and `[secret]` marker
@@ -70,6 +72,44 @@ export const EditTemplates = (() => {
     historicalEvents: 'historicka-udalost',
   };
 
+  /** Render the twin link/badge/unlink controls for placement inside
+   *  the editor's sticky header (between the title and save/delete).
+   *  Returns empty string when the collection has no visibility model
+   *  OR when the entity is unsaved (no id yet — same rule as the
+   *  bottom DM section). CSS gates the whole element behind
+   *  `body.is-dm` via `.edit-hdr-twin`. */
+  function _twinHeaderRow(uid, entity, collection) {
+    if (!Object.prototype.hasOwnProperty.call(TWIN_ROUTE_PREFIX, collection)) return '';
+    const isNew = !entity || !entity.id;
+    if (isNew) return '';  // can't twin an unsaved entity
+    const linkedId = entity.linkedTwinId;
+    const twin     = linkedId ? (Store.getTwin ? Store.getTwin(collection, entity) : null) : null;
+    if (linkedId) {
+      const route   = TWIN_ROUTE_PREFIX[collection];
+      const twinNm  = twin ? twin.name : linkedId;
+      const twinVis = twin && twin.visibility === 'dm' ? 'DM' : 'hráčský';
+      return `
+        <div class="edit-hdr-twin">
+          <a class="dm-twin-badge dm-twin-badge-linked"
+             href="#/${route}/${esc(linkedId)}"
+             title="Otevřít twin">
+            ✓ ${esc(twinNm)} <span class="dm-twin-badge-vis">(${esc(twinVis)})</span> →
+          </a>
+          <button type="button" class="dm-twin-btn dm-twin-btn-unlink" title="Odpárovat twin"
+            ${dataAction('EditMode.unlinkTwin', collection, entity.id)}>🔗 Odpárovat</button>
+        </div>`;
+    }
+    const visibility    = entity.visibility === 'dm' ? 'dm' : 'public';
+    const oppositeLabel = visibility === 'dm' ? 'hráčský' : 'DM';
+    return `
+      <div class="edit-hdr-twin">
+        <button type="button" class="dm-twin-btn dm-twin-btn-link"
+          ${dataAction('EditMode.openTwinPicker', collection, entity.id)}>
+          🔗 Připojit ${oppositeLabel} twin
+        </button>
+      </div>`;
+  }
+
   /** Build the DM-only controls section for an edit form. Returns
    *  empty string when the collection doesn't participate in the
    *  visibility model (the template just doesn't render anything).
@@ -87,51 +127,21 @@ export const EditTemplates = (() => {
     if (!Object.prototype.hasOwnProperty.call(TWIN_ROUTE_PREFIX, collection)) return '';
     const visibility = (entity && entity.visibility === 'dm') ? 'dm' : 'public';
     const isPc       = !!opts.isPc;
-    const isNew      = !entity || !entity.id;
     const linkedId   = entity && entity.linkedTwinId;
-    const twin       = linkedId ? (Store.getTwin ? Store.getTwin(collection, entity) : null) : null;
 
     // Visibility select. Disabled when a twin exists (flip would
-    // break the pair) OR when the entity is a PC (server-pinned
-    // public).
+    // break the pair — twin controls now live in the header) OR
+    // when the entity is a PC (server-pinned public).
     const visDisabled = (linkedId || isPc) ? 'disabled' : '';
     const visNote = isPc
       ? `<small class="edit-hint">PC postavy jsou vždy veřejné.</small>`
       : linkedId
-        ? `<small class="edit-hint">Tato entita má spárovaný twin — odpárujte ho před změnou viditelnosti.</small>`
+        ? `<small class="edit-hint">Tato entita má spárovaný twin — odpárujte ho v hlavičce před změnou viditelnosti.</small>`
         : '';
-
-    // Twin row. Three shapes:
-    //  - new entity → instruction to save first
-    //  - linked    → name + link + unlink button
-    //  - unlinked  → create-twin button (label depends on current space)
-    let twinRow;
-    if (isNew) {
-      twinRow = `<small class="edit-hint">Uložte entitu nejdřív, pak můžete vytvořit twin.</small>`;
-    } else if (linkedId) {
-      const route   = TWIN_ROUTE_PREFIX[collection];
-      const twinNm  = twin ? twin.name : linkedId;
-      const twinVis = twin && twin.visibility === 'dm' ? 'DM' : 'hráčský';
-      twinRow = `
-        <div class="dm-twin-row">
-          <span class="dm-twin-status">🔗 Spárováno (${esc(twinVis)} twin):</span>
-          <a class="dm-twin-link" href="#/${route}/${esc(linkedId)}">${esc(twinNm)} →</a>
-          <button type="button" class="dm-twin-btn"${dataAction('EditMode.unlinkTwin', collection, entity.id)}>Odpárovat</button>
-        </div>`;
-    } else {
-      const oppositeLabel = visibility === 'dm' ? 'hráčský' : 'DM';
-      twinRow = `
-        <div class="dm-twin-row">
-          <button type="button" class="dm-twin-btn"${dataAction('EditMode.createTwin', collection, entity.id)}>
-            🔗 Vytvořit ${oppositeLabel} twin
-          </button>
-          <small class="edit-hint">Twin je samostatná entita v opačném prostoru, propojená s touhle pro snadný přechod.</small>
-        </div>`;
-    }
 
     return `
       <div class="edit-section visibility-section" id="vis-section-${esc(uid)}">
-        <div class="edit-section-title">🛡 Viditelnost a twin (DM)</div>
+        <div class="edit-section-title">🛡 Viditelnost (DM)</div>
         <div class="edit-field">
           <label class="edit-label">Viditelnost záznamu</label>
           <select class="edit-select" id="vis-${esc(uid)}" ${visDisabled}>
@@ -139,10 +149,6 @@ export const EditTemplates = (() => {
             <option value="dm"     ${visibility==='dm'?'selected':''}>Jen DM</option>
           </select>
           ${visNote}
-        </div>
-        <div class="edit-field">
-          <label class="edit-label">Twin</label>
-          ${twinRow}
         </div>
       </div>`;
   }
@@ -184,6 +190,10 @@ export const EditTemplates = (() => {
   }
 
   function _charBadge(c) {
+    if (c && c.faction === 'party') {
+      const pp = Store.getPlayerParty();
+      return (pp.badge || pp.icon || '🛡') + ' ';
+    }
     const f = Store.getFactions()[c.faction];
     return f ? f.badge + ' ' : '';
   }
@@ -299,7 +309,15 @@ export const EditTemplates = (() => {
     const statusMap = Store.getStatusMap();
     const KNAMES = ["Neznámý","Tušený","Základní","Dobře znám","Plně zmapován"];
 
-    const fOpts = Object.entries(factions).map(([id,f]) =>
+    // Synthetic "Naše parta" option at the top — the player party
+    // moved out of the factions collection (it lives in
+    // settings.playerParty now, edited via Settings → Naše parta),
+    // but `character.faction === 'party'` is still the marker for
+    // party membership. Surfacing it here keeps the character
+    // editor's faction picker as the single place to set PC status.
+    const pp = Store.getPlayerParty();
+    const partyOption = `<option value="party" ${c.faction==='party'?"selected":""}>${esc(pp.badge || pp.icon || '🛡')} ${esc(pp.name || 'Naše parta')}</option>`;
+    const fOpts = partyOption + Object.entries(factions).filter(([id]) => id !== 'party').map(([id,f]) =>
       `<option value="${id}" ${c.faction===id?"selected":""}>${f.badge} ${f.name}</option>`).join("");
     const sOpts = Object.entries(statusMap).map(([id,s]) =>
       `<option value="${id}" ${c.status===id?"selected":""}>${s.icon} ${s.label}</option>`).join("");
@@ -311,7 +329,12 @@ export const EditTemplates = (() => {
     const attitudeChipRowHtml = _attitudeChipRow(`ef-attitudes-${c.id || 'new'}`, c.attitudes || []);
     const knownRows   = (c.known   || []).map(_dynRow).join("");
     const unknownRows = (c.unknown || []).map(_dynRow).join("");
-    const badge = factions[c.faction]?.badge || "👤";
+    // PCs (c.faction === 'party') fall back to the player party's
+    // badge from settings, not the generic 👤, so the portrait
+    // placeholder for a PC matches the rest of the party branding.
+    const badge = c.faction === 'party'
+      ? (Store.getPlayerParty().badge || Store.getPlayerParty().icon || '🛡')
+      : (factions[c.faction]?.badge || "👤");
 
     // Gender: dynamic list from user-editable settings + an "Ostatní
     // (specifikuj)" reveal for free-text values. Existing records may
@@ -342,10 +365,11 @@ export const EditTemplates = (() => {
       data-cb-on-create="species"></div>`;
 
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nová postava" : "✏ " + esc(c.name)}</h2>
+          ${_twinHeaderRow(uid, c, 'characters')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveCharacter', c.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteCharacter', c.id)}>🗑 Smazat</button>` : ""}
@@ -535,10 +559,11 @@ export const EditTemplates = (() => {
       : '';
 
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nové místo" : "✏ " + esc(l.name)}</h2>
+          ${_twinHeaderRow(uid, l, 'locations')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveLocation', l.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteLocation', l.id)}>🗑 Smazat</button>` : ""}
@@ -635,10 +660,11 @@ export const EditTemplates = (() => {
       data-ms-on-create="location"></div>`;
 
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nová událost" : "✏ " + esc(e.name)}</h2>
+          ${_twinHeaderRow(uid, e, 'events')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveEvent', e.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteEvent', e.id)}>🗑 Smazat</button>` : ""}
@@ -704,10 +730,11 @@ export const EditTemplates = (() => {
       data-ms-on-create="character"></div>`;
 
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nová záhada" : "✏ " + esc(m.name)}</h2>
+          ${_twinHeaderRow(uid, m, 'mysteries')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveMystery', m.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteMystery', m.id)}>🗑 Smazat</button>` : ""}
@@ -770,10 +797,11 @@ export const EditTemplates = (() => {
     const factionAttRowHtml = _attitudeChipRow(`ff-attitudes-${uid}`, f.attitudes || []);
 
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form" style="max-width:760px">
         <div class="edit-form-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nová frakce" : "✏ " + esc(f.name)}</h2>
+          ${_twinHeaderRow(uid, isNew ? null : { ...f, id: facId }, 'factions')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveFaction', isNew ? "" : facId)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteFaction', facId)}>🗑 Smazat</button>` : ""}
@@ -859,10 +887,11 @@ export const EditTemplates = (() => {
     if (isNew) s = { id:'', name:'', description:'' };
     const uid = s.id || 'new_sp';
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nový druh" : "✏ " + esc(s.name)}</h2>
+          ${_twinHeaderRow(uid, s, 'species')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveSpecies', s.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteSpecies', s.id)}>🗑 Smazat</button>` : ""}
@@ -890,10 +919,11 @@ export const EditTemplates = (() => {
     if (isNew) g = { id:'', name:'', domain:'', alignment:'', symbol:'', description:'', tags:[] };
     const uid = g.id || 'new_god';
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nový bůh / bohyně" : "✏ " + esc(g.name)}</h2>
+          ${_twinHeaderRow(uid, g, 'pantheon')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveBuh', g.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteBuh', g.id)}>🗑 Smazat</button>` : ""}
@@ -956,10 +986,11 @@ export const EditTemplates = (() => {
       data-cb-on-create="location"></div>`;
 
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nový artefakt" : "✏ " + esc(a.name)}</h2>
+          ${_twinHeaderRow(uid, a, 'artifacts')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveArtifact', a.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteArtifact', a.id)}>🗑 Smazat</button>` : ""}
@@ -1015,10 +1046,11 @@ export const EditTemplates = (() => {
       data-ms-on-create="location"></div>`;
 
     return `
-      <button class="back-btn"${dataAction('back')}>← Zpět</button>
       <div class="edit-form edit-form-split">
         <div class="edit-form-header edit-form-split-header">
+          <button class="back-btn"${dataAction('back')}>← Zpět</button>
           <h2 class="edit-form-title">${isNew ? "✦ Nová historická událost" : "✏ " + esc(h.name)}</h2>
+          ${_twinHeaderRow(uid, h, 'historicalEvents')}
           <div class="edit-hdr-actions">
             <button class="edit-save-btn"${dataAction('EditMode.saveHistoricalEvent', h.id)}>💾 Uložit</button>
             ${!isNew ? `<button class="edit-delete-btn"${dataAction('EditMode.deleteHistoricalEvent', h.id)}>🗑 Smazat</button>` : ""}
@@ -1112,6 +1144,7 @@ export const EditTemplates = (() => {
     readDmSection:         _readDmSection,
     visibilitySection:     _visibilitySection,
     readVisibilitySection: _readVisibilitySection,
+    twinHeaderRow:         _twinHeaderRow,
   };
 
 })();

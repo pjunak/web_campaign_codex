@@ -179,9 +179,21 @@ export const CloudMap = (() => {
   }
 
   // ── Data helpers ────────────────────────────────────────────
-  function _factionColor(id) { return Store.getFactions()[id]?.color  || '#444'; }
-  function _factionBadge(id) { return Store.getFactions()[id]?.badge  || '';    }
-  function _factionName(id)  { return Store.getFactions()[id]?.name   || id;    }
+  // The player party lives in settings.playerParty now (not in the
+  // factions collection), so these resolvers special-case the
+  // `party` id and pull from Store.getPlayerParty() instead.
+  function _factionColor(id) {
+    if (id === 'party') return Store.getPlayerParty().color || '#444';
+    return Store.getFactions()[id]?.color || '#444';
+  }
+  function _factionBadge(id) {
+    if (id === 'party') { const pp = Store.getPlayerParty(); return pp.badge || pp.icon || '🛡'; }
+    return Store.getFactions()[id]?.badge || '';
+  }
+  function _factionName(id) {
+    if (id === 'party') return Store.getPlayerParty().name || 'Naše parta';
+    return Store.getFactions()[id]?.name || id;
+  }
   function _statusIcon(s)    { return Store.getStatusMap()[s]?.icon   || '?';   }
   function _statusLabel(s)   { return Store.getStatusMap()[s]?.label  || s;     }
   function _statusColor(s)   { return Store.getStatusMap()[s]?.color  || '#888';}

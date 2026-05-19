@@ -356,3 +356,200 @@ test('twin create on missing source returns 404', async () => {
     assert.equal(res.status, 404);
   } finally { await srv.kill(); }
 });
+
+// ── Link two existing entities ────────────────────────────────────
+
+test('twin link: pairs two existing entities (opposite visibility, same collection)', async () => {
+  // The duplicate-resolution case: DM had "Frulam" privately, player
+  // created "Frulam" publicly. DM marries the two records.
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [
+        { id: 'pub_frulam', name: 'Frulam', faction: 'neutral', visibility: 'public' },
+        { id: 'dm_frulam',  name: 'Frulam Mondath', faction: 'cult', visibility: 'dm' },
+      ],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters',
+      sourceId: 'pub_frulam', targetId: 'dm_frulam',
+    });
+    assert.equal(res.status, 200);
+    const chars = await readCollection(srv, 'characters.json');
+    const src = chars.find(c => c.id === 'pub_frulam');
+    const tgt = chars.find(c => c.id === 'dm_frulam');
+    assert.equal(src.linkedTwinId, 'dm_frulam');
+    assert.equal(tgt.linkedTwinId, 'pub_frulam');
+    // Names + everything else preserved (link doesn't touch content).
+    assert.equal(src.name, 'Frulam');
+    assert.equal(tgt.name, 'Frulam Mondath');
+  } finally { await srv.kill(); }
+});
+
+test('twin link: rejected for player role (403)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [
+        { id: 'a', name: 'A', faction: 'neutral', visibility: 'public' },
+        { id: 'b', name: 'B', faction: 'cult',    visibility: 'dm'     },
+      ],
+    },
+  });
+  try {
+    await loginAs(srv, PLAYER);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters', sourceId: 'a', targetId: 'b',
+    });
+    assert.equal(res.status, 403);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: rejects same-visibility target (both public)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [
+        { id: 'a', name: 'A', faction: 'neutral', visibility: 'public' },
+        { id: 'b', name: 'B', faction: 'neutral', visibility: 'public' },
+      ],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters', sourceId: 'a', targetId: 'b',
+    });
+    assert.equal(res.status, 400);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: rejects same-visibility target (both DM)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [
+        { id: 'a', name: 'A', faction: 'cult', visibility: 'dm' },
+        { id: 'b', name: 'B', faction: 'cult', visibility: 'dm' },
+      ],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters', sourceId: 'a', targetId: 'b',
+    });
+    assert.equal(res.status, 400);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: rejects when source already has a twin (409)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [
+        { id: 'a', name: 'A', faction: 'neutral', visibility: 'public', linkedTwinId: 'old_x' },
+        { id: 'old_x', name: 'Old', faction: 'cult', visibility: 'dm',  linkedTwinId: 'a' },
+        { id: 'b', name: 'B', faction: 'cult', visibility: 'dm' },
+      ],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters', sourceId: 'a', targetId: 'b',
+    });
+    assert.equal(res.status, 409);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: rejects when target already has a twin (409)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [
+        { id: 'a', name: 'A', faction: 'neutral', visibility: 'public' },
+        { id: 'b', name: 'B', faction: 'cult', visibility: 'dm', linkedTwinId: 'other' },
+        { id: 'other', name: 'Other', faction: 'neutral', visibility: 'public', linkedTwinId: 'b' },
+      ],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters', sourceId: 'a', targetId: 'b',
+    });
+    assert.equal(res.status, 409);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: rejects missing target (404)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [{ id: 'a', name: 'A', faction: 'neutral', visibility: 'public' }],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters', sourceId: 'a', targetId: 'nope',
+    });
+    assert.equal(res.status, 404);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: rejects sourceId === targetId (400)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [{ id: 'a', name: 'A', faction: 'neutral', visibility: 'public' }],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'characters', sourceId: 'a', targetId: 'a',
+    });
+    assert.equal(res.status, 400);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: missing targetId returns 400', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'characters.json': [{ id: 'a', name: 'A', faction: 'neutral', visibility: 'public' }],
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, { action: 'link', type: 'characters', sourceId: 'a' });
+    assert.equal(res.status, 400);
+  } finally { await srv.kill(); }
+});
+
+test('twin link: works on factions (keyed-object collection)', async () => {
+  const srv = await startServer({
+    dmPassword: DM, playerPassword: PLAYER,
+    seedData: {
+      'factions.json': {
+        pub: { id: 'pub', name: 'Public Cult', visibility: 'public' },
+        dm:  { id: 'dm',  name: 'Real Cult',   visibility: 'dm'     },
+      },
+    },
+  });
+  try {
+    await loginAs(srv, DM);
+    const res = await postTwin(srv, {
+      action: 'link', type: 'factions', sourceId: 'pub', targetId: 'dm',
+    });
+    assert.equal(res.status, 200);
+    const facs = await readCollection(srv, 'factions.json');
+    assert.equal(facs.pub.linkedTwinId, 'dm');
+    assert.equal(facs.dm.linkedTwinId,  'pub');
+  } finally { await srv.kill(); }
+});

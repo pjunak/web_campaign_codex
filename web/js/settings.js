@@ -8,7 +8,8 @@
 
 import { Store } from './store.js';
 import { EditMode } from './editmode.js';
-import { WorldMap } from './map.js';
+import { WorldMap, PIN_TYPES } from './map.js';
+import { Role } from './role.js';
 import { esc, dataAction, dataOn } from './utils.js';
 import { SIDEBAR_PAGES } from './constants.js';
 
@@ -19,12 +20,17 @@ export const Settings = (() => {
   // places of that type). `icon` / `color` are shown as side-by-side
   // inputs when declared.
   const CATEGORIES = [
-    { id: 'relationshipTypes', label: 'Vazby mezi postavami', icon: '🔗',
+    { id: 'relationshipTypes', label: 'Vazby', icon: '🔗',
       fields: ['label', 'color', 'style'] },
     { id: 'genders',           label: 'Pohlaví',              icon: '⚥',
       fields: ['label'] },
+    // pinTypes: the emoji `icon` and `color` fields are deprecated
+    // (color was never read by the renderer; the emoji is only a
+    // last-resort fallback when no SVG resolves). The editable
+    // fields are now: label, defaultIconId (pick from bundled SVGs),
+    // size. Per-pin-type custom uploads live in the 🎨 panel.
     { id: 'pinTypes',          label: 'Typy míst',             icon: '📍',
-      fields: ['label', 'icon', 'color', 'size'] },
+      fields: ['label', 'defaultIconId', 'size'] },
     { id: 'characterStatuses', label: 'Stavy postav',          icon: '●',
       fields: ['label', 'icon', 'color'] },
     { id: 'eventPriorities',   label: 'Priority událostí',     icon: '⚑',
@@ -43,10 +49,12 @@ export const Settings = (() => {
   // panels (world-map upload, map-view presets, backup tools) instead
   // of the enum editor.
   const SPECIAL_TABS = [
+    { id: 'playerParty',  label: 'Naše parta',      icon: '🛡' },
     { id: 'worldmap',     label: 'Mapy',            icon: '🗺' },
     { id: 'mapViews',     label: 'Pohledy na mapě', icon: '📍' },
     { id: 'sidebarPages', label: 'Postranní panel', icon: '🧭' },
     { id: 'backup',       label: 'Záloha',          icon: '💾' },
+    { id: 'account',      label: 'Účet',            icon: '👤' },
   ];
 
   let _activeCat       = CATEGORIES[0].id;
@@ -128,6 +136,8 @@ export const Settings = (() => {
     if (_activeCat === 'mapViews')     return _mapViewsHtml();
     if (_activeCat === 'sidebarPages') return _sidebarPagesHtml();
     if (_activeCat === 'backup')       return _backupHtml();
+    if (_activeCat === 'account')      return _accountHtml();
+    if (_activeCat === 'playerParty')  return _playerPartyHtml();
     const cat = CATEGORIES.find(c => c.id === _activeCat);
     const items = Store.getEnum(_activeCat);
     const rows = items.map(it => _rowHtml(cat, it)).join('');
@@ -168,10 +178,11 @@ export const Settings = (() => {
             title="Vlastní ikony pro tuto značku"
             ${dataAction('Settings.toggleIconPanel', item.id)}>🎨</button>`
       : '';
-    // For pinTypes rows, prefer a real artwork preview (first user-
-    // uploaded file → bundled default → emoji fallback) so the row
-    // shows the same artwork the map renders. All other categories
-    // keep the emoji/character glyph the GM typed in.
+    // For pinTypes rows, prefer a real artwork preview (uploaded files
+    // → user-picked defaultIconId → per-id bundled default → emoji
+    // fallback) so the row shows the same artwork the map renders.
+    // All other categories keep the emoji/character glyph the GM
+    // typed in.
     const rowIconHtml = (() => {
       if (cat.id === 'pinTypes') {
         const cfg = item.iconConfig;
@@ -179,17 +190,21 @@ export const Settings = (() => {
         if (cfg && Array.isArray(cfg.files) && cfg.files.length && cfg.files[0].url) {
           url = cfg.files[0].url;
         }
+        if (!url && item.defaultIconId) url = WorldMap.bundledDefaultUrl(item.defaultIconId);
         if (!url) url = WorldMap.bundledDefaultUrl(item.id);
         if (url) return `<img class="settings-row-icon-img" src="${esc(url)}" alt="" ${dataOn('error', 'hide', '$el')}>`;
       }
       return `<span class="settings-row-icon">${esc(item.icon || item.label?.[0] || '·')}</span>`;
     })();
+    // ID is intentionally hidden from existing rows — it's auto-generated
+    // from the name at creation time and never editable. Showing it added
+    // visual clutter without offering an action. The new-row form (see
+    // _formHtml) still surfaces it as an optional override.
     const row = `
       <div class="settings-row">
         ${rowIconHtml}
         <span class="settings-row-label">${esc(item.label || item.id)}</span>
         ${swatch}
-        <code class="settings-row-id">${esc(item.id)}</code>
         <span class="settings-row-usage" title="Použitích">${usageCount > 0 ? usageCount + '×' : '–'}</span>
         <div class="settings-row-actions">
           ${iconBtn}
@@ -373,6 +388,35 @@ export const Settings = (() => {
           min="14" max="64" step="2"
           value="${Number(item.size) || 28}">
       </label>`;
+    // Default-icon picker — bundled SVG markers from the game-icons
+    // pack. Lets the GM pick an icon for user-created pin types
+    // (which otherwise have no bundled fallback and fall through to
+    // an emoji). For seed pin types, picking here OVERRIDES the
+    // per-id bundled default; leave empty to keep the original.
+    const defaultIconField = () => {
+      const ids = (WorldMap.getBundledDefaultIconIds && WorldMap.getBundledDefaultIconIds()) || [];
+      const current = item.defaultIconId || '';
+      const opts = ['<option value="">— výchozí pro tento typ —</option>',
+        ...ids.map(id => {
+          const label = (PIN_TYPES[id] && PIN_TYPES[id].label) || id;
+          return `<option value="${esc(id)}" ${id===current?'selected':''}>${esc(label)}</option>`;
+        })].join('');
+      const previewUrl = current
+        ? WorldMap.bundledDefaultUrl(current)
+        : (WorldMap.bundledDefaultUrl(item.id) || '');
+      const previewHtml = previewUrl
+        ? `<img src="${esc(previewUrl)}" alt="" style="width:32px;height:32px;object-fit:contain;background:rgba(0,0,0,0.55);border-radius:4px;padding:2px" ${dataOn('error', 'hide', '$el')}>`
+        : `<span class="settings-hint" style="align-self:center">(emoji fallback)</span>`;
+      return `
+        <label class="settings-field">
+          <span class="settings-field-label">Ikona</span>
+          <div style="display:flex;gap:0.5rem;align-items:center">
+            ${previewHtml}
+            <select class="edit-select" id="sf-${uid}-defaultIconId" style="flex:1"
+              ${dataOn('change', 'Settings.previewDefaultIcon', uid, '$value')}>${opts}</select>
+          </div>
+        </label>`;
+    };
     // Glow intensity for this attitude — moved off the entity onto
     // the enum item so editing here updates every glow at once.
     // Range 0..1, percent readout next to the slider.
@@ -396,6 +440,7 @@ export const Settings = (() => {
       if (name === 'style')                                                            return styleField();
       if (name === 'size')                                                             return sizeField();
       if (name === 'strength')                                                         return strengthField();
+      if (name === 'defaultIconId')                                                    return defaultIconField();
       return field(name, name === 'icon' ? 'Emoji nebo znak' : 'Text');
     }).join('');
 
@@ -406,11 +451,7 @@ export const Settings = (() => {
             <label class="settings-field">
               <span class="settings-field-label">ID (volitelně, vygeneruje se z názvu)</span>
               <input class="edit-input" id="sf-${uid}-id" placeholder="např. ally">
-            </label>` : `
-            <div class="settings-field settings-field-readonly">
-              <span class="settings-field-label">ID</span>
-              <code>${esc(item.id)}</code>
-            </div>`}
+            </label>` : ``}
           ${inputs}
         </div>
         <div class="settings-form-actions">
@@ -428,7 +469,30 @@ export const Settings = (() => {
       style: 'Styl', size: 'Velikost',
       strength: 'Intenzita záře',
       bg: 'Pozadí', fg: 'Popředí', labelColor: 'Barva textu',
+      defaultIconId: 'Ikona',
     }[name] || name;
+  }
+
+  /** Live-update the icon preview next to the default-icon select.
+   *  Walks up from the select to find the sibling preview, so a
+   *  re-render of the form mid-interaction doesn't matter. */
+  function previewDefaultIcon(uid, value) {
+    const sel = document.getElementById(`sf-${uid}-defaultIconId`);
+    if (!sel) return;
+    const wrap = sel.parentElement;
+    if (!wrap) return;
+    const url = value ? WorldMap.bundledDefaultUrl(value) : '';
+    let img = wrap.querySelector('img');
+    if (url) {
+      if (!img) {
+        img = document.createElement('img');
+        img.style.cssText = 'width:32px;height:32px;object-fit:contain;background:rgba(0,0,0,0.55);border-radius:4px;padding:2px';
+        wrap.insertBefore(img, sel);
+      }
+      img.src = url;
+    } else if (img) {
+      img.remove();
+    }
   }
 
   // ── Public commands (called from inline onclick handlers) ────
@@ -504,6 +568,10 @@ export const Settings = (() => {
         if (n < 0) n = 0;
         if (n > 1) n = 1;
         item[f] = n;
+      } else if (f === 'defaultIconId') {
+        // Empty select means "use per-type default"; clear the override.
+        if (v) item[f] = v;
+        else delete item[f];
       } else if (v !== '' && v != null) {
         item[f] = (f === 'size') ? Number(v) : v;
       }
@@ -1096,6 +1164,129 @@ export const Settings = (() => {
       .finally(() => { if (input) input.value = ''; });
   }
 
+  // ── Player party panel ───────────────────────────────────────
+  // Replaces the legacy `factions.party` record. Edits the
+  // player-party visual identity that's used to brand PCs across
+  // the UI (faction picker option, dashboard / postavy grouping
+  // label, glow colour). Members are still managed through each
+  // character's faction dropdown — the source of truth for "is a
+  // PC" is `character.faction === 'party'`.
+  function _playerPartyHtml() {
+    const pp = Store.getPlayerParty();
+    const memberCount = Store.getPartyMembers().length;
+    return `
+      <div class="settings-editor-head">
+        <h2>🛡 Naše parta</h2>
+      </div>
+      <div class="settings-panel">
+        <p class="settings-hint" style="margin-bottom:1rem">
+          Vizuální identita hráčské party — používá se v dropdownu frakce
+          v editoru postavy, na rozcestníku, v seznamu postav a pro záři
+          okolo portrétů PC. Členství v partě se řídí volbou
+          <em>Naše parta</em> ve frakci dané postavy.
+        </p>
+        <div class="settings-form-row">
+          <label class="settings-field">
+            <span class="settings-field-label">Název</span>
+            <input class="edit-input" id="pp-name" value="${esc(pp.name)}" placeholder="Naše parta">
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">Ikona (emoji)</span>
+            <input class="edit-input" id="pp-icon" value="${esc(pp.icon)}" placeholder="🛡">
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">Barva (záře / chip)</span>
+            <input class="edit-input" type="color" id="pp-color" value="${esc(pp.color)}">
+          </label>
+          <label class="settings-field">
+            <span class="settings-field-label">Barva textu</span>
+            <input class="edit-input" type="color" id="pp-textColor" value="${esc(pp.textColor)}">
+          </label>
+        </div>
+        <div class="settings-form-actions" style="margin-top:1rem">
+          <button type="button" class="edit-save-btn"
+            ${dataAction('Settings.savePlayerParty')}>💾 Uložit</button>
+        </div>
+        <hr style="border:none;border-top:1px dashed rgba(212,184,122,0.18);margin:1.5rem 0">
+        <div class="settings-mapviews-group-title">Členové party (${memberCount})</div>
+        <p class="settings-hint" style="margin-top:0.6rem">
+          Členství se nastavuje v editoru jednotlivých postav — v dropdownu
+          „Frakce“ vyber <em>Naše parta</em>. Pro úpravu klikni na postavu níže.
+        </p>
+        <div class="settings-rows" style="margin-top:0.6rem">
+          ${Store.getPartyMembers().map(c => `
+            <a class="settings-row" href="#/postava/${esc(c.id)}" style="text-decoration:none;color:inherit">
+              <span class="settings-row-icon">${esc(pp.badge || pp.icon || '🛡')}</span>
+              <span class="settings-row-label">${esc(c.name)}</span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span style="color:var(--text-muted);font-size:0.78rem">otevřít →</span>
+            </a>`).join('') || '<div class="settings-empty">Zatím žádní členové.</div>'}
+        </div>
+      </div>`;
+  }
+
+  /** Persist the player-party edits. Reads the four inputs and
+   *  fires through Store.setPlayerParty which mirrors to settings
+   *  storage via the regular PATCH path. */
+  function savePlayerParty() {
+    const get = id => document.getElementById(id)?.value?.trim() || '';
+    const patch = {
+      name:      get('pp-name')      || 'Naše parta',
+      icon:      get('pp-icon')      || '🛡',
+      badge:     get('pp-icon')      || '🛡',  // mirror so _charBadge resolves
+      color:     get('pp-color')     || '#F5F0E4',
+      textColor: get('pp-textColor') || '#1a1410',
+    };
+    Store.setPlayerParty(patch);
+    _flash('Naše parta uložena');
+    render();
+  }
+
+  // ── Account panel ────────────────────────────────────────────
+  // Lightweight: current role chip + logout button. Lives in Settings
+  // so DM viewers (who don't have a 'Odhlásit' affordance in the
+  // sidebar role badge) can sign out without hunting for it.
+  function _accountHtml() {
+    const role     = Role.get();
+    const realRole = Role.getReal();
+    const roleChip = (() => {
+      if (role === 'dm')                           return `<span class="role-badge-chip role-badge-dm">🛡 DM</span>`;
+      if (role === 'player' && realRole === 'dm')  return `<span class="role-badge-chip role-badge-impersonating">👁 Pohled hráče (DM)</span>`;
+      if (role === 'player')                       return `<span class="role-badge-chip role-badge-player">👤 Hráč</span>`;
+      return `<span class="role-badge-chip role-badge-anonymous">👁 Veřejný pohled</span>`;
+    })();
+    const logoutBtn = role
+      ? `<button type="button" class="edit-delete-btn"
+           ${dataAction('Settings.logout')}>↩ Odhlásit</button>`
+      : `<button type="button" class="inline-create-btn"
+           ${dataAction('EditMode.toggle')}>🔑 Přihlásit</button>`;
+    return `
+      <div class="settings-editor-head">
+        <h2>👤 Účet</h2>
+      </div>
+      <div class="settings-panel">
+        <div class="settings-field" style="display:flex;flex-direction:column;gap:0.6rem;margin-bottom:1rem">
+          <span class="settings-field-label">Aktuální role</span>
+          <div>${roleChip}</div>
+        </div>
+        <p class="settings-hint" style="margin-bottom:0.8rem">
+          Odhlášení zruší relaci a vrátí stránku do veřejného režimu.
+          Pro další úpravy bude potřeba zadat heslo znovu.
+        </p>
+        ${logoutBtn}
+      </div>`;
+  }
+
+  /** Clear the session cookie via Role.logout(). The role:changed
+   *  event handler in app.js refetches data + re-renders, so we don't
+   *  need to navigate ourselves. */
+  function logout() {
+    if (!confirm('Odhlásit se? Pro další úpravy bude potřeba zadat heslo znovu.')) return;
+    Role.logout().then(() => _flash('Odhlášeno'));
+  }
+
   // ── Backup / Snapshot panel ──────────────────────────────────
   function _backupHtml() {
     const rows = _snapshots.length ? _snapshots.map(_snapshotRow).join('') : `
@@ -1370,5 +1561,8 @@ export const Settings = (() => {
     selectMap, uploadSubMap,
     updateMapZoomRatioReadout, commitMapZoomRatio,
     isPendingSelfCommit,
+    logout,
+    previewDefaultIcon,
+    savePlayerParty,
   };
 })();

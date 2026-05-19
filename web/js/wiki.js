@@ -131,6 +131,11 @@ export const Wiki = (() => {
     for (const a of Store.getEnum('attitudes') || []) {
       map[a.id] = a.labelColor || a.bg || '#888';
     }
+    // Synthetic 'party' entry — sourced from settings.playerParty so
+    // the party glow stays editable in one place even though the
+    // attitudes enum no longer carries a `party` row.
+    const pp = Store.getPlayerParty();
+    if (pp && pp.color && !map.party) map.party = pp.color;
     return map;
   }
   function _hexToRgba(hex, alpha) {
@@ -253,9 +258,14 @@ export const Wiki = (() => {
   function portraitWrap(c, extraClass, glowFilter) {
     const factions  = Store.getFactions();
     const deadHtml  = c.status === "dead" ? `<div class="dead-overlay">💀</div>` : "";
+    // Party PCs use the playerParty badge; others fall back to their
+    // faction badge or a generic 👤.
+    const placeholderBadge = c.faction === PARTY_FACTION_ID
+      ? (Store.getPlayerParty().badge || Store.getPlayerParty().icon || '🛡')
+      : (factions[c.faction]?.badge || "👤");
     const imgHtml   = c.portrait
       ? `<img class="portrait-img" src="${esc(c.portrait)}" alt="${esc(c.name)}" loading="lazy">`
-      : `<div class="portrait-placeholder">${factions[c.faction]?.badge || "👤"}</div>`;
+      : `<div class="portrait-placeholder">${placeholderBadge}</div>`;
     const styleAttr = glowFilter ? ` style="filter: ${glowFilter}"` : '';
     return `<div class="portrait-wrap${extraClass ? " "+extraClass : ""}" data-knowledge="${c.knowledge}" data-status="${c.status}"${styleAttr}>
       ${imgHtml}${deadHtml}
@@ -475,7 +485,7 @@ export const Wiki = (() => {
   }
 
   function _dashLastSessionHtml(editing) {
-    const events = Store.getEvents();
+    const events = Store.dedupeShadowTwins('events', Store.getEvents());
     const maxSitting = events.reduce((m, e) => Math.max(m, Number(e.sitting) || 0), 0);
     if (maxSitting === 0) {
       if (editing) return `
@@ -514,7 +524,7 @@ export const Wiki = (() => {
   }
 
   function _dashMysteriesHtml() {
-    const unsolved = Store.getMysteries()
+    const unsolved = Store.dedupeShadowTwins('mysteries', Store.getMysteries())
       .filter(m => !m.solved)
       .sort((a, b) =>
         (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9)
@@ -596,8 +606,10 @@ export const Wiki = (() => {
   function _postavyApply(filterFaction) {
     const s = _listState.postavy;
     // /postavy is the NPC roster — PCs live on the dashboard's "Naše
-    // parta" strip and at /parta. Filter via Store.getNPCs().
-    let chars = Store.getNPCs();
+    // parta" strip and at /parta. Filter via Store.getNPCs(). The
+    // dedupe step drops a public twin when its DM twin is also in
+    // the list so each twin pair appears once.
+    let chars = Store.dedupeShadowTwins('characters', Store.getNPCs());
     if (s.values && s.values.length) {
       chars = chars.filter(c => _matchAll(s.values,
         `${c.name||''} ${c.title||''} ${(c.tags||[]).join(' ')} ${c.description||''} ${c.species||''} ${c.gender||''}`));
@@ -664,7 +676,17 @@ export const Wiki = (() => {
       const sections = orderedKeys.map(fid => {
         const list = byFac.get(fid) || [];
         const f = factions[fid];
-        const label = f ? `${f.badge || '⬡'} ${f.name}` : (fid === '__nofac__' ? 'Bez frakce' : fid);
+        let label;
+        if (fid === PARTY_FACTION_ID) {
+          const pp = Store.getPlayerParty();
+          label = `${pp.badge || pp.icon || '🛡'} ${pp.name || 'Naše parta'}`;
+        } else if (f) {
+          label = `${f.badge || '⬡'} ${f.name}`;
+        } else if (fid === '__nofac__') {
+          label = 'Bez frakce';
+        } else {
+          label = fid;
+        }
         return `
           <div class="list-group">
             <div class="list-group-title">${esc(label)} <span class="list-group-count">${list.length}</span></div>
@@ -797,10 +819,12 @@ export const Wiki = (() => {
     const colors  = _attitudeColorMap();
     const entries = Store.getEffectiveAttitudes(c, 'character');
     const glow    = _attitudeGlow(entries, colors);
+    const twinMark = _twinCardMarker(c);
     return `
       <a class="char-card" href="#/postava/${c.id}">
         ${portraitWrap(c, '', glow)}
         ${overlay}
+        ${twinMark}
         <div class="char-card-info">
           <div class="char-card-name">${c.knowledge >= 1 ? esc(c.name) : "???"}</div>
           <div class="char-card-title">${c.knowledge >= 2 ? esc(c.title) : "Neznámá"}</div>
@@ -808,6 +832,15 @@ export const Wiki = (() => {
         </div>
       </a>
     `;
+  }
+
+  /** Small "🔗 twin" badge for cards whose entity is the surviving
+   *  half of a twin pair. Empty string when entity has no linkedTwinId.
+   *  CSS hides for non-DM viewers because the twin is irrelevant to
+   *  them (they only ever see the public half anyway). */
+  function _twinCardMarker(entity) {
+    if (!entity || !entity.linkedTwinId) return '';
+    return `<span class="card-twin-marker" title="Tato entita má twin">🔗</span>`;
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -938,7 +971,7 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   function _mistaApply() {
     const s = _listState.mista;
-    let locs = Store.getLocations();
+    let locs = Store.dedupeShadowTwins('locations', Store.getLocations());
     if (s.values && s.values.length) {
       locs = locs.filter(l => _matchAll(s.values,
         `${l.name||''} ${l.type||''} ${l.region||''} ${(l.tags||[]).join(' ')} ${l.description||''}`));
@@ -984,6 +1017,7 @@ export const Wiki = (() => {
       : `color:${pt.color}`;
     return `<a class="loc-card" href="#/misto/${l.id}" style="text-decoration:none;position:relative">
       ${editBtn}
+      ${_twinCardMarker(l)}
       <div class="loc-card-icon" style="${iconStyle}">${iconInner}</div>
       <div class="loc-card-body">
         <div class="loc-card-name">${esc(l.name)}</div>
@@ -1140,9 +1174,13 @@ export const Wiki = (() => {
     if (EditMode.isActive()) return EditMode.renderLocationEditor(l);
 
     const factions = Store.getFactions();
-    const chars = Store.getCharactersInLocation(id).map(c =>
-      `<a class="relation-chip" href="#/postava/${c.id}">${factions[c.faction]?.badge || "👤"} ${esc(c.name)}</a>`
-    ).join("");
+    const pp = Store.getPlayerParty();
+    const chars = Store.getCharactersInLocation(id).map(c => {
+      const badge = c.faction === PARTY_FACTION_ID
+        ? (pp.badge || pp.icon || '🛡')
+        : (factions[c.faction]?.badge || "👤");
+      return `<a class="relation-chip" href="#/postava/${c.id}">${badge} ${esc(c.name)}</a>`;
+    }).join("");
 
     // Hierarchy: ancestor breadcrumb + sub-locations.
     const ancestors = Store.getAncestorLocations(id).reverse();
@@ -1305,7 +1343,7 @@ export const Wiki = (() => {
   //  MYSTERIES LIST
   // ══════════════════════════════════════════════════════════════
   function renderMysteries() {
-    const mysteries = Store.getMysteries();
+    const mysteries = Store.dedupeShadowTwins('mysteries', Store.getMysteries());
     if (mysteries.length === 0) {
       return `
         <div class="page-header"><h1>❓ Záhady</h1></div>
@@ -1338,7 +1376,7 @@ export const Wiki = (() => {
             ? `<a class="list-edit-btn" href="#/zahada/${m.id}" title="Upravit" style="float:right;margin-left:0.5rem">✏</a>` : "";
           return `<div class="mystery-card">
             <div class="mystery-name" style="display:flex;align-items:center;justify-content:space-between">
-              <span>❓ ${esc(m.name)}</span>
+              <span>❓ ${esc(m.name)} ${_twinCardMarker(m)}</span>
               ${editBtn}
             </div>
             <div class="mystery-priority priority-${m.priority}">PRIORITA: ${m.priority.toUpperCase()}</div>
@@ -1410,11 +1448,18 @@ export const Wiki = (() => {
     const factions = Store.getFactions();
     const chars    = Store.getCharacters();
 
-    // Entries with pre-computed member count for sort "members" option.
-    let entries = Object.entries(factions).map(([id, f]) => ({
-      id, f,
-      memberCount: chars.filter(c => c.faction === id).length,
-    }));
+    // Build entries, then dedupe shadow twins. Factions live in a
+    // keyed-object collection — passing values through dedupeShadowTwins
+    // requires matching the array view used by getCollection('factions').
+    const dedupedFactions = new Map(
+      Store.dedupeShadowTwins('factions', Object.values(factions)).map(f => [f.id, f])
+    );
+    let entries = Object.entries(factions)
+      .filter(([id]) => dedupedFactions.has(id))
+      .map(([id, f]) => ({
+        id, f,
+        memberCount: chars.filter(c => c.faction === id).length,
+      }));
 
     if (s.values && s.values.length) {
       entries = entries.filter(({ id, f }) =>
@@ -1448,6 +1493,7 @@ export const Wiki = (() => {
       return `
         <a class="faction-card" href="#/frakce/${id}" style="text-decoration:none;position:relative;border-color:${f.color}55">
           ${ovl}
+          ${_twinCardMarker(f)}
           <div class="faction-card-header" style="background:${f.color}22;border-bottom:1px solid ${f.color}33">
             <span class="faction-card-badge">${f.badge}</span>
             <span class="faction-card-name" style="color:${f.textColor}">${esc(f.name)}</span>
@@ -1519,6 +1565,13 @@ export const Wiki = (() => {
   // ══════════════════════════════════════════════════════════════
   function renderFactionArticle(id) {
     if (id === "new") return EditMode.renderFactionEditor(null, "new");
+    // Party left the factions collection — point the user at Settings.
+    if (id === PARTY_FACTION_ID) {
+      return `
+        <div class="page-header"><h1>🛡 Naše parta</h1></div>
+        <p>Hráčská parta se nyní spravuje přes <a class="wiki-link" href="#/nastaveni">⚙ Nastavení → Naše parta</a> (vzhled) a v editoru jednotlivých postav (členství).</p>
+        <p><a class="wiki-link" href="#/parta">→ Otevřít seznam členů</a></p>`;
+    }
     const factions = Store.getFactions();
     const f = factions[id];
     if (!f) return `<p>Frakce '${id}' nenalezena.</p>`;
@@ -1728,7 +1781,7 @@ export const Wiki = (() => {
 
   // ── Species (Druhy) ─────────────────────────────────────────────
   function renderSpeciesList() {
-    const items = Store.getSpecies().slice()
+    const items = Store.dedupeShadowTwins('species', Store.getSpecies()).slice()
       .sort((a, b) => _czCompare(a.name, b.name));
     if (items.length === 0) {
       return `
@@ -1745,6 +1798,7 @@ export const Wiki = (() => {
             ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
           return `<a class="loc-card" href="#/druh/${s.id}" style="text-decoration:none;position:relative">
             ${editBtn}
+            ${_twinCardMarker(s)}
             <div class="loc-card-icon">🧬</div>
             <div class="loc-card-body">
               <div class="loc-card-name">${esc(s.name)}</div>
@@ -1789,7 +1843,7 @@ export const Wiki = (() => {
 
   // ── Pantheon (Panteon) ──────────────────────────────────────────
   function renderPantheonList() {
-    const items = Store.getPantheon().slice()
+    const items = Store.dedupeShadowTwins('pantheon', Store.getPantheon()).slice()
       .sort((a, b) => _czCompare(a.name, b.name));
     if (items.length === 0) {
       return `
@@ -1807,6 +1861,7 @@ export const Wiki = (() => {
           const sub = [g.domain, g.alignment].filter(Boolean).map(esc).join(' · ');
           return `<a class="loc-card" href="#/buh/${g.id}" style="text-decoration:none;position:relative">
             ${editBtn}
+            ${_twinCardMarker(g)}
             <div class="loc-card-icon">${esc(g.symbol || '✨')}</div>
             <div class="loc-card-body">
               <div class="loc-card-name">${esc(g.name)}</div>
@@ -1844,7 +1899,7 @@ export const Wiki = (() => {
 
   // ── Artifacts (Artefakty) ───────────────────────────────────────
   function renderArtifactList() {
-    const items = Store.getArtifacts().slice()
+    const items = Store.dedupeShadowTwins('artifacts', Store.getArtifacts()).slice()
       .sort((a, b) => _czCompare(a.name, b.name));
     if (items.length === 0) {
       return `
@@ -1861,6 +1916,7 @@ export const Wiki = (() => {
             ? `<span class="list-edit-btn" title="Upravit" style="position:absolute;top:0.4rem;right:0.4rem">✏</span>` : '';
           return `<a class="loc-card" href="#/artefakt/${a.id}" style="text-decoration:none;position:relative">
             ${editBtn}
+            ${_twinCardMarker(a)}
             <div class="loc-card-icon">🗝</div>
             <div class="loc-card-body">
               <div class="loc-card-name">${esc(a.name)}</div>
@@ -1910,7 +1966,7 @@ export const Wiki = (() => {
   }
 
   function renderHistoryList() {
-    const items = Store.getHistoricalEvents().slice();
+    const items = Store.dedupeShadowTwins('historicalEvents', Store.getHistoricalEvents()).slice();
     // Sort by start (then name) — numeric-aware so "1347 DR" beats "980 DR".
     items.sort((a, b) => {
       const sa = String(a.start || '');

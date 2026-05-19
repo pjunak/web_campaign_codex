@@ -10,6 +10,7 @@ import {
   expandWikiLinks,
   setWikiLinkResolver,
   clearMarkdownCache,
+  jaroWinkler,
 } from '../web/js/utils.js';
 
 describe('esc', () => {
@@ -116,5 +117,56 @@ describe('clearMarkdownCache', () => {
   it('exists and is callable', () => {
     assert.equal(typeof clearMarkdownCache, 'function');
     clearMarkdownCache();   // does not throw
+  });
+});
+
+describe('jaroWinkler', () => {
+  it('returns 1 for identical strings', () => {
+    assert.equal(jaroWinkler('Frulam', 'Frulam'), 1);
+  });
+
+  it('is case- and diacritic-insensitive via norm()', () => {
+    assert.equal(jaroWinkler('Křesava', 'kresava'), 1);
+    assert.equal(jaroWinkler('FRULAM',  'frulam'),  1);
+  });
+
+  it('returns 0 when either input is empty', () => {
+    assert.equal(jaroWinkler('', 'anything'), 0);
+    assert.equal(jaroWinkler('anything', ''), 0);
+    assert.equal(jaroWinkler('', ''),         0);
+    assert.equal(jaroWinkler(null, 'x'),      0);
+    assert.equal(jaroWinkler('x', undefined), 0);
+  });
+
+  it('ranks shared-prefix matches higher than transpositions (Winkler bonus)', () => {
+    // "Frulam Mondath" shares the 6-char prefix "frulam" with the
+    // query → should score above "Mondath Frulam" which has the
+    // same characters but a different prefix.
+    const prefix = jaroWinkler('Frulam',          'Frulam Mondath');
+    const swap   = jaroWinkler('Frulam',          'Mondath Frulam');
+    assert.ok(prefix > swap, `expected prefix>${swap} but got ${prefix}`);
+    assert.ok(prefix > 0.8,  `prefix match should be strong: got ${prefix}`);
+  });
+
+  it('typo tolerance: single-character substitution scores high', () => {
+    // "Frulan" vs "Frulam" — one substitution should remain very
+    // similar (>0.9 with Winkler prefix bonus).
+    const s = jaroWinkler('Frulan', 'Frulam');
+    assert.ok(s > 0.9, `single-char substitution should score >0.9: got ${s}`);
+  });
+
+  it('returns 0 for entirely disjoint strings (no common chars)', () => {
+    assert.equal(jaroWinkler('abc', 'xyz'), 0);
+  });
+
+  it('result stays in [0, 1]', () => {
+    const samples = [
+      ['frulam', 'frulam mondath'], ['kira', 'k'], ['a', 'ab'],
+      ['kreseva', 'kresava'], ['', 'x'], ['martin', 'martina'],
+    ];
+    for (const [a, b] of samples) {
+      const s = jaroWinkler(a, b);
+      assert.ok(s >= 0 && s <= 1, `score out of bounds for ${JSON.stringify([a, b])}: ${s}`);
+    }
   });
 });

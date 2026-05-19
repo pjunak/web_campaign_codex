@@ -9,7 +9,7 @@ import { Store } from './store.js';
 import { EditTemplates } from './edit_templates.js';
 import { Widgets } from './widgets/widgets.js';
 import { PIN_TYPES, PIN_SIZE_MIN, PIN_SIZE_MAX, PIN_SIZE_DEFAULT } from './map.js';
-import { renderMarkdown } from './utils.js';
+import { renderMarkdown, jaroWinkler, esc, norm } from './utils.js';
 import { PARTY_FACTION_ID } from './constants.js';
 import { Role } from './role.js';
 
@@ -1373,6 +1373,7 @@ export const EditMode = (() => {
   };
   async function createTwin(collection, sourceId) {
     if (_dirty && !confirm('Máš neuložené změny v editoru. Pokračovat?')) return;
+    _closeTwinPicker();
     const r = await Store.linkTwin('create', collection, sourceId);
     if (!r.ok) { _toast(r.error || 'Vytvoření twinu selhalo', false); return; }
     _toast('✓ Twin vytvořen');
@@ -1386,6 +1387,186 @@ export const EditMode = (() => {
     _toast('Twin odpárován');
     // Stay on current entity; the SSE refresh re-renders it.
     window.dispatchEvent(new Event('hashchange'));
+  }
+  async function linkExistingTwin(collection, sourceId, targetId) {
+    const r = await Store.linkTwin('link', collection, sourceId, targetId);
+    if (!r.ok) { _toast(r.error || 'Propojení selhalo', false); return; }
+    _closeTwinPicker();
+    _toast('✓ Twin propojen');
+    window.dispatchEvent(new Event('hashchange'));
+  }
+
+  // ─ Twin picker modal ───────────────────────────────────────────
+  // Opens when the DM clicks "🔗 Připojit twin" on an unlinked entity.
+  // Top row: [Zrušit] + [Vytvořit nový twin] — both always visible.
+  // Below: search input (autofocus, pre-filled with source name and
+  // selected so the first keystroke replaces it) + a scrollable
+  // candidate list ranked by Jaro–Winkler similarity to whatever's
+  // currently in the search box.
+  //
+  // Candidates are filtered to: same collection, opposite visibility,
+  // no existing twin, not the source itself. The server enforces the
+  // same constraints on POST /api/twin action:'link'.
+  let _picker = null;          // { root, overlay, input, list, footer, source, collection, candidates, highlighted }
+  function _ensurePickerDom() {
+    if (_picker) return _picker;
+    const overlay = document.createElement('div');
+    overlay.className = 'twin-picker-overlay';
+    overlay.hidden = true;
+    overlay.innerHTML = `
+      <div class="twin-picker-card" role="dialog" aria-label="Připojit twin">
+        <div class="twin-picker-actions">
+          <button type="button" class="twin-picker-btn twin-picker-btn-cancel" data-action="EditMode.cancelTwinPicker">✕ Zrušit</button>
+          <button type="button" class="twin-picker-btn twin-picker-btn-create" data-action="EditMode.createTwinFromPicker">✨ Vytvořit nový twin</button>
+        </div>
+        <div class="twin-picker-search-row">
+          <input type="text" class="twin-picker-search" placeholder="Hledat podle jména…" autocomplete="off">
+        </div>
+        <div class="twin-picker-list" role="listbox"></div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const card  = overlay.querySelector('.twin-picker-card');
+    const input = overlay.querySelector('.twin-picker-search');
+    const list  = overlay.querySelector('.twin-picker-list');
+
+    // Backdrop click closes the picker. Clicks inside the card do
+    // NOT propagate to the overlay (otherwise the modal would close
+    // when the DM clicks the search input).
+    overlay.addEventListener('click', (ev) => {
+      if (ev.target === overlay) _closeTwinPicker();
+    });
+    card.addEventListener('click', (ev) => ev.stopPropagation());
+
+    // Live search — re-rank candidates on every input event.
+    input.addEventListener('input', () => _renderPickerCandidates());
+
+    // Keyboard nav: Esc closes; Enter links the highlighted; ↑↓ moves.
+    overlay.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { ev.preventDefault(); _closeTwinPicker(); return; }
+      if (ev.key === 'Enter')  { ev.preventDefault(); _pickerLinkHighlighted(); return; }
+      if (ev.key === 'ArrowDown') { ev.preventDefault(); _movePickerHighlight(+1); return; }
+      if (ev.key === 'ArrowUp')   { ev.preventDefault(); _movePickerHighlight(-1); return; }
+    });
+
+    _picker = { overlay, card, input, list, source: null, collection: null, candidates: [], highlighted: 0 };
+    return _picker;
+  }
+
+  function openTwinPicker(collection, sourceId) {
+    if (!Role.isDM()) { _toast('Pouze pro DM', false); return; }
+    const source = Store.getCollection(collection).find(e => e && e.id === sourceId);
+    if (!source) { _toast('Entita nenalezena', false); return; }
+    if (source.linkedTwinId) { _toast('Entita už má twin', false); return; }
+
+    const p = _ensurePickerDom();
+    p.collection = collection;
+    p.source     = source;
+
+    // Build the candidate pool ONCE per open: same collection,
+    // opposite visibility, no existing twin, not the source itself.
+    const targetVis = source.visibility === 'dm' ? 'public' : 'dm';
+    const pool = Store.getCollection(collection).filter(e =>
+      e && e.id !== source.id
+      && !e.linkedTwinId
+      && ((e.visibility === 'dm') ? 'dm' : 'public') === targetVis
+    );
+    p.candidates = pool;
+    p.highlighted = 0;
+
+    p.input.value = source.name || '';
+    p.input.select();
+    _renderPickerCandidates();
+
+    p.overlay.hidden = false;
+    document.body.classList.add('twin-picker-open');
+    // Autofocus after the show so the browser doesn't reject the focus.
+    requestAnimationFrame(() => { try { p.input.focus(); p.input.select(); } catch (_) {} });
+  }
+
+  function _renderPickerCandidates() {
+    if (!_picker) return;
+    const p = _picker;
+    const query  = p.input.value;
+    const queryN = norm(query);
+
+    // Rank by Jaro–Winkler similarity to the CURRENT search box value
+    // (not the source name) so the DM can type any name and have the
+    // list re-sort. A substring boost helps "Frula" → "Frulam" rank
+    // above same-JW candidates whose match comes from transpositions.
+    const ranked = p.candidates
+      .map(e => {
+        const nameN = norm(e.name);
+        const score = jaroWinkler(query, e.name);
+        const substringBoost = (queryN && nameN.includes(queryN)) ? 0.05 : 0;
+        return { entity: e, score: Math.min(1, score + substringBoost) };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    if (ranked.length === 0) {
+      p.list.innerHTML = `<div class="twin-picker-empty">Žádné odpovídající entity.</div>`;
+      p.highlighted = -1;
+      return;
+    }
+
+    p.highlighted = 0;
+    // Stash the ranked entity ids in order on the wrapper so
+    // _pickerLinkHighlighted can resolve them by index without
+    // re-running the sort.
+    p._rankedIds = ranked.map(r => r.entity.id);
+
+    p.list.innerHTML = ranked.map((r, idx) => {
+      const pct = Math.round(r.score * 100);
+      const colorClass = pct >= 80 ? 'twin-picker-score-high'
+                        : pct >= 50 ? 'twin-picker-score-mid'
+                                    : 'twin-picker-score-low';
+      const visBadge = r.entity.visibility === 'dm' ? '🛡 DM' : '👤 hráč';
+      return `
+        <button type="button" class="twin-picker-row${idx === 0 ? ' is-highlighted' : ''}"
+                role="option" data-idx="${idx}"
+                data-action="EditMode.linkExistingTwin"
+                data-args='${esc(JSON.stringify([p.collection, p.source.id, r.entity.id]))}'>
+          <span class="twin-picker-row-name">${esc(r.entity.name || r.entity.id)}</span>
+          <span class="twin-picker-row-meta">
+            <span class="twin-picker-row-vis">${visBadge}</span>
+            <span class="twin-picker-row-score ${colorClass}">${pct}% shoda</span>
+          </span>
+        </button>`;
+    }).join('');
+  }
+
+  function _movePickerHighlight(delta) {
+    if (!_picker || !_picker._rankedIds || _picker._rankedIds.length === 0) return;
+    const max = _picker._rankedIds.length - 1;
+    _picker.highlighted = Math.max(0, Math.min(max, (_picker.highlighted ?? 0) + delta));
+    const rows = _picker.list.querySelectorAll('.twin-picker-row');
+    rows.forEach((row, idx) => row.classList.toggle('is-highlighted', idx === _picker.highlighted));
+    rows[_picker.highlighted]?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function _pickerLinkHighlighted() {
+    if (!_picker || !_picker._rankedIds) return;
+    const targetId = _picker._rankedIds[_picker.highlighted];
+    if (!targetId) return;
+    linkExistingTwin(_picker.collection, _picker.source.id, targetId);
+  }
+
+  function _closeTwinPicker() {
+    if (!_picker) return;
+    _picker.overlay.hidden = true;
+    document.body.classList.remove('twin-picker-open');
+    _picker.source = null;
+    _picker.collection = null;
+    _picker.candidates = [];
+    _picker._rankedIds = null;
+  }
+
+  // Action-dispatcher entry points for the modal's static buttons.
+  function cancelTwinPicker() { _closeTwinPicker(); }
+  function createTwinFromPicker() {
+    if (!_picker || !_picker.collection || !_picker.source) return;
+    createTwin(_picker.collection, _picker.source.id);
   }
 
   // ── Public API ─────────────────────────────────────────────────
@@ -1405,7 +1586,8 @@ export const EditMode = (() => {
     saveBuh, deleteBuh,
     saveArtifact, deleteArtifact,
     saveHistoricalEvent, deleteHistoricalEvent,
-    createTwin, unlinkTwin,
+    createTwin, unlinkTwin, linkExistingTwin,
+    openTwinPicker, cancelTwinPicker, createTwinFromPicker,
     mountEasyMDE,
     toast: _toast,
     renderCharacterEditor,

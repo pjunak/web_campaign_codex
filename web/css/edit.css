@@ -175,6 +175,55 @@ body:not(.is-dm) .sidebar-nav-dm { display: none; }
 /* Push main content down so it isn't hidden under the banner. */
 body.is-impersonating { padding-top: 36px; }
 
+/* ── Twin marker on list cards (DM-only) ──────────────────────
+   Small "🔗" badge surfaced on cards whose entity has a linked twin
+   — after Store.dedupeShadowTwins drops the public half, only the DM
+   half remains on the list and this badge marks it as twinned so the
+   DM doesn't lose context. Hidden for non-DM viewers since they only
+   ever see the public half of a pair anyway. */
+.card-twin-marker {
+  display: inline-block;
+  font-size: 0.72rem;
+  color: var(--accent-gold-dim, #ad8a4b);
+  background: rgba(200,160,64,0.12);
+  border: 1px solid rgba(200,160,64,0.32);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  line-height: 1.25;
+  vertical-align: middle;
+}
+.char-card .card-twin-marker,
+.loc-card .card-twin-marker,
+.faction-card .card-twin-marker {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.4rem;
+  z-index: 4;
+}
+body:not(.is-dm) .card-twin-marker { display: none; }
+
+/* ── Twin controls in editor header (DM-only) ──────────────────
+   The twin link/badge/unlink buttons live in the sticky form header
+   between the title and the save/delete actions. CSS-hide for non-DM
+   viewers so the structural markup stays stable across roles. */
+.edit-hdr-twin {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+body:not(.is-dm) .edit-hdr-twin { display: none; }
+/* Compact the unlink button when sitting in the header (less vertical
+   chrome than the bottom-section presentation). */
+.edit-hdr-twin .dm-twin-btn-unlink {
+  font-size: 0.74rem;
+  padding: 0.22rem 0.45rem;
+}
+.edit-hdr-twin .dm-twin-badge-linked {
+  font-size: 0.82rem;
+  padding: 0.25rem 0.55rem;
+}
+
 /* ── DM section (visibility + twin link) ──────────────────────── */
 /* DM-only block at the bottom of every entity editor. Marked with
    a faint red accent to signal "this affects what players see".
@@ -197,37 +246,181 @@ body.is-impersonating { padding-top: 36px; }
   align-items: center;
   margin-top: 0.3rem;
 }
-.dm-twin-status {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-}
-.dm-twin-link {
-  color: #f88;
+/* Linked-state badge — green, navigates to the twin entity. */
+.dm-twin-badge-linked {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #b9f0a8;
   text-decoration: none;
   font-weight: 500;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  background: rgba(180,40,40,0.12);
-  border: 1px solid rgba(180,40,40,0.35);
-}
-.dm-twin-link:hover {
-  background: rgba(180,40,40,0.2);
-  text-decoration: underline;
-}
-.dm-twin-btn {
-  background: rgba(180,40,40,0.12);
-  border: 1px solid rgba(180,40,40,0.35);
-  color: #f88;
   padding: 0.3rem 0.7rem;
   border-radius: 4px;
+  background: rgba(60,160,60,0.14);
+  border: 1px solid rgba(80,180,80,0.45);
+  font-size: 0.9rem;
+}
+.dm-twin-badge-linked:hover {
+  background: rgba(60,160,60,0.22);
+  border-color: #6c5;
+  text-decoration: none;
+}
+.dm-twin-badge-vis {
+  color: rgba(185,240,168,0.7);
+  font-size: 0.78em;
+  font-weight: 400;
+}
+/* Generic twin button — base style; the link/unlink variants override
+   border + text color. */
+.dm-twin-btn {
+  border-radius: 4px;
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  background: rgba(180,40,40,0.12);
+  border: 1px solid rgba(180,40,40,0.45);
+  color: #f88;
+}
+.dm-twin-btn:hover {
+  background: rgba(180,40,40,0.22);
+  border-color: #c44;
+}
+/* "Připojit twin" — unlinked state. Red signals "needs attention". */
+.dm-twin-btn-link {
+  font-weight: 500;
+}
+/* "Odpárovat" — linked state, sits next to the green badge. */
+.dm-twin-btn-unlink {
+  font-size: 0.78rem;
+  padding: 0.25rem 0.5rem;
+}
+
+/* ── Twin picker modal ───────────────────────────────────────── */
+.twin-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 6vh 1rem 1rem;
+}
+.twin-picker-overlay[hidden] { display: none; }
+.twin-picker-card {
+  width: min(560px, 100%);
+  background: var(--bg-raised);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+  overflow: hidden;
+}
+.twin-picker-actions {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  justify-content: space-between;
+}
+.twin-picker-btn {
+  border-radius: 4px;
+  padding: 0.4rem 0.8rem;
   font-size: 0.85rem;
   cursor: pointer;
   font-family: var(--font-ui);
 }
-.dm-twin-btn:hover {
-  background: rgba(180,40,40,0.2);
-  border-color: #c44;
+.twin-picker-btn-cancel {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-muted);
 }
+.twin-picker-btn-cancel:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-light);
+}
+.twin-picker-btn-create {
+  background: rgba(200,160,64,0.12);
+  border: 1px solid var(--accent-gold);
+  color: var(--accent-gold);
+  font-weight: 500;
+}
+.twin-picker-btn-create:hover {
+  background: rgba(200,160,64,0.22);
+}
+.twin-picker-search-row {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.twin-picker-search {
+  width: 100%;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.95rem;
+  color: var(--text-light);
+  font-family: var(--font-ui);
+}
+.twin-picker-search:focus {
+  outline: none;
+  border-color: var(--accent-gold);
+  background: rgba(0,0,0,0.4);
+}
+.twin-picker-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.3rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.twin-picker-empty {
+  padding: 1.2rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+.twin-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  color: var(--text-light);
+  text-align: left;
+}
+.twin-picker-row:hover,
+.twin-picker-row.is-highlighted {
+  background: rgba(200,160,64,0.10);
+  border-color: rgba(200,160,64,0.3);
+}
+.twin-picker-row-name {
+  flex: 1;
+  font-size: 0.95rem;
+}
+.twin-picker-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.twin-picker-row-score        { font-variant-numeric: tabular-nums; }
+.twin-picker-score-high       { color: #b9f0a8; }
+.twin-picker-score-mid        { color: var(--accent-gold); }
+.twin-picker-score-low        { color: var(--text-muted); }
+
+/* Lock background scroll while the picker is open. */
+body.twin-picker-open { overflow: hidden; }
 
 /* ── DM panel ────────────────────────────────────────────────── */
 .dm-panel {

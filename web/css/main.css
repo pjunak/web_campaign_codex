@@ -239,6 +239,10 @@ p  { color: var(--text-parchment); margin-bottom: 0.75em; }
 }
 
 /* ── Back Button ────────────────────────────────────────────── */
+/* Lives inside `.edit-form-header` (sticky toolbar) — no margin-bottom
+   so it doesn't push form content down. The header's flex layout
+   keeps the button compact next to the title rather than reserving
+   a full-width row above the form. */
 .back-btn {
   display: inline-flex;
   align-items: center;
@@ -246,12 +250,12 @@ p  { color: var(--text-parchment); margin-bottom: 0.75em; }
   font-family: var(--font-ui);
   font-size: 0.8rem;
   color: var(--text-muted);
-  margin-bottom: 1.25rem;
   transition: color 0.15s;
   cursor: pointer;
   background: none;
   border: none;
-  padding: 0;
+  padding: 0.2rem 0.35rem;
+  flex-shrink: 0;
 }
 .back-btn:hover { color: var(--accent-gold); }
 
